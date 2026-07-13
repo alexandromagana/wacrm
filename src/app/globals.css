@@ -161,18 +161,19 @@ html[data-theme="violet"] {
   --sidebar-ring: oklch(0.526 0.247 293);
 }
 
+/* Gama Energía brand accent — WhatsApp green (#25D366). */
 html[data-theme="emerald"] {
-  --primary: oklch(0.62 0.16 162);
-  --primary-foreground: oklch(0.16 0.02 162);
-  --primary-hover: oklch(0.68 0.15 162);
-  --primary-soft: oklch(0.62 0.16 162 / 0.12);
-  --primary-soft-2: oklch(0.62 0.16 162 / 0.22);
-  --ring: oklch(0.62 0.16 162);
-  --chart-1: oklch(0.62 0.16 162);
+  --primary: oklch(0.77 0.17 152);
+  --primary-foreground: oklch(0.2 0.03 152);
+  --primary-hover: oklch(0.82 0.16 152);
+  --primary-soft: oklch(0.77 0.17 152 / 0.12);
+  --primary-soft-2: oklch(0.77 0.17 152 / 0.22);
+  --ring: oklch(0.77 0.17 152);
+  --chart-1: oklch(0.77 0.17 152);
   --chart-2: oklch(0.7 0.14 195);
-  --sidebar-primary: oklch(0.62 0.16 162);
-  --sidebar-primary-foreground: oklch(0.16 0.02 162);
-  --sidebar-ring: oklch(0.62 0.16 162);
+  --sidebar-primary: oklch(0.77 0.17 152);
+  --sidebar-primary-foreground: oklch(0.2 0.03 152);
+  --sidebar-ring: oklch(0.77 0.17 152);
 }
 
 html[data-theme="cobalt"] {

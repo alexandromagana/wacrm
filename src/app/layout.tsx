@@ -22,16 +22,13 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: {
-    default: "wacrm",
-    template: "%s — wacrm",
+    default: "Gama Energía",
+    template: "%s — Gama Energía",
   },
-  description: "Self-hostable CRM template for WhatsApp.",
+  description: "Gama Energía — CRM para WhatsApp.",
   robots: {
     index: false,
     follow: false,
-  },
-  icons: {
-    icon: [{ url: "/icon" }],
   },
   formatDetection: {
     email: false,
