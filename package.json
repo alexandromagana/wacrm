@@ -82,5 +82,12 @@
     "hono": "^4.12.25",
     "js-yaml": "^4.2.0",
     "@babel/core": "^7.29.6"
+  },
+  "allowScripts": {
+    "@parcel/watcher@2.5.6": true,
+    "fsevents@2.3.3": true,
+    "@swc/core@1.15.43": true,
+    "sharp@0.34.5": true,
+    "unrs-resolver@1.11.1": true
   }
 }
