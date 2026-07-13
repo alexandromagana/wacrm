@@ -65,6 +65,27 @@ const SECURITY_HEADERS = [
 
 const nextConfig: NextConfig = {
   /**
+   * Standalone output for Docker / EasyPanel deployments.
+   *
+   * `next build` emits a self-contained `.next/standalone` folder with
+   * its own minimal `server.js` and only the traced `node_modules`,
+   * so the runtime image doesn't need the full dependency tree or
+   * `next start`. See the Dockerfile — the `runner` stage copies just
+   * `.next/standalone`, `.next/static`, and `public`.
+   */
+  output: "standalone",
+  /**
+   * Pin the file-tracing root to this project directory.
+   *
+   * Without this, Next detects multiple lockfiles (the root app +
+   * `mcp-server/`, and any lockfile in a parent folder) and infers a
+   * workspace root ABOVE the project, nesting the standalone output
+   * under `.next/standalone/wacrm/…` and dragging in unrelated files.
+   * Pinning the root keeps `server.js` flat at `.next/standalone/`,
+   * which is what the Dockerfile copies from.
+   */
+  outputFileTracingRoot: import.meta.dirname,
+  /**
    * Cache-Control policy.
    *
    * Why this exists:
