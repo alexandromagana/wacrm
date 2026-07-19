@@ -68,7 +68,7 @@ export function buildSystemPrompt(args: {
 
   if (mode === 'auto_reply') {
     parts.push(
-      `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — reply with exactly ${HANDOFF_SENTINEL} and nothing else. A human agent will then take over. Prefer handing off over guessing.`,
+      `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — hand off: write one short message telling the customer a teammate will continue the conversation (use any handoff wording the business instructions specify), then end your reply with ${HANDOFF_SENTINEL}. The marker is stripped before sending; the message before it IS sent to the customer. If no farewell makes sense, reply with exactly ${HANDOFF_SENTINEL}. A human agent will then take over. Prefer handing off over guessing.`,
     )
   }
 
@@ -79,7 +79,7 @@ export function buildSystemPrompt(args: {
   if (knowledge && knowledge.length > 0) {
     const fallback =
       mode === 'auto_reply'
-        ? `if they don't cover the question, do not guess — reply with exactly ${HANDOFF_SENTINEL} so a human can help`
+        ? `if they don't cover the question, do not guess — hand off with a short note to the customer followed by ${HANDOFF_SENTINEL} so a human can help`
         : "if they don't cover the question, don't guess — say you'll check and follow up"
     parts.push(
       'Knowledge base — excerpts from the business\'s own documentation, retrieved for this question. ' +

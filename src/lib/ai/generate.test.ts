@@ -43,6 +43,7 @@ describe('parseGeneration', () => {
     expect(parseGeneration('Hello there')).toEqual({
       text: 'Hello there',
       handoff: false,
+      leadStatus: null,
       usage: null,
     })
   })
@@ -51,11 +52,13 @@ describe('parseGeneration', () => {
     expect(parseGeneration('[[HANDOFF]]')).toEqual({
       text: '',
       handoff: true,
+      leadStatus: null,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
       text: 'Let me get a human',
       handoff: true,
+      leadStatus: null,
       usage: null,
     })
   })
@@ -65,8 +68,49 @@ describe('parseGeneration', () => {
     expect(parseGeneration('Hi', usage)).toEqual({
       text: 'Hi',
       handoff: false,
+      leadStatus: null,
       usage,
     })
+  })
+})
+
+describe('parseGeneration — status markers', () => {
+  it('parses + strips a Spanish marker', () => {
+    const res = parseGeneration('Con gusto te cotizo. [ESTATUS: CALIENTE]')
+    expect(res.text).toBe('Con gusto te cotizo.')
+    expect(res.leadStatus).toBe('hot')
+  })
+
+  it('parses English markers and ignores case/spacing', () => {
+    expect(parseGeneration('Sure! [status: warm ]').leadStatus).toBe('warm')
+    expect(parseGeneration('Ok [STATUS:COLD]').leadStatus).toBe('cold')
+  })
+
+  it('handles accents (FRÍO → cold)', () => {
+    const res = parseGeneration('Gracias por tu interés. [ESTATUS: FRÍO]')
+    expect(res.text).toBe('Gracias por tu interés.')
+    expect(res.leadStatus).toBe('cold')
+  })
+
+  it('strips unknown status values without setting a status', () => {
+    const res = parseGeneration('Hola [ESTATUS: TEMPLADO]')
+    expect(res.text).toBe('Hola')
+    expect(res.leadStatus).toBeNull()
+  })
+
+  it('combines with a handoff farewell', () => {
+    const res = parseGeneration(
+      'Te voy a conectar con Alejandro. [ESTATUS: CALIENTE] [[HANDOFF]]',
+    )
+    expect(res.text).toBe('Te voy a conectar con Alejandro.')
+    expect(res.handoff).toBe(true)
+    expect(res.leadStatus).toBe('hot')
+  })
+
+  it('last valid marker wins when the model emits several', () => {
+    const res = parseGeneration('[ESTATUS: TIBIO] Hola [ESTATUS: CALIENTE]')
+    expect(res.text).toBe('Hola')
+    expect(res.leadStatus).toBe('hot')
   })
 })
 
@@ -89,6 +133,7 @@ describe('generateReply — OpenAI', () => {
     expect(res).toEqual({
       text: 'Sure — happy to help!',
       handoff: false,
+      leadStatus: null,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -148,6 +193,7 @@ describe('generateReply — Anthropic', () => {
     expect(res).toEqual({
       text: 'Hi there!',
       handoff: false,
+      leadStatus: null,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

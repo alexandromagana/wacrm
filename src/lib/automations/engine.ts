@@ -6,6 +6,7 @@ import type {
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
+  TagTriggerConfig,
   SendMessageStepConfig,
   SendButtonsStepConfig,
   SendListStepConfig,
@@ -425,12 +426,25 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // runAutomationsForTrigger.
       const cfg = step.step_config as TagStepConfig
       if (!args.contactId || !cfg.tag_id) throw new Error('add_tag needs contact + tag_id')
-      await db
+      const { data: inserted } = await db
         .from('contact_tags')
         .upsert(
           { contact_id: args.contactId, tag_id: cfg.tag_id },
           { onConflict: 'contact_id,tag_id', ignoreDuplicates: true },
         )
+        .select('id')
+      // Chain tag-driven automations, but only when the tag is genuinely
+      // new on the contact — re-adding is a no-op and must not re-fire.
+      // (That "new only" rule is also what bounds add_tag → tag_added
+      // recursion: a cycle re-adds an existing tag and stops.)
+      if (inserted && inserted.length > 0) {
+        await runAutomationsForTrigger({
+          accountId: args.automation.account_id,
+          triggerType: 'tag_added',
+          contactId: args.contactId,
+          context: { tag_id: cfg.tag_id },
+        })
+      }
       return `tag ${cfg.tag_id} added`
     }
 
@@ -628,6 +642,15 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
       const k = cfg.case_sensitive ? raw : raw.toLowerCase()
       return cfg.match_type === 'exact' ? haystack === k : haystack.includes(k)
     })
+  }
+
+  // Fire only for the configured tag. An automation saved without a
+  // tag_id matches any tag (documented catch-all); a dispatch without a
+  // tag in context can only match those catch-alls.
+  if (automation.trigger_type === 'tag_added') {
+    const cfg = automation.trigger_config as TagTriggerConfig
+    if (!cfg?.tag_id) return true
+    return ctx?.tag_id === cfg.tag_id
   }
 
   // Match on the tapped button / list-row id (exact). Lets multi-step

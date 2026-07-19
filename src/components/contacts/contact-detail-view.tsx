@@ -230,24 +230,19 @@ export function ContactDetailView({
 
     const isSelected = contactTagIds.includes(tagId);
 
-    if (isSelected) {
-      const { error } = await supabase
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', contactId)
-        .eq('tag_id', tagId);
-      if (!error) {
-        setContactTagIds((prev) => prev.filter((id) => id !== tagId));
-        onUpdated();
-      }
-    } else {
-      const { error } = await supabase
-        .from('contact_tags')
-        .insert({ contact_id: contactId, tag_id: tagId });
-      if (!error) {
-        setContactTagIds((prev) => [...prev, tagId]);
-        onUpdated();
-      }
+    // Through the server route rather than a direct contact_tags write —
+    // only the server can fire the tag_added automation trigger, which
+    // is what starts tag-driven follow-up sequences.
+    const res = await fetch(`/api/contacts/${contactId}/tags`, {
+      method: isSelected ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tag_id: tagId }),
+    });
+    if (res.ok) {
+      setContactTagIds((prev) =>
+        isSelected ? prev.filter((id) => id !== tagId) : [...prev, tagId],
+      );
+      onUpdated();
     }
     setSavingTags(false);
   }

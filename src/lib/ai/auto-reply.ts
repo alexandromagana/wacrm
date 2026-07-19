@@ -5,6 +5,7 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
+import { applyLeadStatusTag } from './lead-status'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
@@ -54,18 +55,36 @@ export async function dispatchInboundToAiReply(
     // caller already excludes messages a Flow consumed. Message-level
     // automations (`new_message_received` / `keyword_match`) are
     // dispatched independently for this same inbound and may send their
-    // own reply, so if the account has any active one we stand down to
-    // avoid double-texting the customer. (Relationship triggers like
-    // `first_inbound_message` don't count — they're not per-message
-    // auto-responders.)
+    // own reply, so if the account has one that actually SENDS we stand
+    // down to avoid double-texting the customer. Bookkeeping-only
+    // automations (remove_tag, update_contact_field, …) coexist with
+    // the bot — a "clear the follow-up tag when the customer replies"
+    // rule must not silence auto-reply account-wide. (Relationship
+    // triggers like `first_inbound_message` don't count either way —
+    // they're not per-message auto-responders.)
     const { data: autoResponders } = await db
       .from('automations')
       .select('id')
       .eq('account_id', accountId)
       .eq('is_active', true)
       .in('trigger_type', ['new_message_received', 'keyword_match'])
-      .limit(1)
-    if (autoResponders && autoResponders.length > 0) return
+    if (autoResponders && autoResponders.length > 0) {
+      const { data: sendSteps } = await db
+        .from('automation_steps')
+        .select('id')
+        .in(
+          'automation_id',
+          autoResponders.map((a) => a.id),
+        )
+        .in('step_type', [
+          'send_message',
+          'send_buttons',
+          'send_list',
+          'send_template',
+        ])
+        .limit(1)
+      if (sendSteps && sendSteps.length > 0) return
+    }
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
@@ -112,11 +131,24 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, usage } = await generateReply({
+    const { text, handoff, leadStatus, usage } = await generateReply({
       config,
       systemPrompt,
       messages,
     })
+
+    // Persist the model's lead qualification (the [ESTATUS]/[STATUS]
+    // marker) as a contact tag. Fire-and-forget like usage logging —
+    // it swallows its own errors and must not delay the send. Applies
+    // on handoffs too: a lead that escalated is still qualified.
+    if (leadStatus) {
+      void applyLeadStatusTag(db, {
+        accountId,
+        userId: configOwnerUserId,
+        contactId,
+        status: leadStatus,
+      })
+    }
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`
@@ -154,6 +186,22 @@ export async function dispatchInboundToAiReply(
         update.assigned_agent_id = config.handoffAgentId
       }
       await db.from('conversations').update(update).eq('id', conversationId)
+      // If the model wrote a farewell alongside the sentinel ("a teammate
+      // will continue this conversation"), send it so the customer isn't
+      // left hanging in silence until a human picks the thread up. The
+      // bot is already paused above, so this send doesn't consume a
+      // reply slot — the per-conversation cap guards ongoing back-and-
+      // forth, not the one-off goodbye.
+      if (handoff && text) {
+        await engineSendText({
+          accountId,
+          userId: configOwnerUserId,
+          conversationId,
+          contactId,
+          text,
+          aiGenerated: true,
+        })
+      }
       return
     }
 

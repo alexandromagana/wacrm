@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
+import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
 /** Row select that embeds the contact's tags for serialization. */
@@ -203,6 +204,18 @@ export async function setContactTags(
       .from('contact_tags')
       .insert(toAdd.map((tag_id) => ({ contact_id: contactId, tag_id })));
     if (error) throw new ContactError('Failed to update contact tags', 500);
+    // Newly-added tags fire tag-driven automations, so an external sync
+    // (e.g. a sheet tagging fresh leads) can start follow-up sequences —
+    // same behaviour as tagging from the UI. Diff-only: re-sent tags the
+    // contact already had don't re-fire. The dispatcher never throws.
+    for (const tagId of toAdd) {
+      await runAutomationsForTrigger({
+        accountId,
+        triggerType: 'tag_added',
+        contactId,
+        context: { tag_id: tagId },
+      });
+    }
   }
 }
 

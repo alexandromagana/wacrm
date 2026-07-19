@@ -336,3 +336,36 @@ describe("triggerMatches — interactive_reply", () => {
     expect(triggerMatches(automation([]), { interactive_reply_id: "yes" })).toBe(false);
   });
 });
+
+describe("triggerMatches — tag_added", () => {
+  function automation(tag_id?: string): Automation {
+    return {
+      id: "a2",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: "tag follow-up",
+      trigger_type: "tag_added",
+      trigger_config: tag_id ? { tag_id } : {},
+      is_active: true,
+      execution_count: 0,
+      created_at: "",
+      updated_at: "",
+    };
+  }
+
+  it("matches when the added tag is the configured one", () => {
+    expect(triggerMatches(automation("tag-1"), { tag_id: "tag-1" })).toBe(true);
+  });
+
+  it("does not match a different tag", () => {
+    expect(triggerMatches(automation("tag-1"), { tag_id: "tag-2" })).toBe(false);
+  });
+
+  it("does not match when the dispatch carries no tag", () => {
+    expect(triggerMatches(automation("tag-1"), {})).toBe(false);
+  });
+
+  it("acts as a catch-all when no tag is configured", () => {
+    expect(triggerMatches(automation(), { tag_id: "tag-9" })).toBe(true);
+  });
+});

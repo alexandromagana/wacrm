@@ -8,9 +8,11 @@ const h = vi.hoisted(() => ({
   retrieveKnowledge: vi.fn(),
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
+  applyLeadStatusTag: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
+    autoResponderSendSteps: [] as { id: string }[],
     claim: true as boolean,
     updatePayload: null as Record<string, unknown> | null,
     rpcCalls: [] as { name: string; args: unknown }[],
@@ -21,18 +23,31 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
+vi.mock('./lead-status', () => ({ applyLeadStatusTag: h.applyLeadStatusTag }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
     from: (table: string) => {
       if (table === 'automations') {
-        // .select().eq().eq().in().limit() → active auto-responders
+        // .select().eq().eq().in() → active auto-responders
         const chain = {
           select: () => chain,
           eq: () => chain,
+          in: () =>
+            Promise.resolve({ data: h.state.autoResponders, error: null }),
+        }
+        return chain
+      }
+      if (table === 'automation_steps') {
+        // .select().in().in().limit() → send-type steps of those automations
+        const chain = {
+          select: () => chain,
           in: () => chain,
           limit: () =>
-            Promise.resolve({ data: h.state.autoResponders, error: null }),
+            Promise.resolve({
+              data: h.state.autoResponderSendSteps,
+              error: null,
+            }),
         }
         return chain
       }
@@ -88,14 +103,20 @@ beforeEach(() => {
     ai_reply_count: 0,
   }
   h.state.autoResponders = []
+  h.state.autoResponderSendSteps = []
   h.state.claim = true
   h.state.updatePayload = null
   h.state.rpcCalls = []
   h.loadAiConfig.mockResolvedValue(aiConfig())
   h.buildConversationContext.mockResolvedValue([{ role: 'user', content: 'hi' }])
   h.retrieveKnowledge.mockResolvedValue([])
-  h.generateReply.mockResolvedValue({ text: 'Hello!', handoff: false })
+  h.generateReply.mockResolvedValue({
+    text: 'Hello!',
+    handoff: false,
+    leadStatus: null,
+  })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
+  h.applyLeadStatusTag.mockResolvedValue(undefined)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -120,11 +141,23 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(systemPrompt).toContain('Returns accepted within 30 days.')
   })
 
-  it('stands down when an active message-level automation exists', async () => {
+  it('stands down when an active message-level automation SENDS messages', async () => {
     h.state.autoResponders = [{ id: 'auto-1' }]
+    h.state.autoResponderSendSteps = [{ id: 'step-1' }]
     await dispatchInboundToAiReply(ARGS)
     expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.engineSendText).not.toHaveBeenCalled()
+  })
+
+  it('coexists with bookkeeping-only message-level automations (no send steps)', async () => {
+    h.state.autoResponders = [{ id: 'auto-1' }]
+    h.state.autoResponderSendSteps = []
+    await dispatchInboundToAiReply(ARGS)
+    // A remove_tag-on-reply rule must not silence the bot.
+    expect(h.generateReply).toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
   })
 
   it('does not send when the atomic slot claim loses the race', async () => {
@@ -187,7 +220,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
 })
 
 describe('dispatchInboundToAiReply — handoff', () => {
-  it('disables auto-reply, writes a summary, and does not send on handoff', async () => {
+  it('disables auto-reply, writes a summary, and stays silent when the model wrote no farewell', async () => {
     h.generateReply.mockResolvedValue({ text: '', handoff: true })
     await dispatchInboundToAiReply(ARGS)
     expect(h.engineSendText).not.toHaveBeenCalled()
@@ -198,6 +231,68 @@ describe('dispatchInboundToAiReply — handoff', () => {
     )
     // No handoff target configured → conversation left unassigned.
     expect(h.state.updatePayload).not.toHaveProperty('assigned_agent_id')
+  })
+
+  it('sends the farewell to the customer when the model wrote one, without claiming a reply slot', async () => {
+    h.generateReply.mockResolvedValue({
+      text: 'Te voy a conectar con Alejandro para que te ayude directamente.',
+      handoff: true,
+      leadStatus: null,
+    })
+    await dispatchInboundToAiReply(ARGS)
+    // The goodbye goes out...
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        text: 'Te voy a conectar con Alejandro para que te ayude directamente.',
+        aiGenerated: true,
+      }),
+    )
+    // ...but the thread is still paused + summarised, and the send did
+    // not go through the reply-slot claim (the bot is retiring here).
+    expect(h.state.rpcCalls).toHaveLength(0)
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+})
+
+describe('dispatchInboundToAiReply — lead status', () => {
+  it('applies the status tag when the model qualified the lead', async () => {
+    h.generateReply.mockResolvedValue({
+      text: 'Con gusto te ayudo.',
+      handoff: false,
+      leadStatus: 'hot',
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.applyLeadStatusTag).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        accountId: 'acct-1',
+        contactId: 'contact-1',
+        status: 'hot',
+      }),
+    )
+    // The customer still gets the clean reply.
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Con gusto te ayudo.' }),
+    )
+  })
+
+  it('applies the status tag even on a handoff turn', async () => {
+    h.generateReply.mockResolvedValue({
+      text: 'Te conecto con Alejandro.',
+      handoff: true,
+      leadStatus: 'cold',
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.applyLeadStatusTag).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ status: 'cold' }),
+    )
+  })
+
+  it('does not touch tags when no status was emitted', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.applyLeadStatusTag).not.toHaveBeenCalled()
   })
 
   it('routes to the configured handoff agent on handoff', async () => {
