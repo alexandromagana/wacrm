@@ -57,6 +57,13 @@ interface WhatsAppMessage {
     button_reply?: { id: string; title: string }
     list_reply?: { id: string; title: string; description?: string }
   }
+  /**
+   * Set when the customer taps a quick-reply button on a TEMPLATE
+   * message (Meta delivers those as `type: "button"`, not
+   * `type: "interactive"`). `payload` is the send-time payload override
+   * or, by default, the button's visible text.
+   */
+  button?: { payload?: string; text?: string }
   /** Present when the customer swipe-replies to one of our messages. */
   context?: { id: string }
 }
@@ -652,8 +659,10 @@ async function processMessage(
   const contentType = ALLOWED_CONTENT_TYPES.has(message.type)
     ? message.type
     : message.type === 'sticker'
-      ? 'image'   // stickers are images
-      : 'text'    // reaction, unknown → text fallback
+      ? 'image'       // stickers are images
+      : message.type === 'button'
+        ? 'interactive' // template quick-reply taps render like interactive taps
+        : 'text'        // reaction, unknown → text fallback
 
   // Determine whether this is the contact's very first inbound message
   // BEFORE we insert, so the count is accurate. Covers the case where
@@ -961,6 +970,23 @@ async function parseMessageContent(
         }
       }
       return { ...empty, contentText: '[Interactive reply]' }
+    }
+
+    case 'button': {
+      // Quick-reply tap on a TEMPLATE message — Meta's legacy shape,
+      // distinct from `interactive`. The payload (send-time override,
+      // or the button text by default) plays the same role as
+      // `button_reply.id`: route it into interactive_reply automations
+      // and the Flows engine exactly like an interactive tap.
+      const payload = message.button?.payload || message.button?.text
+      if (payload) {
+        return {
+          ...empty,
+          contentText: message.button?.text || payload,
+          interactiveReplyId: payload,
+        }
+      }
+      return { ...empty, contentText: '[Button reply]' }
     }
 
     default:
