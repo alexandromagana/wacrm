@@ -8,6 +8,10 @@ import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
 import { dispatchInboundToAiReply } from '@/lib/ai/auto-reply'
+import {
+  inboundDebounceMs,
+  resolveInboundBurst,
+} from '@/lib/ai/inbound-buffer'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -819,54 +823,33 @@ async function processMessage(
     (message.type === 'image' ||
       (message.type === 'document' &&
         message.document?.mime_type === 'application/pdf'))
-  let receiptSuperseded = false
   if (
     !flowConsumed &&
     !interactiveReplyId &&
     (inboundText.trim() || isReceiptCandidate)
   ) {
-    let receiptMediaIds: string[] | undefined
-    if (isReceiptCandidate) {
-      // Customers send the two bill pages as a back-to-back burst that
-      // arrives as separate webhook deliveries. Debounce: wait a beat,
-      // then only the delivery holding the NEWEST image proceeds (any
-      // superseded sibling stands down), reading the whole burst in one
-      // vision call instead of one call per page.
-      await new Promise((r) => setTimeout(r, 8_000))
-      const { data: recentImages } = await supabaseAdmin()
-        .from('messages')
-        .select('media_url')
-        .eq('conversation_id', conversation.id)
-        .eq('sender_type', 'customer')
-        .in('content_type', ['image', 'document'])
-        .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString())
-        .order('created_at', { ascending: false })
-        .limit(3)
-      const urls: string[] = (
-        (recentImages ?? []) as { media_url: string | null }[]
-      )
-        .map((m) => m.media_url)
-        .filter((u): u is string => Boolean(u))
-      // Superseded: a newer image arrived during the debounce — ITS
-      // delivery reads the whole burst. Skip only the AI dispatch; the
-      // message.received webhook event below must still go out.
-      receiptSuperseded = urls.length > 0 && urls[0] !== mediaUrl
-      // media_url is `/api/whatsapp/media/<mediaId>` — recover the ids,
-      // oldest first so page 1 precedes page 2 in the vision call.
-      receiptMediaIds = urls
-        .map((u: string) => u.split('/').pop())
-        .filter((id): id is string => Boolean(id))
-        .reverse()
-    }
-
-    if (!receiptSuperseded) {
+    // Burst coalescing: customers type in rapid volleys and send bill
+    // pages back-to-back, each arriving as its own delivery. Sleep a
+    // debounce, then only the delivery holding the NEWEST customer
+    // message replies — one reply over the whole burst, reading any
+    // fresh receipt media in one vision call. Superseded siblings skip
+    // only the AI dispatch; the message.received event below still
+    // fires for every message.
+    const debounce = inboundDebounceMs()
+    if (debounce > 0) await new Promise((r) => setTimeout(r, debounce))
+    const { superseded, receiptMediaIds } = await resolveInboundBurst(
+      supabaseAdmin(),
+      { conversationId: conversation.id, metaMessageId: message.id },
+    )
+    if (!superseded) {
       await dispatchInboundToAiReply({
         accountId,
         conversationId: conversation.id,
         contactId: contactRecord.id,
         configOwnerUserId,
-        receiptMediaIds,
-        accessToken: receiptMediaIds ? accessToken : undefined,
+        receiptMediaIds:
+          receiptMediaIds.length > 0 ? receiptMediaIds : undefined,
+        accessToken: receiptMediaIds.length > 0 ? accessToken : undefined,
       })
     }
   }
