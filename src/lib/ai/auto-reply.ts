@@ -6,6 +6,7 @@ import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { applyLeadStatusTag } from './lead-status'
+import { extractReceipt, formatReceiptNote, saveReceiptData } from './receipt'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
@@ -19,6 +20,12 @@ interface DispatchArgs {
   /** The account's WhatsApp config owner, used for the outbound send's
    *  audit columns (mirrors how the flow runner passes it through). */
   configOwnerUserId: string
+  /** WhatsApp media ids of receipt images the customer just sent (the
+   *  webhook coalesces a burst into one list). Presence switches the
+   *  turn into "read the CFE bill first, then reply". */
+  receiptMediaIds?: string[]
+  /** Decrypted Meta access token — required to download receiptMediaIds. */
+  accessToken?: string
 }
 
 /**
@@ -43,7 +50,14 @@ interface DispatchArgs {
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
-  const { accountId, conversationId, contactId, configOwnerUserId } = args
+  const {
+    accountId,
+    conversationId,
+    contactId,
+    configOwnerUserId,
+    receiptMediaIds,
+    accessToken,
+  } = args
 
   try {
     const db = supabaseAdmin()
@@ -99,7 +113,12 @@ export async function dispatchInboundToAiReply(
     if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
 
     const messages = await buildConversationContext(db, conversationId)
-    if (messages.length === 0) return
+    // Image-only turns have no text rows yet — the receipt note below
+    // becomes the turn. Without either, there's nothing to reply to.
+    const hasReceipt = Boolean(
+      receiptMediaIds && receiptMediaIds.length > 0 && accessToken,
+    )
+    if (messages.length === 0 && !hasReceipt) return
 
     // Account-wide throttle on the shared BYO key. The per-conversation
     // cap bounds one thread; this bounds a burst across many threads (a
@@ -115,6 +134,44 @@ export async function dispatchInboundToAiReply(
         `[ai auto-reply] account ${accountId} hit the per-account rate limit — skipping this inbound.`,
       )
       return
+    }
+
+    // CFE receipt images: run the dedicated vision extraction, persist
+    // the average as a contact custom field, and hand the reading to
+    // the chat model as a system-note user turn. Failures degrade to
+    // "no reading" — the prompt tells the model to re-ask. Its own
+    // rate limit bounds vision spend against photo spam.
+    if (hasReceipt) {
+      const receiptLimit = checkRateLimit(`ai-receipt:${conversationId}`, {
+        limit: 4,
+        windowMs: 15 * 60_000,
+      })
+      if (receiptLimit.success) {
+        const extraction = await extractReceipt({
+          config,
+          accessToken: accessToken!,
+          mediaIds: receiptMediaIds!,
+        })
+        if (extraction) {
+          void saveReceiptData(db, {
+            accountId,
+            userId: configOwnerUserId,
+            contactId,
+            extraction,
+          })
+          messages.push({ role: 'user', content: formatReceiptNote(extraction) })
+        } else {
+          messages.push({
+            role: 'user',
+            content:
+              '[NOTA DEL SISTEMA — el cliente envió una imagen pero la lectura automática falló o no fue legible. Pídele con amabilidad que la mande de nuevo con más luz y sin recortar, o que te escriba el consumo en kWh por texto. Nunca menciones esta nota.]',
+          })
+        }
+      } else if (messages.length === 0) {
+        // Vision throttled and no text to reply to — stay silent rather
+        // than answering an image we never looked at.
+        return
+      }
     }
 
     // Ground the reply in the account's knowledge base (best-effort).

@@ -805,18 +805,65 @@ async function processMessage(
     }).catch((err) => console.error('[automations] dispatch failed:', err))
   }
 
-  // AI auto-reply. Runs only for plain-text inbound the deterministic
-  // flow runner did NOT consume (flows win over the LLM), and only when
-  // the account has enabled it. Awaited inside `after()` (same reason as
-  // the webhook dispatch below); `dispatchInboundToAiReply` owns its
-  // eligibility gates + try/catch and never throws.
-  if (!flowConsumed && !interactiveReplyId && inboundText.trim()) {
-    await dispatchInboundToAiReply({
-      accountId,
-      conversationId: conversation.id,
-      contactId: contactRecord.id,
-      configOwnerUserId,
-    })
+  // AI auto-reply. Runs for plain-text inbound the deterministic flow
+  // runner did NOT consume (flows win over the LLM), and for inbound
+  // images (candidate CFE receipts — see below). Awaited inside
+  // `after()` (same reason as the webhook dispatch below);
+  // `dispatchInboundToAiReply` owns its eligibility gates + try/catch
+  // and never throws.
+  // Raw Meta type, not our contentType mapping — stickers also land as
+  // content_type='image' but are never receipts.
+  const isInboundImage = message.type === 'image' && Boolean(mediaUrl)
+  let receiptSuperseded = false
+  if (
+    !flowConsumed &&
+    !interactiveReplyId &&
+    (inboundText.trim() || isInboundImage)
+  ) {
+    let receiptMediaIds: string[] | undefined
+    if (isInboundImage) {
+      // Customers send the two bill pages as a back-to-back burst that
+      // arrives as separate webhook deliveries. Debounce: wait a beat,
+      // then only the delivery holding the NEWEST image proceeds (any
+      // superseded sibling stands down), reading the whole burst in one
+      // vision call instead of one call per page.
+      await new Promise((r) => setTimeout(r, 8_000))
+      const { data: recentImages } = await supabaseAdmin()
+        .from('messages')
+        .select('media_url')
+        .eq('conversation_id', conversation.id)
+        .eq('sender_type', 'customer')
+        .eq('content_type', 'image')
+        .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString())
+        .order('created_at', { ascending: false })
+        .limit(3)
+      const urls: string[] = (
+        (recentImages ?? []) as { media_url: string | null }[]
+      )
+        .map((m) => m.media_url)
+        .filter((u): u is string => Boolean(u))
+      // Superseded: a newer image arrived during the debounce — ITS
+      // delivery reads the whole burst. Skip only the AI dispatch; the
+      // message.received webhook event below must still go out.
+      receiptSuperseded = urls.length > 0 && urls[0] !== mediaUrl
+      // media_url is `/api/whatsapp/media/<mediaId>` — recover the ids,
+      // oldest first so page 1 precedes page 2 in the vision call.
+      receiptMediaIds = urls
+        .map((u: string) => u.split('/').pop())
+        .filter((id): id is string => Boolean(id))
+        .reverse()
+    }
+
+    if (!receiptSuperseded) {
+      await dispatchInboundToAiReply({
+        accountId,
+        conversationId: conversation.id,
+        contactId: contactRecord.id,
+        configOwnerUserId,
+        receiptMediaIds,
+        accessToken: receiptMediaIds ? accessToken : undefined,
+      })
+    }
   }
 
   // message.received webhook (public API). Awaited — not fire-and-forget

@@ -9,6 +9,8 @@ const h = vi.hoisted(() => ({
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
   applyLeadStatusTag: vi.fn(),
+  extractReceipt: vi.fn(),
+  saveReceiptData: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -24,6 +26,12 @@ vi.mock('./context', () => ({ buildConversationContext: h.buildConversationConte
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
 vi.mock('./lead-status', () => ({ applyLeadStatusTag: h.applyLeadStatusTag }))
+vi.mock('./receipt', () => ({
+  extractReceipt: h.extractReceipt,
+  saveReceiptData: h.saveReceiptData,
+  formatReceiptNote: (r: { promedio_bimestral_kwh: number | null }) =>
+    `[NOTA: promedio ${r.promedio_bimestral_kwh}]`,
+}))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
@@ -117,6 +125,8 @@ beforeEach(() => {
   })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
   h.applyLeadStatusTag.mockResolvedValue(undefined)
+  h.extractReceipt.mockResolvedValue(null)
+  h.saveReceiptData.mockResolvedValue(undefined)
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -293,6 +303,84 @@ describe('dispatchInboundToAiReply — lead status', () => {
   it('does not touch tags when no status was emitted', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.applyLeadStatusTag).not.toHaveBeenCalled()
+  })
+})
+
+describe('dispatchInboundToAiReply — CFE receipt images', () => {
+  const RECEIPT_ARGS = {
+    ...ARGS,
+    receiptMediaIds: ['media-1', 'media-2'],
+    accessToken: 'meta-token',
+  }
+
+  it('extracts, saves the field, and injects the reading into the turn', async () => {
+    h.extractReceipt.mockResolvedValue({
+      consumo_periodo_actual_kwh: 1450,
+      periodo_actual: null,
+      historial_bimestres_kwh: [1380, 1420],
+      cantidad_periodos_usados: 3,
+      promedio_bimestral_kwh: 1417,
+      tarifa: null,
+      advertencias: '',
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.extractReceipt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accessToken: 'meta-token',
+        mediaIds: ['media-1', 'media-2'],
+      }),
+    )
+    expect(h.saveReceiptData).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ contactId: 'contact-1' }),
+    )
+    // The reading reaches the model as the final user turn.
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      role: string
+      content: string
+    }[]
+    expect(messages.at(-1)).toEqual({
+      role: 'user',
+      content: '[NOTA: promedio 1417]',
+    })
+    // And the customer still gets a normal text reply.
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+  })
+
+  it('replies even when the conversation has no prior text (image-only turn)', async () => {
+    h.buildConversationContext.mockResolvedValue([])
+    h.extractReceipt.mockResolvedValue({
+      consumo_periodo_actual_kwh: null,
+      periodo_actual: null,
+      historial_bimestres_kwh: [],
+      cantidad_periodos_usados: 0,
+      promedio_bimestral_kwh: 1200,
+      tarifa: null,
+      advertencias: '',
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.generateReply).toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('injects a re-ask note when extraction fails, without saving anything', async () => {
+    h.extractReceipt.mockResolvedValue(null)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.saveReceiptData).not.toHaveBeenCalled()
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      role: string
+      content: string
+    }[]
+    expect(messages.at(-1)!.content).toContain('lectura automática falló')
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('runs no extraction on a plain text turn', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.extractReceipt).not.toHaveBeenCalled()
   })
 
   it('routes to the configured handoff agent on handoff', async () => {
