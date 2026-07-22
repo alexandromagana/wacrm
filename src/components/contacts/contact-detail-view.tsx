@@ -38,7 +38,9 @@ import {
   X,
   DollarSign,
   LayoutTemplate,
+  MessageSquare,
 } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 
 interface ContactDetailViewProps {
@@ -56,6 +58,7 @@ export function ContactDetailView({
 }: ContactDetailViewProps) {
   const t = useTranslations('Contacts.detailView');
   const supabase = createClient();
+  const router = useRouter();
   const { accountId, defaultCurrency } = useAuth();
 
   const [contact, setContact] = useState<Contact | null>(null);
@@ -247,6 +250,27 @@ export function ContactDetailView({
     setSavingTags(false);
   }
 
+  /**
+   * Jump to this contact's WhatsApp thread. Conversations are
+   * one-per-contact and the inbox already deep-links via `?c=<id>`, so
+   * this is a lookup + navigate; contacts who never messaged (manual
+   * add / lead import) simply have no thread yet.
+   */
+  async function goToConversation() {
+    if (!contactId) return;
+    const { data } = await supabase
+      .from('conversations')
+      .select('id')
+      .eq('contact_id', contactId)
+      .maybeSingle();
+    if (!data?.id) {
+      toast.info(t('toastNoConversation'));
+      return;
+    }
+    onOpenChange(false);
+    router.push(`/inbox?c=${data.id}`);
+  }
+
   async function addNote() {
     if (!contactId || !newNote.trim()) return;
     setSavingNote(true);
@@ -433,7 +457,7 @@ export function ContactDetailView({
                   </div>
                 </div>
               </div>
-              <div className="mt-3">
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   onClick={() => setTemplatePickerOpen(true)}
@@ -446,6 +470,15 @@ export function ContactDetailView({
                     <LayoutTemplate className="size-4" />
                   )}
                   {t('sendTemplateBtn')}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={goToConversation}
+                  className="border-border text-muted-foreground hover:bg-muted"
+                >
+                  <MessageSquare className="size-4" />
+                  {t('viewConversationBtn')}
                 </Button>
               </div>
             </SheetHeader>

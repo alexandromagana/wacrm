@@ -85,6 +85,14 @@ export default function ContactsPage() {
   const [totalCount, setTotalCount] = useState(0);
   // Tag filter — contacts shown must have ANY of these tags (OR).
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  // Custom-field filter — one field + contains-match value (e.g.
+  // Ciudad ~ "cancun"). Mutually exclusive with the tag filter: the
+  // tag path goes through the filter_contacts_by_tags RPC, which the
+  // field condition can't ride along on.
+  const [fieldDefs, setFieldDefs] = useState<{ id: string; field_name: string }[]>([]);
+  const [fieldFilterId, setFieldFilterId] = useState<string | null>(null);
+  const [fieldFilterValue, setFieldFilterValue] = useState('');
+  const fieldFilterActive = Boolean(fieldFilterId && fieldFilterValue.trim());
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -110,6 +118,14 @@ export default function ContactsPage() {
   // results. Without this, rapidly toggling tag filters could let a slower
   // earlier request resolve last and render stale rows.
   const fetchSeq = useRef(0);
+
+  const fetchFieldDefs = useCallback(async () => {
+    const { data } = await supabase
+      .from('custom_fields')
+      .select('id, field_name')
+      .order('field_name');
+    if (data) setFieldDefs(data);
+  }, [supabase]);
 
   const fetchTags = useCallback(async () => {
     const { data } = await supabase.from('tags').select('*');
@@ -161,6 +177,36 @@ export default function ContactsPage() {
       const rows = (data ?? []) as { contact: Contact; total_count: number }[];
       contactRows = rows.map((r) => r.contact);
       count = rows.length > 0 ? Number(rows[0].total_count) : 0;
+    } else if (fieldFilterActive) {
+      // Custom-field filter: inner-join the value row so only matching
+      // contacts survive. (contact_id, custom_field_id) is UNIQUE, so
+      // the join can't duplicate parents and the exact count stays
+      // honest.
+      let query = supabase
+        .from('contacts')
+        .select(
+          '*, field_match:contact_custom_values!inner(custom_field_id, value)',
+          { count: 'exact' },
+        )
+        .eq('field_match.custom_field_id', fieldFilterId)
+        .ilike('field_match.value', `%${fieldFilterValue.trim()}%`)
+        .order('created_at', { ascending: false })
+        .range(from, to);
+
+      if (term) {
+        const like = `%${term}%`;
+        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
+      }
+
+      const { data, count: exactCount, error } = await query;
+      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+      if (error) {
+        toast.error(t('toastFailedLoad'));
+        setLoading(false);
+        return;
+      }
+      contactRows = (data ?? []) as Contact[];
+      count = exactCount ?? 0;
     } else {
       let query = supabase
         .from('contacts')
@@ -242,7 +288,7 @@ export default function ContactsPage() {
 
     setContacts(enriched);
     setLoading(false);
-  }, [supabase, page, search, selectedTagIds, tagsMap, t]);
+  }, [supabase, page, search, selectedTagIds, fieldFilterActive, fieldFilterId, fieldFilterValue, tagsMap, t]);
 
   // Load-once-on-mount-ish data fetches. Each setter inside runs
   // inside an async promise completion (Supabase await), not
@@ -251,7 +297,8 @@ export default function ContactsPage() {
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchTags();
-  }, [fetchTags]);
+    fetchFieldDefs();
+  }, [fetchTags, fetchFieldDefs]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -358,7 +405,8 @@ export default function ContactsPage() {
   const allTags = Object.values(tagsMap).sort((a, b) =>
     a.name.localeCompare(b.name)
   );
-  const hasActiveFilters = search.trim().length > 0 || selectedTagIds.length > 0;
+  const hasActiveFilters =
+    search.trim().length > 0 || selectedTagIds.length > 0 || fieldFilterActive;
 
   function toggleTagFilter(tagId: string) {
     setSelectedTagIds((prev) =>
@@ -366,11 +414,27 @@ export default function ContactsPage() {
         ? prev.filter((id) => id !== tagId)
         : [...prev, tagId]
     );
+    // Tag and field filters are mutually exclusive (see state comment).
+    setFieldFilterId(null);
+    setFieldFilterValue('');
     setPage(0);
   }
 
   function clearTagFilters() {
     setSelectedTagIds([]);
+    setPage(0);
+  }
+
+  function setFieldFilter(fieldId: string | null, value: string) {
+    setFieldFilterId(fieldId);
+    setFieldFilterValue(value);
+    if (fieldId && value.trim()) setSelectedTagIds([]);
+    setPage(0);
+  }
+
+  function clearFieldFilter() {
+    setFieldFilterId(null);
+    setFieldFilterValue('');
     setPage(0);
   }
 
@@ -495,7 +559,96 @@ export default function ContactsPage() {
               )}
             </PopoverContent>
           </Popover>
+
+          <Popover>
+            <PopoverTrigger
+              render={
+                <Button
+                  variant="outline"
+                  className="border-border text-muted-foreground hover:bg-muted shrink-0"
+                />
+              }
+            >
+              <SlidersHorizontal className="size-4" />
+              {t('filterByField')}
+              {fieldFilterActive && (
+                <span className="ml-1 inline-flex items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
+                  1
+                </span>
+              )}
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-72 p-0">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+                <span className="text-sm font-medium text-popover-foreground">
+                  {t('filterByField')}
+                </span>
+                {fieldFilterActive && (
+                  <button
+                    onClick={clearFieldFilter}
+                    className="text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    {t('clearAll')}
+                  </button>
+                )}
+              </div>
+              {fieldDefs.length === 0 ? (
+                <p className="px-3 py-4 text-sm text-muted-foreground text-center">
+                  {t('noFieldsYet')}
+                </p>
+              ) : (
+                <div className="p-3 space-y-2">
+                  <div className="max-h-48 overflow-y-auto -mx-1 px-1">
+                    {fieldDefs.map((f) => (
+                      <label
+                        key={f.id}
+                        className="flex items-center gap-2.5 px-2 py-1.5 cursor-pointer hover:bg-muted/50 rounded-md"
+                      >
+                        <Checkbox
+                          checked={fieldFilterId === f.id}
+                          onCheckedChange={() =>
+                            setFieldFilter(
+                              fieldFilterId === f.id ? null : f.id,
+                              fieldFilterValue,
+                            )
+                          }
+                          aria-label={`Filter by ${f.field_name}`}
+                        />
+                        <span className="text-sm text-popover-foreground truncate">
+                          {f.field_name}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                  <Input
+                    value={fieldFilterValue}
+                    onChange={(e) =>
+                      setFieldFilter(fieldFilterId, e.target.value)
+                    }
+                    placeholder={t('fieldValuePlaceholder')}
+                    className="bg-card border-border text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+              )}
+            </PopoverContent>
+          </Popover>
         </div>
+
+        {/* Active field-filter chip */}
+        {fieldFilterActive && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-foreground">
+              {fieldDefs.find((f) => f.id === fieldFilterId)?.field_name}:{' '}
+              {fieldFilterValue.trim()}
+              <button
+                onClick={clearFieldFilter}
+                className="hover:text-destructive"
+                aria-label="Clear field filter"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          </div>
+        )}
 
         {/* Active tag-filter chips */}
         {selectedTagIds.length > 0 && (

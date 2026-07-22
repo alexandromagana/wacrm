@@ -318,7 +318,10 @@
       "toastFailedDelete": "Failed to delete contact",
       "toastDeleted": "Contact deleted",
       "toastBulkFailedDelete": "Failed to delete contacts",
-      "toastBulkDeleted": "{count} contacts deleted"
+      "toastBulkDeleted": "{count} contacts deleted",
+      "filterByField": "Filter by field",
+      "noFieldsYet": "No custom fields yet",
+      "fieldValuePlaceholder": "Value… (e.g. Cancún)"
     },
     "form": {
       "addTitle": "Add Contact",
@@ -362,7 +365,8 @@
         "deals": "Deals",
         "noTags": "No tags",
         "noDeals": "No deals",
-        "addNotePlaceholder": "Add a note..."
+        "addNotePlaceholder": "Add a note...",
+        "tags": "Tags"
       },
       "actions": {
         "edit": "Edit",
@@ -411,7 +415,9 @@
       "toastCustomFieldsSaved": "Custom fields saved",
       "toastCustomFieldsFailed": "Failed to save custom fields",
       "toastTemplateSent": "Template \"{name}\" sent",
-      "toastTemplateFailed": "Failed to send template: {reason}"
+      "toastTemplateFailed": "Failed to send template: {reason}",
+      "viewConversationBtn": "View conversation",
+      "toastNoConversation": "This contact has no WhatsApp conversation yet"
     },
     "importModal": {
       "title": "Import Contacts",
