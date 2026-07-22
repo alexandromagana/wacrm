@@ -12,6 +12,7 @@ import {
   inboundDebounceMs,
   resolveInboundBurst,
 } from '@/lib/ai/inbound-buffer'
+import { parseLeadForm, applyLeadForm } from '@/lib/contacts/lead-form'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
 import {
   handleTemplateWebhookChange,
@@ -698,6 +699,24 @@ async function processMessage(
   if (msgError) {
     console.error('Error inserting message:', msgError)
     return
+  }
+
+  // Lead-ad questionnaire intake: most conversations open with the
+  // click-to-WhatsApp form ("Completé el formulario… / City: … /
+  // Full name: …"). Parse the key:value lines and land them on the
+  // contact (name/email + custom fields) before anyone opens the
+  // thread. `applyLeadForm` never throws; parse returns null for
+  // ordinary prose, so non-form messages cost one regex pass.
+  if (contentText) {
+    const formPairs = parseLeadForm(contentText)
+    if (formPairs) {
+      await applyLeadForm(supabaseAdmin(), {
+        accountId,
+        userId: configOwnerUserId,
+        contactId: contactRecord.id,
+        pairs: formPairs,
+      })
+    }
   }
 
   // Update conversation
