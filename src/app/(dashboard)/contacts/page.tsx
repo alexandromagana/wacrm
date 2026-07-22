@@ -60,8 +60,16 @@ import { useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
 
+// Custom fields surfaced as roster columns. Names must match what the
+// automatic intakes create: the receipt reader (lib/ai/receipt.ts) and
+// the lead-form import (lib/contacts/lead-form.ts). Missing fields
+// simply render "-", so the columns are safe before any intake ran.
+const LIST_CUSTOM_FIELDS = ['Consumo promedio (kWh)', 'Ciudad'] as const;
+
 interface ContactWithTags extends Contact {
   tags?: Tag[];
+  /** Values for LIST_CUSTOM_FIELDS, keyed by field name. */
+  customValues?: Record<string, string>;
 }
 
 export default function ContactsPage() {
@@ -184,13 +192,39 @@ export default function ContactsPage() {
       return;
     }
 
-    // Fetch tags for these contacts
+    // Fetch tags + the roster's custom-field columns for these contacts
     const contactIds = contactRows.map((c) => c.id);
-    const { data: contactTags } = await supabase
-      .from('contact_tags')
-      .select('contact_id, tag_id')
-      .in('contact_id', contactIds);
+    const [{ data: contactTags }, { data: listFields }] = await Promise.all([
+      supabase
+        .from('contact_tags')
+        .select('contact_id, tag_id')
+        .in('contact_id', contactIds),
+      supabase
+        .from('custom_fields')
+        .select('id, field_name')
+        .in('field_name', [...LIST_CUSTOM_FIELDS]),
+    ]);
     if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+
+    const fieldNameById: Record<string, string> = {};
+    listFields?.forEach((f) => {
+      fieldNameById[f.id] = f.field_name;
+    });
+    const valuesByContact: Record<string, Record<string, string>> = {};
+    if (listFields && listFields.length > 0) {
+      const { data: fieldValues } = await supabase
+        .from('contact_custom_values')
+        .select('contact_id, custom_field_id, value')
+        .in('contact_id', contactIds)
+        .in('custom_field_id', Object.keys(fieldNameById));
+      if (seq !== fetchSeq.current) return; // superseded by a newer fetch
+      fieldValues?.forEach((v) => {
+        const name = fieldNameById[v.custom_field_id];
+        if (!name || !v.value) return;
+        if (!valuesByContact[v.contact_id]) valuesByContact[v.contact_id] = {};
+        valuesByContact[v.contact_id][name] = v.value;
+      });
+    }
 
     const tagsByContact: Record<string, string[]> = {};
     contactTags?.forEach((ct) => {
@@ -203,6 +237,7 @@ export default function ContactsPage() {
       tags: (tagsByContact[c.id] ?? [])
         .map((tid) => tagsMap[tid])
         .filter(Boolean),
+      customValues: valuesByContact[c.id] ?? {},
     }));
 
     setContacts(enriched);
@@ -545,6 +580,8 @@ export default function ContactsPage() {
               <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.email')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
+              <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.consumption')}</TableHead>
+              <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.city')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.tags')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
               <TableHead className="text-muted-foreground w-12" />
@@ -553,7 +590,7 @@ export default function ContactsPage() {
           <TableBody>
             {loading ? (
               <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={10} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Loader2 className="size-6 animate-spin text-primary" />
                     <p className="text-sm text-muted-foreground">{t('loading')}</p>
@@ -562,7 +599,7 @@ export default function ContactsPage() {
               </TableRow>
             ) : contacts.length === 0 ? (
               <TableRow className="border-border">
-                <TableCell colSpan={8} className="text-center py-12">
+                <TableCell colSpan={10} className="text-center py-12">
                   <div className="flex flex-col items-center gap-2">
                     <Users className="size-8 text-muted-foreground" />
                     <p className="text-sm text-muted-foreground">
@@ -611,6 +648,16 @@ export default function ContactsPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
                     {contact.company || <span className="text-muted-foreground">-</span>}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground hidden md:table-cell text-sm font-mono">
+                    {contact.customValues?.['Consumo promedio (kWh)'] || (
+                      <span className="text-muted-foreground">-</span>
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
+                    {contact.customValues?.['Ciudad'] || (
+                      <span className="text-muted-foreground">-</span>
+                    )}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     <div className="flex flex-wrap gap-1">
