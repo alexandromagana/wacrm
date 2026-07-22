@@ -162,7 +162,10 @@ export async function extractReceipt(args: {
   if (mediaIds.length === 0) return null
 
   try {
-    const images: { base64: string; mimeType: string }[] = []
+    // Receipts arrive as photos OR as the PDF CFE emails out — accept
+    // both; anything else the burst dragged in (a Word doc, a random
+    // download) is skipped by mime.
+    const files: MediaFile[] = []
     for (const mediaId of mediaIds.slice(0, 3)) {
       const info = await getMediaUrl({ mediaId, accessToken })
       const { buffer, contentType } = await downloadMedia({
@@ -170,15 +173,17 @@ export async function extractReceipt(args: {
         accessToken,
       })
       const mimeType = contentType || info.mimeType || 'image/jpeg'
-      if (!mimeType.startsWith('image/')) continue
-      images.push({ base64: buffer.toString('base64'), mimeType })
+      if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
+        continue
+      }
+      files.push({ base64: buffer.toString('base64'), mimeType })
     }
-    if (images.length === 0) return null
+    if (files.length === 0) return null
 
     const raw =
       config.provider === 'anthropic'
-        ? await visionAnthropic(config, images)
-        : await visionOpenAi(config, images)
+        ? await visionAnthropic(config, files)
+        : await visionOpenAi(config, files)
     if (!raw) return null
 
     return parseReceiptJson(raw)
@@ -188,9 +193,14 @@ export async function extractReceipt(args: {
   }
 }
 
+interface MediaFile {
+  base64: string
+  mimeType: string
+}
+
 async function visionOpenAi(
   config: Pick<AiConfig, 'model' | 'apiKey'>,
-  images: { base64: string; mimeType: string }[],
+  files: MediaFile[],
 ): Promise<string | null> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
@@ -205,11 +215,23 @@ async function visionOpenAi(
         {
           role: 'user',
           content: [
-            { type: 'text', text: 'Imágenes del recibo:' },
-            ...images.map((img) => ({
-              type: 'image_url',
-              image_url: { url: `data:${img.mimeType};base64,${img.base64}` },
-            })),
+            { type: 'text', text: 'Recibo del cliente:' },
+            ...files.map((f) =>
+              f.mimeType === 'application/pdf'
+                ? {
+                    type: 'file',
+                    file: {
+                      filename: 'recibo_cfe.pdf',
+                      file_data: `data:application/pdf;base64,${f.base64}`,
+                    },
+                  }
+                : {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${f.mimeType};base64,${f.base64}`,
+                    },
+                  },
+            ),
           ],
         },
       ],
@@ -230,7 +252,7 @@ async function visionOpenAi(
 
 async function visionAnthropic(
   config: Pick<AiConfig, 'model' | 'apiKey'>,
-  images: { base64: string; mimeType: string }[],
+  files: MediaFile[],
 ): Promise<string | null> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -247,15 +269,26 @@ async function visionAnthropic(
         {
           role: 'user',
           content: [
-            ...images.map((img) => ({
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: img.mimeType,
-                data: img.base64,
-              },
-            })),
-            { type: 'text', text: 'Imágenes del recibo. Responde solo el JSON.' },
+            ...files.map((f) =>
+              f.mimeType === 'application/pdf'
+                ? {
+                    type: 'document',
+                    source: {
+                      type: 'base64',
+                      media_type: 'application/pdf',
+                      data: f.base64,
+                    },
+                  }
+                : {
+                    type: 'image',
+                    source: {
+                      type: 'base64',
+                      media_type: f.mimeType,
+                      data: f.base64,
+                    },
+                  },
+            ),
+            { type: 'text', text: 'Recibo del cliente. Responde solo el JSON.' },
           ],
         },
       ],

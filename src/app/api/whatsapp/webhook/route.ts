@@ -811,17 +811,22 @@ async function processMessage(
   // `after()` (same reason as the webhook dispatch below);
   // `dispatchInboundToAiReply` owns its eligibility gates + try/catch
   // and never throws.
-  // Raw Meta type, not our contentType mapping — stickers also land as
+  // Receipt candidates: photos and the PDF CFE emails out. Raw Meta
+  // type, not our contentType mapping — stickers also land as
   // content_type='image' but are never receipts.
-  const isInboundImage = message.type === 'image' && Boolean(mediaUrl)
+  const isReceiptCandidate =
+    Boolean(mediaUrl) &&
+    (message.type === 'image' ||
+      (message.type === 'document' &&
+        message.document?.mime_type === 'application/pdf'))
   let receiptSuperseded = false
   if (
     !flowConsumed &&
     !interactiveReplyId &&
-    (inboundText.trim() || isInboundImage)
+    (inboundText.trim() || isReceiptCandidate)
   ) {
     let receiptMediaIds: string[] | undefined
-    if (isInboundImage) {
+    if (isReceiptCandidate) {
       // Customers send the two bill pages as a back-to-back burst that
       // arrives as separate webhook deliveries. Debounce: wait a beat,
       // then only the delivery holding the NEWEST image proceeds (any
@@ -833,7 +838,7 @@ async function processMessage(
         .select('media_url')
         .eq('conversation_id', conversation.id)
         .eq('sender_type', 'customer')
-        .eq('content_type', 'image')
+        .in('content_type', ['image', 'document'])
         .gte('created_at', new Date(Date.now() - 15 * 60_000).toISOString())
         .order('created_at', { ascending: false })
         .limit(3)
