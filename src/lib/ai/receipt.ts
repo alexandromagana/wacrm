@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
-import { aiVisionTimeoutMs } from './defaults'
+import { aiVisionTimeoutMs, aiVisionMaxTokens } from './defaults'
 import type { AiConfig } from './types'
 import {
   CIUDAD_FIELD_NAME,
@@ -321,7 +321,7 @@ async function visionOpenAi(
           ],
         },
       ],
-      max_completion_tokens: 1500,
+      max_completion_tokens: aiVisionMaxTokens(),
       response_format: { type: 'json_object' },
     }),
     signal: AbortSignal.timeout(aiVisionTimeoutMs()),
@@ -338,10 +338,23 @@ async function visionOpenAi(
   }
   const data = (await res.json().catch(() => null)) as {
     choices?: { message?: { content?: string }; finish_reason?: string }[]
+    usage?: {
+      completion_tokens?: number
+      completion_tokens_details?: { reasoning_tokens?: number }
+    }
   } | null
   const choice = data?.choices?.[0]
   if (choice?.finish_reason === 'length') {
-    console.error('[ai receipt] OpenAI vision truncated (hit token cap)')
+    // Break out reasoning tokens: on a reasoning model they eat the
+    // budget before any JSON is emitted, which looks identical to a
+    // "chatty model" truncation but needs the opposite fix (raise the
+    // cap / use a non-reasoning model, not a terser prompt).
+    const reasoning = data?.usage?.completion_tokens_details?.reasoning_tokens
+    console.error(
+      `[ai receipt] OpenAI vision truncated (hit token cap ${aiVisionMaxTokens()}; ` +
+        `completion=${data?.usage?.completion_tokens ?? '?'}, reasoning=${reasoning ?? 0}). ` +
+        `Model "${config.model}" — if reasoning > 0 this is a reasoning model: raise AI_VISION_MAX_TOKENS or pin a non-reasoning vision model.`,
+    )
   }
   return choice?.message?.content ?? null
 }
@@ -359,7 +372,7 @@ async function visionAnthropic(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 1500,
+      max_tokens: aiVisionMaxTokens(),
       system: EXTRACTION_PROMPT,
       messages: [
         {

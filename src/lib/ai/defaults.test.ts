@@ -1,5 +1,22 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { buildDateTimeNote } from './defaults'
+import { buildDateTimeNote, aiVisionMaxTokens } from './defaults'
+
+describe('aiVisionMaxTokens', () => {
+  afterEach(() => delete process.env.AI_VISION_MAX_TOKENS)
+
+  it('defaults high enough to survive a reasoning model’s hidden budget', () => {
+    // Reasoning tokens are billed against this same cap before any JSON
+    // is emitted — a small cap silently truncates every read.
+    expect(aiVisionMaxTokens()).toBeGreaterThanOrEqual(4000)
+  })
+
+  it('honours the env override and ignores junk', () => {
+    process.env.AI_VISION_MAX_TOKENS = '12000'
+    expect(aiVisionMaxTokens()).toBe(12000)
+    process.env.AI_VISION_MAX_TOKENS = 'nope'
+    expect(aiVisionMaxTokens()).toBe(8000)
+  })
+})
 
 describe('buildDateTimeNote', () => {
   afterEach(() => delete process.env.AI_TIMEZONE)

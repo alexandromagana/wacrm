@@ -80,6 +80,27 @@ export function aiVisionTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VISION_TIMEOUT_MS
 }
 
+const DEFAULT_VISION_MAX_TOKENS = 8000
+
+/**
+ * Output budget for the receipt extraction call. Sized for REASONING
+ * models (the GPT-5 family, o-series): their internal reasoning is
+ * billed and counted against this same budget BEFORE any visible token
+ * is emitted, so a cap tuned for a non-reasoning model gets consumed by
+ * thinking alone and the JSON comes back truncated — which is exactly
+ * how switching the account to gpt-5-mini silently broke receipt reads
+ * that worked fine on gpt-4.1-mini at a 500 cap.
+ *
+ * Generous by design: the actual JSON is ~150 tokens, and providers
+ * only bill what's produced, so headroom costs nothing on a
+ * non-reasoning model while keeping reasoning models functional.
+ * Override with `AI_VISION_MAX_TOKENS`.
+ */
+export function aiVisionMaxTokens(): number {
+  const raw = Number(process.env.AI_VISION_MAX_TOKENS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VISION_MAX_TOKENS
+}
+
 /** How many recent text messages to feed the model. Override with
  *  `AI_CONTEXT_MESSAGE_LIMIT`. */
 export function aiContextMessageLimit(): number {
