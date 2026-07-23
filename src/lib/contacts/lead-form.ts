@@ -56,6 +56,16 @@ function normalizeKey(key: string): string {
     .trim()
 }
 
+// Stable custom-field names, exported so other intake sources (the
+// receipt reader's tarifa/ciudad extraction) write to the exact same
+// columns instead of risking a near-duplicate field from a casing/
+// wording drift.
+export const CIUDAD_FIELD_NAME = 'Ciudad'
+export const FINANCIAMIENTO_FIELD_NAME = 'Interesado en financiamiento'
+export const TECHO_FIELD_NAME = 'Tamaño de techo'
+export const PROPIEDAD_FIELD_NAME = 'Tipo de propiedad'
+export const LUZ_FIELD_NAME = 'Pago promedio de luz'
+
 /**
  * Map a form question to where it lands. Known questions get short,
  * stable custom-field names (the ad's wording can drift without
@@ -70,19 +80,19 @@ export function canonicalTarget(key: string): CanonicalTarget {
   if (k === 'full name' || k.includes('nombre')) return { kind: 'name' }
   if (k.includes('email') || k.includes('correo')) return { kind: 'email' }
   if (k === 'city' || k.includes('ciudad')) {
-    return { kind: 'custom', fieldName: 'Ciudad' }
+    return { kind: 'custom', fieldName: CIUDAD_FIELD_NAME }
   }
   if (k.includes('financiamiento')) {
-    return { kind: 'custom', fieldName: 'Interesado en financiamiento' }
+    return { kind: 'custom', fieldName: FINANCIAMIENTO_FIELD_NAME }
   }
   if (k.includes('techo')) {
-    return { kind: 'custom', fieldName: 'Tamaño de techo' }
+    return { kind: 'custom', fieldName: TECHO_FIELD_NAME }
   }
   if (k.includes('propiedad')) {
-    return { kind: 'custom', fieldName: 'Tipo de propiedad' }
+    return { kind: 'custom', fieldName: PROPIEDAD_FIELD_NAME }
   }
   if (k.includes('electricidad') || k.includes('luz')) {
-    return { kind: 'custom', fieldName: 'Pago promedio de luz' }
+    return { kind: 'custom', fieldName: LUZ_FIELD_NAME }
   }
   return { kind: 'custom', fieldName: key.replace(/[¿?]/g, '').slice(0, 60) }
 }

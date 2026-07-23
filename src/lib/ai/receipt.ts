@@ -2,6 +2,10 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
 import { aiRequestTimeoutMs } from './defaults'
 import type { AiConfig } from './types'
+import {
+  CIUDAD_FIELD_NAME,
+  PROPIEDAD_FIELD_NAME,
+} from '@/lib/contacts/lead-form'
 
 // ============================================================
 // CFE receipt reading (vision).
@@ -21,6 +25,8 @@ export interface ReceiptExtraction {
   cantidad_periodos_usados: number
   promedio_bimestral_kwh: number | null
   tarifa: string | null
+  /** City/municipality read off the service address, or null. */
+  ciudad: string | null
   advertencias: string
 }
 
@@ -40,8 +46,10 @@ promedio bimestral.
 
 # QUÉ BUSCAR
 - Página 1: el consumo en kWh del periodo facturado actual, el periodo
-  de facturación (fechas), y la tarifa contratada si aparece (ej. 1,
-  1A, DAC, PDBT, GDMTH).
+  de facturación (fechas), la tarifa contratada si aparece (ej. 1,
+  1A, DAC, PDBT, GDMTH), y la ciudad o municipio del domicilio del
+  servicio (busca la dirección impresa en el recibo — extrae SOLO la
+  ciudad o municipio, nunca la calle ni el número).
 - Página 2: la tabla o gráfica de "Historial de consumo" con los kWh
   de los últimos bimestres. Extrae cada valor legible, en orden.
 
@@ -67,6 +75,7 @@ Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
   "cantidad_periodos_usados": <entero>,
   "promedio_bimestral_kwh": <entero redondeado o null>,
   "tarifa": "<tarifa>" o null,
+  "ciudad": "<ciudad o municipio del domicilio>" o null,
   "advertencias": "<texto breve, o cadena vacía si todo se leyó bien>"
 }`
 
@@ -108,8 +117,30 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
         ? Math.round(num(r.promedio_bimestral_kwh)!)
         : null,
     tarifa: typeof r.tarifa === 'string' ? r.tarifa : null,
+    ciudad:
+      typeof r.ciudad === 'string' && r.ciudad.trim() ? r.ciudad.trim() : null,
     advertencias: typeof r.advertencias === 'string' ? r.advertencias : '',
   }
+}
+
+/**
+ * Guess property type from the CFE tariff code — a business rule, kept
+ * deterministic rather than trusting the vision model's reasoning on
+ * every call. Conservative: unrecognized/ambiguous codes return null
+ * rather than a guess, per "never invent" — a wrong tariff read is not
+ * grounds to mislabel a home as a business.
+ *
+ *   1, 1A–1F, DAC        → doméstica (residential)             → Casa
+ *   PDBT                 → pequeña demanda baja tensión         → Negocio
+ *   GDBT, GDMTH, GDMTO…  → gran demanda (baja/media tensión)    → Industria
+ */
+export function inferPropertyType(tarifa: string | null): string | null {
+  if (!tarifa) return null
+  const t = tarifa.trim().toUpperCase()
+  if (t === 'DAC' || /^1[A-F]?$/.test(t)) return 'Casa'
+  if (t === 'PDBT') return 'Negocio'
+  if (t.startsWith('GD')) return 'Industria'
+  return null
 }
 
 /**
@@ -140,6 +171,17 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
     lines.push(`historial_kwh: ${r.historial_bimestres_kwh.join(', ')}`)
   }
   if (r.tarifa) lines.push(`tarifa: ${r.tarifa}`)
+  if (r.ciudad) {
+    lines.push(
+      `ciudad_detectada: ${r.ciudad} (ya se guardó en el contacto — no la vuelvas a preguntar salvo que el cliente la corrija)`,
+    )
+  }
+  const tipoPropiedad = inferPropertyType(r.tarifa)
+  if (tipoPropiedad) {
+    lines.push(
+      `tipo_propiedad_sugerido: ${tipoPropiedad} (según la tarifa del recibo, ya se guardó — no lo vuelvas a preguntar salvo que el cliente lo corrija)`,
+    )
+  }
   if (r.advertencias) lines.push(`advertencias: ${r.advertencias}`)
   lines.push(
     'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
@@ -310,10 +352,75 @@ async function visionAnthropic(
 }
 
 /**
- * Persist the extracted average (and tariff, when read) as contact
- * custom fields, find-or-create per account — the same convention the
- * lead-status tags use. Never throws: a failed save must not block the
- * customer-facing reply.
+ * Find-or-create a custom field and write its value for a contact.
+ * `overwrite: false` skips the write when the contact already has a
+ * non-empty value — used for ciudad/tipo de propiedad so a receipt's
+ * OCR guess never clobbers an explicit answer the lead form already
+ * collected. Consumo always overwrites: the newest reading should win.
+ */
+async function upsertField(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    userId: string
+    contactId: string
+    fieldName: string
+    fieldType: 'text' | 'number'
+    value: string
+    overwrite: boolean
+  },
+): Promise<void> {
+  const { accountId, userId, contactId, fieldName, fieldType, value, overwrite } =
+    args
+
+  const { data: existingField, error: readErr } = await db
+    .from('custom_fields')
+    .select('id')
+    .eq('account_id', accountId)
+    .eq('field_name', fieldName)
+    .maybeSingle()
+  if (readErr) throw readErr
+
+  let fieldId = existingField?.id as string | undefined
+  if (!fieldId) {
+    const { data: created, error: insErr } = await db
+      .from('custom_fields')
+      .insert({
+        account_id: accountId,
+        user_id: userId,
+        field_name: fieldName,
+        field_type: fieldType,
+      })
+      .select('id')
+      .single()
+    if (insErr) throw insErr
+    fieldId = created.id as string
+  }
+
+  if (!overwrite) {
+    const { data: existingValue } = await db
+      .from('contact_custom_values')
+      .select('value')
+      .eq('contact_id', contactId)
+      .eq('custom_field_id', fieldId)
+      .maybeSingle()
+    if (existingValue?.value) return // already answered — don't clobber it
+  }
+
+  const { error: upErr } = await db.from('contact_custom_values').upsert(
+    { contact_id: contactId, custom_field_id: fieldId, value },
+    { onConflict: 'contact_id,custom_field_id' },
+  )
+  if (upErr) throw upErr
+}
+
+/**
+ * Persist everything learned from a receipt read as contact custom
+ * fields: consumo (always overwrites — the newest reading wins), and
+ * ciudad / tipo de propiedad (fill-only — the lead form's explicit
+ * answer wins over a receipt guess). Each field is independent and
+ * swallows its own error, so a failure on one never blocks the others
+ * or the customer-facing reply.
  */
 export async function saveReceiptData(
   db: SupabaseClient,
@@ -326,44 +433,49 @@ export async function saveReceiptData(
   },
 ): Promise<void> {
   const { accountId, userId, contactId, extraction } = args
+  const base = { accountId, userId, contactId }
+
   const avg = extraction.promedio_bimestral_kwh
-  if (avg == null || !isPlausibleAverage(avg)) return
-
-  try {
-    const { data: existing, error: readErr } = await db
-      .from('custom_fields')
-      .select('id')
-      .eq('account_id', accountId)
-      .eq('field_name', CONSUMO_FIELD_NAME)
-      .maybeSingle()
-    if (readErr) throw readErr
-
-    let fieldId = existing?.id as string | undefined
-    if (!fieldId) {
-      const { data: created, error: insErr } = await db
-        .from('custom_fields')
-        .insert({
-          account_id: accountId,
-          user_id: userId,
-          field_name: CONSUMO_FIELD_NAME,
-          field_type: 'number',
-        })
-        .select('id')
-        .single()
-      if (insErr) throw insErr
-      fieldId = created.id as string
-    }
-
-    const { error: upErr } = await db.from('contact_custom_values').upsert(
-      {
-        contact_id: contactId,
-        custom_field_id: fieldId,
+  if (avg != null && isPlausibleAverage(avg)) {
+    try {
+      await upsertField(db, {
+        ...base,
+        fieldName: CONSUMO_FIELD_NAME,
+        fieldType: 'number',
         value: String(avg),
-      },
-      { onConflict: 'contact_id,custom_field_id' },
-    )
-    if (upErr) throw upErr
-  } catch (err) {
-    console.error('[ai receipt] failed to save consumption field:', err)
+        overwrite: true,
+      })
+    } catch (err) {
+      console.error('[ai receipt] failed to save consumption field:', err)
+    }
+  }
+
+  if (extraction.ciudad) {
+    try {
+      await upsertField(db, {
+        ...base,
+        fieldName: CIUDAD_FIELD_NAME,
+        fieldType: 'text',
+        value: extraction.ciudad,
+        overwrite: false,
+      })
+    } catch (err) {
+      console.error('[ai receipt] failed to save ciudad field:', err)
+    }
+  }
+
+  const tipoPropiedad = inferPropertyType(extraction.tarifa)
+  if (tipoPropiedad) {
+    try {
+      await upsertField(db, {
+        ...base,
+        fieldName: PROPIEDAD_FIELD_NAME,
+        fieldType: 'text',
+        value: tipoPropiedad,
+        overwrite: false,
+      })
+    } catch (err) {
+      console.error('[ai receipt] failed to save tipo de propiedad field:', err)
+    }
   }
 }
