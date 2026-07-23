@@ -73,6 +73,15 @@ CFE, parece una foto de un techo").
   crudos que leas. El promedio se calcula por fuera con exactitud a
   partir de lo que reportes.
 
+# COMPACTO (importante)
+Responde de la forma MÁS BREVE posible: solo los 7 campos del JSON de
+abajo, nada más. NO agregues campos extra, NO transcribas la tabla
+completa, NO repitas valores, NO expliques tu razonamiento. El
+historial es un arreglo simple de máximo 5 números (ej. [1002, 1170,
+1701, 1420, 1543]) — nunca objetos, nunca importes ni fechas dentro
+del arreglo. "advertencias" es una frase corta o cadena vacía, jamás
+un párrafo. Una respuesta completa cabe en menos de 200 palabras.
+
 # FORMATO DE RESPUESTA
 Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
 {
@@ -312,7 +321,7 @@ async function visionOpenAi(
           ],
         },
       ],
-      max_completion_tokens: 900,
+      max_completion_tokens: 1500,
       response_format: { type: 'json_object' },
     }),
     signal: AbortSignal.timeout(aiVisionTimeoutMs()),
@@ -350,7 +359,7 @@ async function visionAnthropic(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 900,
+      max_tokens: 1500,
       system: EXTRACTION_PROMPT,
       messages: [
         {
