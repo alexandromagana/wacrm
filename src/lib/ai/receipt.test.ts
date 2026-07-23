@@ -183,6 +183,36 @@ describe('parseReceiptJson', () => {
     expect(parseReceiptJson('No pude leer la imagen, disculpa.')).toBeNull()
     expect(parseReceiptJson('')).toBeNull()
   })
+
+  it('matches the hand-computed average on a real CFE bill', () => {
+    // Regression guard, from a live misread: the model reported the
+    // page-1 METER READING (lectura actual 1922) instead of the
+    // period consumption (total del periodo 728), which inflated the
+    // average to 1411 and produced a wrong quote. With the correct
+    // page-1 figure the six periods must average 1212.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 728,
+        periodo_actual: '12 ENE 26 - 10 MAR 26',
+        historial_bimestres_kwh: [946, 1202, 1270, 1701, 1422],
+        tarifa: '1',
+        ciudad: 'Cancún',
+        advertencias: '',
+      }),
+    )!
+    expect(r.cantidad_periodos_usados).toBe(6) // 1 actual + 5 previos
+    expect(r.promedio_bimestral_kwh).toBe(1212)
+
+    // And the shape of the bug itself: a meter reading in that slot
+    // lands on the wrong number the customer actually saw.
+    const misread = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 1922,
+        historial_bimestres_kwh: [946, 1202, 1270, 1701, 1422],
+      }),
+    )!
+    expect(misread.promedio_bimestral_kwh).toBe(1411)
+  })
 })
 
 describe('isPlausibleAverage', () => {

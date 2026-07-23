@@ -52,6 +52,21 @@ se hace por fuera.
   DAC, PDBT, GDMTH), y la ciudad o municipio del domicilio del
   servicio (busca la dirección impresa — extrae SOLO la ciudad o
   municipio, nunca la calle ni el número).
+
+  ⚠️ CUIDADO CON EL CONSUMO DE LA PÁGINA 1. En la tabla de conceptos
+  aparecen tres números en la fila "Energía (kWh)":
+      Lectura actual | Lectura anterior | Total del periodo
+  Ejemplo real:  1,922  |  1,194  |  728
+  El consumo que necesitas es el TOTAL DEL PERIODO (728 en el
+  ejemplo) — es decir, la DIFERENCIA entre las dos lecturas.
+  NUNCA reportes la "Lectura actual" (1,922): esa es la lectura
+  acumulada del medidor, no el consumo del bimestre, y usarla infla
+  el promedio y arruina la cotización. Si la columna "Total del
+  periodo" no se lee con claridad, calcula tú la resta
+  (lectura actual − lectura anterior). Cifra de referencia: el
+  consumo de un bimestre normalmente se parece a los valores del
+  historial de la página 2; si tu número es mucho mayor que todos
+  ellos, seguramente tomaste la lectura del medidor por error.
 - Página 2: la tabla o gráfica de "Historial de consumo". Extrae
   ÚNICAMENTE los 5 bimestres MÁS RECIENTES anteriores al periodo
   actual — si la gráfica muestra más de 5 (algunos recibos muestran
