@@ -5,7 +5,7 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt } from './defaults'
 import { buildHandoffSummary } from './handoff'
-import { applyLeadStatusTag } from './lead-status'
+import { applyLeadStatusTag, applyQuoteSentTag } from './lead-status'
 import { extractReceipt, formatReceiptNote, saveReceiptData } from './receipt'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
@@ -188,7 +188,7 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, leadStatus, usage } = await generateReply({
+    const { text, handoff, leadStatus, quoteSent, usage } = await generateReply({
       config,
       systemPrompt,
       messages,
@@ -204,6 +204,17 @@ export async function dispatchInboundToAiReply(
         userId: configOwnerUserId,
         contactId,
         status: leadStatus,
+      })
+    }
+
+    // The bot just delivered a price estimate ([COTIZACION_ENVIADA]
+    // marker) → tag "Quote sent", which starts the tag-driven follow-up
+    // sequence. Same fire-and-forget contract as lead status.
+    if (quoteSent) {
+      void applyQuoteSentTag(db, {
+        accountId,
+        userId: configOwnerUserId,
+        contactId,
       })
     }
 

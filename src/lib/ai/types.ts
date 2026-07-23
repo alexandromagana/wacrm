@@ -60,12 +60,16 @@ export type LeadStatus = 'hot' | 'warm' | 'cold'
 
 /** Outcome of a generation call. */
 export interface GenerateResult {
-  /** The reply text, with any handoff sentinel and status marker stripped. */
+  /** The reply text, with any handoff sentinel and internal markers stripped. */
   text: string
   /** True when the model asked to hand off to a human (auto-reply mode). */
   handoff: boolean
   /** Lead temperature parsed from a status marker, or null when absent. */
   leadStatus: LeadStatus | null
+  /** True when the model marked this turn as having delivered a price
+   *  quote (the [COTIZACION_ENVIADA] marker) — drives the "Quote sent"
+   *  tag + follow-up sequence. */
+  quoteSent: boolean
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null
 }

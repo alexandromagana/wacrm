@@ -9,6 +9,7 @@ const h = vi.hoisted(() => ({
   generateReply: vi.fn(),
   engineSendText: vi.fn(),
   applyLeadStatusTag: vi.fn(),
+  applyQuoteSentTag: vi.fn(),
   extractReceipt: vi.fn(),
   saveReceiptData: vi.fn(),
   state: {
@@ -25,7 +26,10 @@ vi.mock('./config', () => ({ loadAiConfig: h.loadAiConfig }))
 vi.mock('./context', () => ({ buildConversationContext: h.buildConversationContext }))
 vi.mock('./knowledge', () => ({ retrieveKnowledge: h.retrieveKnowledge }))
 vi.mock('./generate', () => ({ generateReply: h.generateReply }))
-vi.mock('./lead-status', () => ({ applyLeadStatusTag: h.applyLeadStatusTag }))
+vi.mock('./lead-status', () => ({
+  applyLeadStatusTag: h.applyLeadStatusTag,
+  applyQuoteSentTag: h.applyQuoteSentTag,
+}))
 vi.mock('./receipt', () => ({
   extractReceipt: h.extractReceipt,
   saveReceiptData: h.saveReceiptData,
@@ -125,6 +129,7 @@ beforeEach(() => {
   })
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
   h.applyLeadStatusTag.mockResolvedValue(undefined)
+  h.applyQuoteSentTag.mockResolvedValue(undefined)
   h.extractReceipt.mockResolvedValue(null)
   h.saveReceiptData.mockResolvedValue(undefined)
 })
@@ -303,6 +308,31 @@ describe('dispatchInboundToAiReply — lead status', () => {
   it('does not touch tags when no status was emitted', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.applyLeadStatusTag).not.toHaveBeenCalled()
+  })
+
+  it('tags "Quote sent" when the model marked the turn as a quote', async () => {
+    h.generateReply.mockResolvedValue({
+      text: 'Necesitarías 12 paneles, aprox $106,900.',
+      handoff: false,
+      leadStatus: 'hot',
+      quoteSent: true,
+    })
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.applyQuoteSentTag).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountId: 'acct-1', contactId: 'contact-1' }),
+    )
+    // The customer still gets the clean reply, marker-free.
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: 'Necesitarías 12 paneles, aprox $106,900.',
+      }),
+    )
+  })
+
+  it('does not tag "Quote sent" on ordinary replies', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.applyQuoteSentTag).not.toHaveBeenCalled()
   })
 })
 

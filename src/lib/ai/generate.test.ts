@@ -44,6 +44,7 @@ describe('parseGeneration', () => {
       text: 'Hello there',
       handoff: false,
       leadStatus: null,
+      quoteSent: false,
       usage: null,
     })
   })
@@ -53,12 +54,14 @@ describe('parseGeneration', () => {
       text: '',
       handoff: true,
       leadStatus: null,
+      quoteSent: false,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
       text: 'Let me get a human',
       handoff: true,
       leadStatus: null,
+      quoteSent: false,
       usage: null,
     })
   })
@@ -69,6 +72,7 @@ describe('parseGeneration', () => {
       text: 'Hi',
       handoff: false,
       leadStatus: null,
+      quoteSent: false,
       usage,
     })
   })
@@ -114,6 +118,35 @@ describe('parseGeneration — status markers', () => {
   })
 })
 
+describe('parseGeneration — quote marker', () => {
+  it('detects + strips [COTIZACION_ENVIADA]', () => {
+    const res = parseGeneration(
+      'Necesitarías 12 paneles, aprox $106,900. [COTIZACION_ENVIADA]',
+    )
+    expect(res.text).toBe('Necesitarías 12 paneles, aprox $106,900.')
+    expect(res.quoteSent).toBe(true)
+  })
+
+  it('tolerates accents, spaces, and the English spelling', () => {
+    expect(parseGeneration('Precio X [COTIZACIÓN ENVIADA]').quoteSent).toBe(true)
+    expect(parseGeneration('Precio X [quote_sent]').quoteSent).toBe(true)
+    expect(parseGeneration('Precio X [ QUOTE SENT ]').quoteSent).toBe(true)
+  })
+
+  it('combines with status marker and handoff', () => {
+    const res = parseGeneration(
+      'Tu paquete: 14 paneles. [COTIZACION_ENVIADA] [ESTATUS: CALIENTE]',
+    )
+    expect(res.text).toBe('Tu paquete: 14 paneles.')
+    expect(res.quoteSent).toBe(true)
+    expect(res.leadStatus).toBe('hot')
+  })
+
+  it('stays false on ordinary replies', () => {
+    expect(parseGeneration('¿Me compartes tu recibo?').quoteSent).toBe(false)
+  })
+})
+
 describe('generateReply — OpenAI', () => {
   it('calls the chat completions endpoint and returns the reply', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -134,6 +167,7 @@ describe('generateReply — OpenAI', () => {
       text: 'Sure — happy to help!',
       handoff: false,
       leadStatus: null,
+      quoteSent: false,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -194,6 +228,7 @@ describe('generateReply — Anthropic', () => {
       text: 'Hi there!',
       handoff: false,
       leadStatus: null,
+      quoteSent: false,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

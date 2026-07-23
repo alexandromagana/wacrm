@@ -71,6 +71,15 @@ const STATUS_LABELS: Record<string, LeadStatus> = {
 }
 
 /**
+ * Quote marker the business prompt asks the model to append right after
+ * delivering a price estimate. Stripped from the outgoing text; drives
+ * the "Quote sent" tag that starts the follow-up sequence. Tolerates
+ * accent/space/underscore drift and the English spelling.
+ */
+const QUOTE_MARKER_RE =
+  /\[\s*(?:COTIZACI[OÓ]N[\s_]?ENVIADA|QUOTE[\s_]?SENT)\s*\]/gi
+
+/**
  * Split the raw model output into `{ text, handoff, leadStatus, usage }`.
  * The sentinel can appear alone or trailing a partial reply; either way
  * we treat the turn as a handoff and strip the marker from any remaining
@@ -84,6 +93,7 @@ export function parseGeneration(
 ): GenerateResult {
   const handoff = raw.includes(HANDOFF_SENTINEL)
   let leadStatus: LeadStatus | null = null
+  let quoteSent = false
   const text = raw
     .split(HANDOFF_SENTINEL)
     .join('')
@@ -97,6 +107,10 @@ export function parseGeneration(
       leadStatus = STATUS_LABELS[key] ?? leadStatus
       return ''
     })
+    .replace(QUOTE_MARKER_RE, () => {
+      quoteSent = true
+      return ''
+    })
     .trim()
-  return { text, handoff, leadStatus, usage }
+  return { text, handoff, leadStatus, quoteSent, usage }
 }

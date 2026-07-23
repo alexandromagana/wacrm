@@ -104,3 +104,82 @@ export async function applyLeadStatusTag(
     console.error('[ai lead-status] failed to apply status tag:', err)
   }
 }
+
+/** Tag applied the moment the bot delivers a price estimate in chat
+ *  (the [COTIZACION_ENVIADA] marker). Color matches the tag ops
+ *  created by hand, so find-or-create reuses the existing row. */
+export const QUOTE_SENT_TAG = { name: 'Quote sent', color: '#14b8a6' }
+
+/**
+ * Mark the contact as quoted: find-or-create the "Quote sent" tag,
+ * link it, and fire `tag_added` ONLY when the link is new — re-quoting
+ * a contact who already carries the tag must not restart an already-
+ * running follow-up sequence. (The "clear tag on reply" automation
+ * removes the tag when the customer answers, so the next quote after
+ * a reply re-links it and starts a fresh 48h timer — exactly the
+ * "quoted and went silent" semantic.)
+ *
+ * Never throws — tagging is a side effect and must not break the
+ * customer-facing send.
+ */
+export async function applyQuoteSentTag(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    /** Audit owner for a freshly-created tag row (tags.user_id is NOT NULL). */
+    userId: string
+    contactId: string
+  },
+): Promise<void> {
+  const { accountId, userId, contactId } = args
+  try {
+    const { data: existing, error: tagErr } = await db
+      .from('tags')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('name', QUOTE_SENT_TAG.name)
+      .maybeSingle()
+    if (tagErr) throw tagErr
+
+    let tagId = existing?.id as string | undefined
+    if (!tagId) {
+      const { data: created, error: insErr } = await db
+        .from('tags')
+        .insert({
+          account_id: accountId,
+          user_id: userId,
+          name: QUOTE_SENT_TAG.name,
+          color: QUOTE_SENT_TAG.color,
+        })
+        .select('id')
+        .single()
+      if (insErr) throw insErr
+      tagId = created.id as string
+    }
+
+    // Already tagged → the follow-up sequence is already running (or
+    // ops tagged it by hand); nothing new, no trigger.
+    const { data: already } = await db
+      .from('contact_tags')
+      .select('id')
+      .eq('contact_id', contactId)
+      .eq('tag_id', tagId)
+      .maybeSingle()
+    if (already) return
+
+    const { error: linkErr } = await db.from('contact_tags').upsert(
+      { contact_id: contactId, tag_id: tagId },
+      { onConflict: 'contact_id,tag_id', ignoreDuplicates: true },
+    )
+    if (linkErr) throw linkErr
+
+    await runAutomationsForTrigger({
+      accountId,
+      triggerType: 'tag_added',
+      contactId,
+      context: { tag_id: tagId },
+    })
+  } catch (err) {
+    console.error('[ai lead-status] failed to apply quote-sent tag:', err)
+  }
+}
