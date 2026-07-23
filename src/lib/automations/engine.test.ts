@@ -113,7 +113,7 @@ vi.mock("./meta-send", () => ({
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
 
-import { runAutomationsForTrigger, triggerMatches } from "./engine";
+import { runAutomationsForTrigger, triggerMatches, interpolate } from "./engine";
 import type { Automation } from "@/types";
 
 const ACCOUNT = "acct-1";
@@ -471,5 +471,52 @@ describe("triggerMatches — tag_added", () => {
 
   it("acts as a catch-all when no tag is configured", () => {
     expect(triggerMatches(automation(), { tag_id: "tag-9" })).toBe(true);
+  });
+});
+
+describe("interpolate", () => {
+  // Only the fields interpolate reads; the rest of ExecuteArgs is
+  // irrelevant to placeholder expansion.
+  const args = (context: Record<string, unknown> = {}) =>
+    ({ context } as unknown as Parameters<typeof interpolate>[1]);
+
+  it("expands message and vars placeholders", () => {
+    expect(
+      interpolate("Dijo: {{message.text}}", args({ message_text: "hola" })),
+    ).toBe("Dijo: hola");
+    expect(
+      interpolate("{{vars.folio}}", args({ vars: { folio: "A-12" } })),
+    ).toBe("A-12");
+  });
+
+  it("expands contact name and first name", () => {
+    const c = { name: "Arley Ramirez Gómez" };
+    expect(interpolate("{{contact.name}}", args(), c)).toBe(
+      "Arley Ramirez Gómez",
+    );
+    expect(interpolate("Hola {{contact.first_name}}", args(), c)).toBe(
+      "Hola Arley",
+    );
+  });
+
+  it("uses the |fallback when the value is empty — Meta rejects empty template params", () => {
+    expect(
+      interpolate("{{contact.first_name|cliente}}", args(), { name: null }),
+    ).toBe("cliente");
+    expect(
+      interpolate("{{contact.first_name|cliente}}", args(), { name: "   " }),
+    ).toBe("cliente");
+    // A real name still wins over the fallback.
+    expect(
+      interpolate("{{contact.first_name|cliente}}", args(), { name: "Ana" }),
+    ).toBe("Ana");
+  });
+
+  it("resolves contact placeholders to empty when no contact was fetched", () => {
+    expect(interpolate("{{contact.first_name}}", args(), null)).toBe("");
+  });
+
+  it("leaves unknown namespaces empty rather than echoing the placeholder", () => {
+    expect(interpolate("x{{nope.thing}}y", args())).toBe("xy");
   });
 });

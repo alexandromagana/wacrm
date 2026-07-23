@@ -409,6 +409,29 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
             })
             .map((k) => String(cfg.variables![k]))
         : []
+      // Expand placeholders in the parameter values. Contact fields are
+      // fetched once, and only when a parameter actually asks for one —
+      // most templates don't.
+      let tplContact: InterpolationContact | null = null
+      if (params.some((p) => p.includes('{{contact.')) && args.contactId) {
+        const { data } = await db
+          .from('contacts')
+          .select('name')
+          .eq('id', args.contactId)
+          .eq('account_id', args.automation.account_id)
+          .maybeSingle()
+        tplContact = { name: (data?.name as string | null) ?? null }
+      }
+      const resolvedParams = params.map((p) => interpolate(p, args, tplContact))
+      // Meta rejects an empty parameter, which would fail the whole
+      // send. Surface it as a clear step failure instead of a cryptic
+      // provider error — the fix is a `|fallback` in the config.
+      const emptyAt = resolvedParams.findIndex((p) => !p.trim())
+      if (emptyAt !== -1) {
+        throw new Error(
+          `send_template: variable {{${emptyAt + 1}}} resolved empty — add a fallback, e.g. {{contact.first_name|cliente}}`,
+        )
+      }
       const { whatsapp_message_id } = await engineSendTemplate({
         accountId: args.automation.account_id,
         userId: args.automation.user_id,
@@ -416,7 +439,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         contactId: args.contactId,
         templateName: cfg.template_name,
         language: cfg.language,
-        params,
+        params: resolvedParams,
       })
       return `template sent via Meta (${whatsapp_message_id})`
     }
@@ -779,13 +802,46 @@ function waitMs(cfg: WaitStepConfig): number {
   return Math.max(1_000, cfg.amount * unitMs)
 }
 
-function interpolate(s: string, args: ExecuteArgs): string {
-  return s.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, key) => {
-    const [ns, prop] = String(key).split('.')
-    if (ns === 'message' && prop === 'text') return String(args.context.message_text ?? '')
-    if (ns === 'vars' && prop) return String(args.context.vars?.[prop] ?? '')
-    return ''
-  })
+/** Contact fields available to `{{contact.*}}` placeholders. Fetched
+ *  only when a step actually references one. */
+interface InterpolationContact {
+  name: string | null
+}
+
+/**
+ * Expand `{{…}}` placeholders. Supports `{{message.text}}`,
+ * `{{vars.x}}`, and — when a contact is supplied — `{{contact.name}}`
+ * and `{{contact.first_name}}`.
+ *
+ * A `|fallback` suffix supplies a default when the value resolves
+ * empty: `{{contact.first_name|cliente}}`. This matters for WhatsApp
+ * templates, where Meta rejects an empty parameter outright — a
+ * nameless contact would otherwise fail the whole send instead of
+ * degrading to a generic greeting. The fallback lives in the
+ * automation's config rather than in code so it can be written in the
+ * account's own language.
+ */
+export function interpolate(
+  s: string,
+  args: ExecuteArgs,
+  contact?: InterpolationContact | null,
+): string {
+  return s.replace(
+    /\{\{\s*([\w.]+)\s*(?:\|([^}]*))?\}\}/g,
+    (_, key: string, fallback?: string) => {
+      const [ns, prop] = String(key).split('.')
+      let value = ''
+      if (ns === 'message' && prop === 'text') {
+        value = String(args.context.message_text ?? '')
+      } else if (ns === 'vars' && prop) {
+        value = String(args.context.vars?.[prop] ?? '')
+      } else if (ns === 'contact' && contact) {
+        const full = (contact.name ?? '').trim()
+        value = prop === 'first_name' ? full.split(/\s+/)[0] ?? '' : full
+      }
+      return value.trim() || (fallback ?? '').trim()
+    },
+  )
 }
 
 async function appendResults(
