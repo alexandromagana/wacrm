@@ -88,48 +88,88 @@ function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtracti
 }
 
 describe('parseReceiptJson', () => {
-  it('parses a clean extraction', () => {
+  it('parses a clean extraction and computes the average itself', () => {
     const raw = JSON.stringify({
       consumo_periodo_actual_kwh: 1450,
       periodo_actual: '01 May 26 - 30 Jun 26',
       historial_bimestres_kwh: [1380, 1420, 1500, 1290, 1410],
-      cantidad_periodos_usados: 6,
-      promedio_bimestral_kwh: 1408,
       tarifa: '1',
       ciudad: 'Cancún',
       advertencias: '',
     })
     const r = parseReceiptJson(raw)
     expect(r).not.toBeNull()
+    // (1450+1380+1420+1500+1290+1410) / 6 = 1408.33… → 1408. Computed
+    // here, never trusted from a (now removed) model-reported field.
     expect(r!.promedio_bimestral_kwh).toBe(1408)
+    expect(r!.cantidad_periodos_usados).toBe(6)
     expect(r!.historial_bimestres_kwh).toHaveLength(5)
     expect(r!.tarifa).toBe('1')
     expect(r!.ciudad).toBe('Cancún')
   })
 
+  it('caps the historial at 5 bimestres even if the model returns more — never more than a year', () => {
+    const raw = JSON.stringify({
+      consumo_periodo_actual_kwh: 1000,
+      // 7 values — a receipt whose chart shows more than 5 bars, or a
+      // model that didn't follow the "only the 5 most recent" rule.
+      historial_bimestres_kwh: [900, 950, 1000, 1050, 1100, 1150, 1200],
+    })
+    const r = parseReceiptJson(raw)!
+    expect(r.historial_bimestres_kwh).toEqual([900, 950, 1000, 1050, 1100])
+    expect(r.cantidad_periodos_usados).toBe(6) // actual + 5, hard ceiling
+  })
+
+  it('averages over whatever is legible when a period is missing', () => {
+    const r = parseReceiptJson(
+      '{"consumo_periodo_actual_kwh": null, "historial_bimestres_kwh": [1000, 1200, 1400]}',
+    )!
+    expect(r.promedio_bimestral_kwh).toBe(1200) // (1000+1200+1400)/3
+    expect(r.cantidad_periodos_usados).toBe(3)
+  })
+
+  it('returns a null average when nothing legible was extracted', () => {
+    const r = parseReceiptJson(
+      '{"consumo_periodo_actual_kwh": null, "historial_bimestres_kwh": []}',
+    )!
+    expect(r.promedio_bimestral_kwh).toBeNull()
+    expect(r.cantidad_periodos_usados).toBe(0)
+  })
+
   it('tolerates code fences and prose around the JSON', () => {
     const raw =
-      'Aquí está:\n```json\n{"promedio_bimestral_kwh": 1200, "historial_bimestres_kwh": [], "cantidad_periodos_usados": 0, "consumo_periodo_actual_kwh": null, "periodo_actual": null, "tarifa": null, "ciudad": null, "advertencias": "solo una página"}\n```'
+      'Aquí está:\n```json\n{"historial_bimestres_kwh": [], "consumo_periodo_actual_kwh": 1200, "periodo_actual": null, "tarifa": null, "ciudad": null, "advertencias": "solo una página"}\n```'
     const r = parseReceiptJson(raw)
     expect(r).not.toBeNull()
     expect(r!.promedio_bimestral_kwh).toBe(1200)
     expect(r!.advertencias).toBe('solo una página')
   })
 
-  it('rounds a fractional average', () => {
+  it('rounds a fractional average (banker beware: .5 rounds up)', () => {
     const r = parseReceiptJson(
-      '{"promedio_bimestral_kwh": 1408.6, "historial_bimestres_kwh": [1,2]}',
+      '{"consumo_periodo_actual_kwh": 10, "historial_bimestres_kwh": [11]}',
     )
-    expect(r!.promedio_bimestral_kwh).toBe(1409)
+    expect(r!.promedio_bimestral_kwh).toBe(11) // (10+11)/2 = 10.5 → 11
   })
 
-  it('nulls out garbage values instead of trusting them', () => {
+  it('ignores a model-reported average entirely — always recomputes', () => {
+    // Even if the model still emits these (legacy fields), they must
+    // never leak through: the average is only ever derived from
+    // consumo_periodo_actual_kwh + historial_bimestres_kwh.
     const r = parseReceiptJson(
-      '{"promedio_bimestral_kwh": "mil cuatrocientos", "historial_bimestres_kwh": [1380, "x", 1500], "advertencias": 42, "ciudad": 123}',
+      '{"consumo_periodo_actual_kwh": 1000, "historial_bimestres_kwh": [1000], "promedio_bimestral_kwh": 99999, "cantidad_periodos_usados": 42}',
+    )!
+    expect(r.promedio_bimestral_kwh).toBe(1000)
+    expect(r.cantidad_periodos_usados).toBe(2)
+  })
+
+  it('filters non-numeric garbage out of historial instead of trusting it', () => {
+    const r = parseReceiptJson(
+      '{"historial_bimestres_kwh": [1380, "x", 1500], "advertencias": 42, "ciudad": 123}',
     )
     expect(r).not.toBeNull()
-    expect(r!.promedio_bimestral_kwh).toBeNull()
     expect(r!.historial_bimestres_kwh).toEqual([1380, 1500])
+    expect(r!.promedio_bimestral_kwh).toBe(1440) // (1380+1500)/2
     expect(r!.advertencias).toBe('')
     expect(r!.ciudad).toBeNull()
   })

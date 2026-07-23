@@ -41,48 +41,67 @@ export const CONSUMO_FIELD_NAME = 'Consumo promedio (kWh)'
 const EXTRACTION_PROMPT = `# TAREA
 Vas a recibir una o más imágenes que el cliente envió por WhatsApp,
 normalmente las páginas de un recibo de CFE (comisión federal de
-electricidad, México). Extrae los datos de consumo y calcula el
-promedio bimestral.
+electricidad, México). Tu único trabajo es EXTRAER los valores de
+consumo tal como aparecen — no calcules promedios ni sumes nada, eso
+se hace por fuera.
 
 # QUÉ BUSCAR
-- Página 1: el consumo en kWh del periodo facturado actual, el periodo
-  de facturación (fechas), la tarifa contratada si aparece (ej. 1,
-  1A, DAC, PDBT, GDMTH), y la ciudad o municipio del domicilio del
-  servicio (busca la dirección impresa en el recibo — extrae SOLO la
-  ciudad o municipio, nunca la calle ni el número).
-- Página 2: la tabla o gráfica de "Historial de consumo" con los kWh
-  de los últimos bimestres. Extrae cada valor legible, en orden.
-
-# CÁLCULO
-1. Suma los kWh de todos los periodos legibles (actual + historial).
-2. Si el periodo actual ya aparece dentro del historial (mismo rango
-   de fechas), no lo cuentes dos veces.
-3. Divide entre el número de periodos sumados → promedio bimestral.
-4. Si algo no es legible, usa solo lo que sí se lea con claridad y
-   repórtalo en "advertencias". Nunca inventes un número.
+- Página 1: el consumo en kWh del periodo facturado ACTUAL (un solo
+  número — el bimestre que se está cobrando ahora), el periodo de
+  facturación (fechas), la tarifa contratada si aparece (ej. 1, 1A,
+  DAC, PDBT, GDMTH), y la ciudad o municipio del domicilio del
+  servicio (busca la dirección impresa — extrae SOLO la ciudad o
+  municipio, nunca la calle ni el número).
+- Página 2: la tabla o gráfica de "Historial de consumo". Extrae
+  ÚNICAMENTE los 5 bimestres MÁS RECIENTES anteriores al periodo
+  actual — si la gráfica muestra más de 5 (algunos recibos muestran
+  hasta 12), IGNORA los más antiguos y toma solo los 5 más próximos al
+  presente. Nunca reportes más de 5 valores en el historial: el
+  consumo actual (página 1) más estos 5 bimestres (página 2) forman
+  exactamente 6 periodos = 1 año de consumo, que es todo lo que se
+  necesita.
 
 # SI LA IMAGEN NO ES UN RECIBO DE CFE
 Deja todos los campos numéricos en null / lista vacía y explica en
 "advertencias" qué es la imagen (ej. "la imagen no es un recibo de
 CFE, parece una foto de un techo").
 
+# REGLAS
+- Nunca inventes un número que no puedas leer con claridad — si algo
+  no es legible, déjalo fuera y repórtalo en "advertencias".
+- Nunca calcules un promedio ni una suma — solo reporta los valores
+  crudos que leas. El promedio se calcula por fuera con exactitud a
+  partir de lo que reportes.
+
 # FORMATO DE RESPUESTA
 Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
 {
   "consumo_periodo_actual_kwh": <número o null>,
   "periodo_actual": "<fecha inicio - fecha fin>" o null,
-  "historial_bimestres_kwh": [<números leídos, en orden>],
-  "cantidad_periodos_usados": <entero>,
-  "promedio_bimestral_kwh": <entero redondeado o null>,
+  "historial_bimestres_kwh": [<máximo 5 números, los más recientes>],
   "tarifa": "<tarifa>" o null,
   "ciudad": "<ciudad o municipio del domicilio>" o null,
   "advertencias": "<texto breve, o cadena vacía si todo se leyó bien>"
 }`
 
+/** Máximo de bimestres históricos considerados (página 2). Junto con el
+ *  periodo actual (página 1) da 6 periodos = 1 año de consumo — el
+ *  tope es un límite duro en código, no solo una instrucción de prompt,
+ *  para que un recibo con más barras en la gráfica (o un modelo que no
+ *  siga la instrucción) nunca infle el promedio con datos de más de un
+ *  año atrás. */
+const MAX_HISTORIAL_BIMESTRES = 5
+
 /**
  * Parse + validate the model's raw output into a ReceiptExtraction.
  * Tolerates code fences and stray prose around the JSON object.
  * Returns null when nothing parseable/valid came back.
+ *
+ * The average is never taken from the model's own arithmetic — it's
+ * computed here, deterministically, from the raw values the model
+ * reports (consumo actual + hasta 5 bimestres del historial). A model
+ * summing/averaging 6 numbers by hand is exactly the kind of task LLMs
+ * get subtly wrong; code doesn't.
  */
 export function parseReceiptJson(raw: string): ReceiptExtraction | null {
   const start = raw.indexOf('{')
@@ -100,22 +119,31 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
 
   const num = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null
-  const historial = Array.isArray(r.historial_bimestres_kwh)
-    ? r.historial_bimestres_kwh.filter(
-        (v): v is number => typeof v === 'number' && Number.isFinite(v),
-      )
-    : []
+
+  const consumoActual = num(r.consumo_periodo_actual_kwh)
+  const historial = (
+    Array.isArray(r.historial_bimestres_kwh)
+      ? r.historial_bimestres_kwh.filter(
+          (v): v is number => typeof v === 'number' && Number.isFinite(v),
+        )
+      : []
+  ).slice(0, MAX_HISTORIAL_BIMESTRES)
+
+  const values = [consumoActual, ...historial].filter(
+    (v): v is number => v != null,
+  )
+  const promedio =
+    values.length > 0
+      ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length)
+      : null
 
   return {
-    consumo_periodo_actual_kwh: num(r.consumo_periodo_actual_kwh),
+    consumo_periodo_actual_kwh: consumoActual,
     periodo_actual:
       typeof r.periodo_actual === 'string' ? r.periodo_actual : null,
     historial_bimestres_kwh: historial,
-    cantidad_periodos_usados: num(r.cantidad_periodos_usados) ?? historial.length,
-    promedio_bimestral_kwh:
-      num(r.promedio_bimestral_kwh) != null
-        ? Math.round(num(r.promedio_bimestral_kwh)!)
-        : null,
+    cantidad_periodos_usados: values.length,
+    promedio_bimestral_kwh: promedio,
     tarifa: typeof r.tarifa === 'string' ? r.tarifa : null,
     ciudad:
       typeof r.ciudad === 'string' && r.ciudad.trim() ? r.ciudad.trim() : null,
