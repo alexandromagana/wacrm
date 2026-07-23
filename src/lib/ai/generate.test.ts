@@ -206,6 +206,30 @@ describe('generateReply — OpenAI', () => {
       }),
     ).rejects.toBeInstanceOf(AiError)
   })
+
+  it('names the reasoning-budget cause when a reasoning model returns nothing', async () => {
+    // The exact shape that silenced the bot in prod: gpt-5-mini spent
+    // the whole budget thinking and emitted no visible token.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        okResponse({
+          choices: [{ message: { content: '' }, finish_reason: 'length' }],
+          usage: {
+            completion_tokens: 1024,
+            completion_tokens_details: { reasoning_tokens: 1024 },
+          },
+        }),
+      ),
+    )
+    await expect(
+      generateReply({
+        config: config(),
+        systemPrompt: 'sys',
+        messages: [{ role: 'user', content: 'Hi' }],
+      }),
+    ).rejects.toThrow(/reasoning tokens|output budget/i)
+  })
 })
 
 describe('generateReply — Anthropic', () => {

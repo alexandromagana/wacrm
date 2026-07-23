@@ -22,9 +22,27 @@ export const AI_PROVIDER_DEFAULT_MODEL: Record<AiProvider, string> = {
  */
 export const HANDOFF_SENTINEL = '[[HANDOFF]]'
 
-/** Cap on generated reply length — keeps WhatsApp replies short and
- *  bounds token spend on the caller's own key. */
-export const MAX_OUTPUT_TOKENS = 1024
+const DEFAULT_MAX_OUTPUT_TOKENS = 8000
+
+/**
+ * Output budget for a chat generation. Sized for REASONING models (the
+ * GPT-5 family, o-series): their internal reasoning is billed against
+ * this same budget and spent BEFORE a single visible token is emitted,
+ * so a budget tuned as a "keep replies short" guard gets consumed by
+ * thinking and the provider returns an EMPTY completion — which
+ * surfaces as `empty_response` and leaves the customer with silence.
+ * That's exactly how pointing the account at gpt-5-mini killed every
+ * auto-reply at the old 1024 cap.
+ *
+ * Reply brevity is a prompt concern ("2-4 líneas, tipo WhatsApp"), not
+ * a token-cap concern — the cap can only truncate mid-sentence anyway.
+ * Providers bill only what's produced, so headroom is free on a
+ * non-reasoning model. Override with `AI_MAX_OUTPUT_TOKENS`.
+ */
+export function aiMaxOutputTokens(): number {
+  const raw = Number(process.env.AI_MAX_OUTPUT_TOKENS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_OUTPUT_TOKENS
+}
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 20
