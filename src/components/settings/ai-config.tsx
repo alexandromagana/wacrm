@@ -61,6 +61,8 @@ export function AiConfig() {
   const [configured, setConfigured] = useState(false);
   const [provider, setProvider] = useState<AiProvider>('openai');
   const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
+  // Blank = read images with the chat model (backwards-compatible default).
+  const [visionModel, setVisionModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -95,6 +97,7 @@ export function AiConfig() {
         setConfigured(true);
         setProvider(data.provider);
         setModel(data.model);
+        setVisionModel(data.vision_model ?? '');
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
@@ -144,6 +147,7 @@ export function AiConfig() {
   const buildBody = () => ({
     provider,
     model: model.trim(),
+    vision_model: visionModel.trim() || null,
     api_key: keyPayload(),
     embeddings_api_key: embeddingsKeyPayload(),
     system_prompt: systemPrompt.trim() || null,
@@ -295,6 +299,20 @@ export function AiConfig() {
                   disabled={disabled}
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="ai-vision-model">{t('visionModel')}</Label>
+              <Input
+                id="ai-vision-model"
+                value={visionModel}
+                onChange={(e) => setVisionModel(e.target.value)}
+                placeholder={t('visionModelPlaceholder')}
+                disabled={disabled}
+              />
+              <p className="text-xs text-muted-foreground">
+                {t('visionModelHint')}
+              </p>
             </div>
 
             <div className="space-y-2">

@@ -49,3 +49,26 @@ describe('loadAiConfig requireActive', () => {
     ).toBeNull()
   })
 })
+
+describe('loadAiConfig visionModel fallback', () => {
+  const load = (row: Record<string, unknown>) =>
+    loadAiConfig(dbReturning(row), 'acct', { requireActive: false })
+
+  it('falls back to the chat model when unset — existing accounts keep today’s behaviour', async () => {
+    expect((await load({ ...ROW, vision_model: null }))!.visionModel).toBe(
+      'gpt-x',
+    )
+    // Column missing entirely (row from before the migration ran).
+    expect((await load(ROW))!.visionModel).toBe('gpt-x')
+    // Blank / whitespace from the settings form is not a model name.
+    expect((await load({ ...ROW, vision_model: '   ' }))!.visionModel).toBe(
+      'gpt-x',
+    )
+  })
+
+  it('uses the dedicated vision model when set, leaving the chat model alone', async () => {
+    const config = (await load({ ...ROW, vision_model: 'gpt-vision-cheap' }))!
+    expect(config.visionModel).toBe('gpt-vision-cheap')
+    expect(config.model).toBe('gpt-x')
+  })
+})

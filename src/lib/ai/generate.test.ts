@@ -6,6 +6,7 @@ function config(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
     provider: 'openai',
     model: 'gpt-test',
+    visionModel: 'gpt-test-vision',
     apiKey: 'sk-test',
     systemPrompt: null,
     isActive: true,

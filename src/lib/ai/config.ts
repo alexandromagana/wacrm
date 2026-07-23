@@ -5,6 +5,7 @@ import type { AiConfig } from './types'
 interface AiConfigRow {
   provider: 'openai' | 'anthropic'
   model: string
+  vision_model: string | null
   api_key: string
   system_prompt: string | null
   is_active: boolean
@@ -15,7 +16,7 @@ interface AiConfigRow {
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
+  'provider, model, vision_model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -72,6 +73,9 @@ export async function loadAiConfig(
   return {
     provider: row.provider,
     model: row.model,
+    // Empty / unset means "same model as chat" — keeps every existing
+    // account on today's exact behaviour until someone opts in.
+    visionModel: row.vision_model?.trim() || row.model,
     apiKey: decrypt(row.api_key),
     systemPrompt: row.system_prompt,
     isActive: row.is_active,

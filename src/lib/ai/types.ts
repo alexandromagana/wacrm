@@ -16,6 +16,11 @@ export type AiProvider = 'openai' | 'anthropic'
 export interface AiConfig {
   provider: AiProvider
   model: string
+  /** Model used for image/receipt extraction. Falls back to `model`
+   *  when the account hasn't set one. Lets a reasoning model handle the
+   *  conversation while a cheap, fast vision model reads bills — the
+   *  two jobs have opposite requirements. */
+  visionModel: string
   apiKey: string
   systemPrompt: string | null
   isActive: boolean

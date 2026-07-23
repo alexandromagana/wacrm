@@ -233,7 +233,7 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
  * its prompt (ask again / ask for the number by text). Never throws.
  */
 export async function extractReceipt(args: {
-  config: Pick<AiConfig, 'provider' | 'model' | 'apiKey'>
+  config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>
   accessToken: string
   mediaIds: string[]
 }): Promise<ReceiptExtraction | null> {
@@ -285,7 +285,7 @@ interface MediaFile {
 }
 
 async function visionOpenAi(
-  config: Pick<AiConfig, 'model' | 'apiKey'>,
+  config: Pick<AiConfig, 'visionModel' | 'apiKey'>,
   files: MediaFile[],
 ): Promise<string | null> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -295,7 +295,7 @@ async function visionOpenAi(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: config.model,
+      model: config.visionModel,
       messages: [
         { role: 'system', content: EXTRACTION_PROMPT },
         {
@@ -353,14 +353,14 @@ async function visionOpenAi(
     console.error(
       `[ai receipt] OpenAI vision truncated (hit token cap ${aiVisionMaxTokens()}; ` +
         `completion=${data?.usage?.completion_tokens ?? '?'}, reasoning=${reasoning ?? 0}). ` +
-        `Model "${config.model}" — if reasoning > 0 this is a reasoning model: raise AI_VISION_MAX_TOKENS or pin a non-reasoning vision model.`,
+        `Model "${config.visionModel}" — if reasoning > 0 this is a reasoning model: raise AI_VISION_MAX_TOKENS or pin a non-reasoning vision model.`,
     )
   }
   return choice?.message?.content ?? null
 }
 
 async function visionAnthropic(
-  config: Pick<AiConfig, 'model' | 'apiKey'>,
+  config: Pick<AiConfig, 'visionModel' | 'apiKey'>,
   files: MediaFile[],
 ): Promise<string | null> {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -371,7 +371,7 @@ async function visionAnthropic(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: config.model,
+      model: config.visionModel,
       max_tokens: aiVisionMaxTokens(),
       system: EXTRACTION_PROMPT,
       messages: [

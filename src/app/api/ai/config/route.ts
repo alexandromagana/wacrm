@@ -30,7 +30,7 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
+        'provider, model, vision_model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
       )
       .eq('account_id', accountId)
       .maybeSingle()
@@ -83,6 +83,11 @@ export async function POST(request: Request) {
     }
     const model = typeof body.model === 'string' ? body.model.trim() : ''
     if (!model) return bad('model is required')
+    // Optional: blank means "read images with the chat model too".
+    const visionModel =
+      typeof body.vision_model === 'string' && body.vision_model.trim()
+        ? body.vision_model.trim()
+        : null
 
     const systemPrompt =
       typeof body.system_prompt === 'string' && body.system_prompt.trim()
@@ -160,6 +165,9 @@ export async function POST(request: Request) {
         await validateAiCredentials({
           provider,
           model,
+          // Key validation only exercises the chat model; vision is
+          // unused here (same provider + key either way).
+          visionModel: visionModel ?? model,
           apiKey: apiKeyPlain,
           systemPrompt,
           isActive,
@@ -201,6 +209,7 @@ export async function POST(request: Request) {
     const shared: Record<string, unknown> = {
       provider,
       model,
+      vision_model: visionModel,
       system_prompt: systemPrompt,
       is_active: isActive,
       auto_reply_enabled: autoReplyEnabled,

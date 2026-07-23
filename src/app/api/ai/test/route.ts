@@ -66,6 +66,8 @@ export async function POST(request: Request) {
       await validateAiCredentials({
         provider,
         model,
+        // Key validation only exercises the chat model; vision is unused here.
+        visionModel: model,
         apiKey: apiKeyPlain,
         systemPrompt: null,
         isActive: true,
