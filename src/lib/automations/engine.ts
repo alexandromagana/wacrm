@@ -6,6 +6,7 @@ import type {
   ConditionStepConfig,
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
+  MoveDealStepConfig,
   TagTriggerConfig,
   SendMessageStepConfig,
   SendButtonsStepConfig,
@@ -563,6 +564,59 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         status: 'open',
       })
       return 'deal created'
+    }
+
+    case 'move_deal': {
+      const cfg = step.step_config as MoveDealStepConfig
+      if (!args.contactId || !cfg.stage_id) {
+        throw new Error('move_deal needs contact + stage_id')
+      }
+      // Resolve the destination stage, then verify through its pipeline
+      // that it belongs to this account — the service-role client
+      // bypasses RLS, and a forged stage_id must not move deals across
+      // tenants (or into a foreign board).
+      const { data: stage, error: stageErr } = await db
+        .from('pipeline_stages')
+        .select('id, pipeline_id')
+        .eq('id', cfg.stage_id)
+        .maybeSingle()
+      if (stageErr) throw new Error(`stage lookup failed: ${stageErr.message}`)
+      if (!stage) throw new Error('move_deal: stage not found')
+      const { data: pipeline, error: pipeErr } = await db
+        .from('pipelines')
+        .select('id')
+        .eq('id', stage.pipeline_id)
+        .eq('account_id', args.automation.account_id)
+        .maybeSingle()
+      if (pipeErr) throw new Error(`pipeline lookup failed: ${pipeErr.message}`)
+      if (!pipeline) throw new Error('move_deal: stage not in this account')
+
+      // The contact's newest open deal in that pipeline is the one that
+      // moves. No open deal is a soft no-op, not a failure — automations
+      // routinely fire for contacts that never got a deal (e.g. the
+      // quote-tag sequence on a contact created before the pipeline
+      // automation existed).
+      const { data: deal, error: dealErr } = await db
+        .from('deals')
+        .select('id, stage_id')
+        .eq('account_id', args.automation.account_id)
+        .eq('contact_id', args.contactId)
+        .eq('pipeline_id', stage.pipeline_id)
+        .eq('status', 'open')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      if (dealErr) throw new Error(`deal lookup failed: ${dealErr.message}`)
+      if (!deal) return 'no open deal to move'
+      if (deal.stage_id === cfg.stage_id) return 'deal already in stage'
+
+      const { error: moveErr } = await db
+        .from('deals')
+        .update({ stage_id: cfg.stage_id })
+        .eq('id', deal.id)
+        .eq('account_id', args.automation.account_id)
+      if (moveErr) throw new Error(`deal move failed: ${moveErr.message}`)
+      return `deal ${deal.id} moved to stage ${cfg.stage_id}`
     }
 
     case 'send_webhook': {

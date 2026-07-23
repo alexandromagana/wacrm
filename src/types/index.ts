@@ -451,6 +451,7 @@ export type AutomationStepType =
   | 'assign_conversation'
   | 'update_contact_field'
   | 'create_deal'
+  | 'move_deal'
   | 'wait'
   | 'condition'
   | 'send_webhook'
@@ -534,6 +535,15 @@ export interface CreateDealStepConfig {
   value?: number;
 }
 
+export interface MoveDealStepConfig {
+  /** Stored for the builder's pipeline→stage selector; the engine
+   *  derives the pipeline from the stage row itself. */
+  pipeline_id?: string;
+  /** Destination stage. The contact's newest open deal in that
+   *  stage's pipeline is the one that moves. */
+  stage_id: string;
+}
+
 export interface WaitStepConfig {
   amount: number;
   unit: 'minutes' | 'hours' | 'days';
@@ -568,6 +578,7 @@ export type AutomationStepConfig =
   | AssignConversationStepConfig
   | UpdateContactFieldStepConfig
   | CreateDealStepConfig
+  | MoveDealStepConfig
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig

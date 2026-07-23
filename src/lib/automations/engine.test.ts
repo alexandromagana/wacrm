@@ -9,8 +9,16 @@ const h = vi.hoisted(() => ({
     automations: [] as Record<string, unknown>[],
     steps: [] as Record<string, unknown>[],
     fromCalls: [] as string[],
-    updateCalls: [] as { table: string; filters: [string, string, unknown][] }[],
+    updateCalls: [] as {
+      table: string;
+      filters: [string, string, unknown][];
+      payload?: unknown;
+    }[],
     upsertCalls: [] as { table: string; payload: unknown }[],
+    // move_deal lookups
+    stageRow: null as { id: string; pipeline_id: string } | null,
+    pipelineRow: null as { id: string } | null,
+    dealRow: null as { id: string; stage_id: string } | null,
   },
 }));
 
@@ -42,6 +50,15 @@ vi.mock("./admin-client", () => {
         return { data: null, error: null };
       }
       return { data: null, error: null };
+    }
+    if (table === "pipeline_stages") return { data: state.stageRow, error: null };
+    if (table === "pipelines") return { data: state.pipelineRow, error: null };
+    if (table === "deals") {
+      if (type === "update") {
+        state.updateCalls.push({ table, filters: ops.filters, payload: ops.payload });
+        return { data: null, error: null };
+      }
+      return { data: state.dealRow, error: null };
     }
     if (table === "automations") return { data: state.automations, error: null };
     if (table === "automation_logs") {
@@ -109,6 +126,9 @@ beforeEach(() => {
   h.state.fromCalls = [];
   h.state.updateCalls = [];
   h.state.upsertCalls = [];
+  h.state.stageRow = null;
+  h.state.pipelineRow = null;
+  h.state.dealRow = null;
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -296,6 +316,90 @@ function customStep(field: string, value: string) {
     step_config: { field, value },
   };
 }
+
+function moveStep(stageId: string) {
+  return {
+    id: "s1",
+    automation_id: "a1",
+    step_type: "move_deal",
+    position: 0,
+    parent_step_id: null,
+    step_config: { stage_id: stageId },
+  };
+}
+
+describe("move_deal", () => {
+  beforeEach(() => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [moveStep("stage-2")];
+  });
+
+  it("moves the contact's newest open deal to the configured stage", async () => {
+    h.state.stageRow = { id: "stage-2", pipeline_id: "pipe-1" };
+    h.state.pipelineRow = { id: "pipe-1" };
+    h.state.dealRow = { id: "deal-1", stage_id: "stage-1" };
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    const dealUpdates = h.state.updateCalls.filter((u) => u.table === "deals");
+    expect(dealUpdates).toHaveLength(1);
+    expect(dealUpdates[0].payload).toEqual({ stage_id: "stage-2" });
+    expect(dealUpdates[0].filters).toContainEqual(["eq", "id", "deal-1"]);
+    // Tenant-scoped write — a forged deal id can't cross accounts.
+    expect(dealUpdates[0].filters).toContainEqual(["eq", "account_id", ACCOUNT]);
+  });
+
+  it("refuses a stage whose pipeline is not in the account", async () => {
+    h.state.stageRow = { id: "stage-2", pipeline_id: "foreign-pipe" };
+    h.state.pipelineRow = null; // account-scoped pipeline lookup finds nothing
+    h.state.dealRow = { id: "deal-1", stage_id: "stage-1" };
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.updateCalls.filter((u) => u.table === "deals")).toHaveLength(0);
+  });
+
+  it("is a soft no-op when the contact has no open deal", async () => {
+    h.state.stageRow = { id: "stage-2", pipeline_id: "pipe-1" };
+    h.state.pipelineRow = { id: "pipe-1" };
+    h.state.dealRow = null;
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.updateCalls.filter((u) => u.table === "deals")).toHaveLength(0);
+  });
+
+  it("skips the write when the deal is already in the target stage", async () => {
+    h.state.stageRow = { id: "stage-2", pipeline_id: "pipe-1" };
+    h.state.pipelineRow = { id: "pipe-1" };
+    h.state.dealRow = { id: "deal-1", stage_id: "stage-2" };
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: {},
+    });
+
+    expect(h.state.updateCalls.filter((u) => u.table === "deals")).toHaveLength(0);
+  });
+});
 
 describe("triggerMatches — interactive_reply", () => {
   function automation(reply_ids: string[]): Automation {
