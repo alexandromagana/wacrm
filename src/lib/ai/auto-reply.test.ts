@@ -148,6 +148,20 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     )
   })
 
+  it('always injects the current date/time note as a user turn', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      role: string
+      content: string
+    }[]
+    const clockNote = messages.find((m) =>
+      m.content.includes('fecha y hora actual'),
+    )
+    expect(clockNote).toBeTruthy()
+    expect(clockNote!.role).toBe('user')
+    expect(clockNote!.content).toContain('hora de Cancún')
+  })
+
   it('grounds the reply in retrieved knowledge', async () => {
     h.retrieveKnowledge.mockResolvedValue(['Returns accepted within 30 days.'])
     await dispatchInboundToAiReply(ARGS)

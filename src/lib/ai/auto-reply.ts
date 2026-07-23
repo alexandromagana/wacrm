@@ -3,7 +3,7 @@ import { loadAiConfig } from './config'
 import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
-import { buildSystemPrompt } from './defaults'
+import { buildSystemPrompt, buildDateTimeNote } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { applyLeadStatusTag, applyQuoteSentTag } from './lead-status'
 import { extractReceipt, formatReceiptNote, saveReceiptData } from './receipt'
@@ -135,6 +135,12 @@ export async function dispatchInboundToAiReply(
       )
       return
     }
+
+    // Give the model a clock. As a user-role turn — never in the system
+    // prompt, which must stay byte-identical for provider caching. The
+    // business prompt's schedule rules (horario de atención, proponer
+    // fechas válidas) are dead letters without this.
+    messages.push({ role: 'user', content: buildDateTimeNote() })
 
     // CFE receipt images: run the dedicated vision extraction, persist
     // the average as a contact custom field, and hand the reading to

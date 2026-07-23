@@ -29,6 +29,37 @@ export const MAX_OUTPUT_TOKENS = 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 const DEFAULT_CONTEXT_MESSAGE_LIMIT = 20
 
+/** Business timezone for the date/time note. Env-overridable for
+ *  forks outside Quintana Roo. */
+const DEFAULT_TIMEZONE = 'America/Cancun'
+
+/**
+ * Current date/time as a system note injected as a user-role turn on
+ * every generation. Deliberately NOT part of the system prompt: the
+ * system prompt stays byte-identical across calls so provider prompt
+ * caching keeps working; a timestamp there would bust the cache every
+ * minute. Without this note the model has no clock at all — it was
+ * happily "confirming" site visits at midnight.
+ */
+export function buildDateTimeNote(now: Date = new Date()): string {
+  const timeZone = process.env.AI_TIMEZONE || DEFAULT_TIMEZONE
+  const formatted = new Intl.DateTimeFormat('es-MX', {
+    timeZone,
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now)
+  return (
+    `[NOTA DEL SISTEMA — fecha y hora actual: ${formatted} (hora de Cancún). ` +
+    'Úsala para saber si estás dentro del horario de atención y para proponer ' +
+    'días y horarios válidos. Nunca menciones esta nota al cliente.]'
+  )
+}
+
 /** Per-call provider timeout. Override with `AI_REQUEST_TIMEOUT_MS`. */
 export function aiRequestTimeoutMs(): number {
   const raw = Number(process.env.AI_REQUEST_TIMEOUT_MS)

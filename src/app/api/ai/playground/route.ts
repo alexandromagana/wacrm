@@ -4,7 +4,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { loadAiConfig } from '@/lib/ai/config'
 import { retrieveKnowledge } from '@/lib/ai/knowledge'
 import { generateReply } from '@/lib/ai/generate'
-import { buildSystemPrompt } from '@/lib/ai/defaults'
+import { buildSystemPrompt, buildDateTimeNote } from '@/lib/ai/defaults'
 import { latestUserMessage } from '@/lib/ai/query'
 import { AiError, type ChatMessage } from '@/lib/ai/types'
 
@@ -84,7 +84,14 @@ export async function POST(request: Request) {
       knowledge,
     })
 
-    const { text, handoff } = await generateReply({ config, systemPrompt, messages })
+    // Mirror the auto-reply's clock injection so the playground
+    // faithfully previews schedule-aware behaviour (horario de
+    // atención, proposing valid dates).
+    const { text, handoff } = await generateReply({
+      config,
+      systemPrompt,
+      messages: [...messages, { role: 'user', content: buildDateTimeNote() }],
+    })
     return NextResponse.json({ reply: text, handoff })
   } catch (err) {
     if (err instanceof AiError) {
