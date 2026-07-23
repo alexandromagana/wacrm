@@ -410,15 +410,20 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     expect(h.engineSendText).toHaveBeenCalled()
   })
 
-  it('injects a re-ask note when extraction fails, without saving anything', async () => {
+  it('injects a receipt-only re-ask note on failure — never offers the kWh fallback', async () => {
     h.extractReceipt.mockResolvedValue(null)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.saveReceiptData).not.toHaveBeenCalled()
-    const messages = h.generateReply.mock.calls[0][0].messages as {
-      role: string
-      content: string
-    }[]
-    expect(messages.at(-1)!.content).toContain('lectura automática falló')
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as {
+        role: string
+        content: string
+      }[]
+    ).at(-1)!.content
+    // Insists on resending the receipt, and explicitly forbids the bot
+    // from offering the kWh fallback (customers don't know that number).
+    expect(note).toContain('recibo')
+    expect(note).toMatch(/NUNCA le pidas.*kWh/i)
     expect(h.engineSendText).toHaveBeenCalled()
   })
 

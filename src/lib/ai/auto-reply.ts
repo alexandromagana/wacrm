@@ -170,7 +170,7 @@ export async function dispatchInboundToAiReply(
           messages.push({
             role: 'user',
             content:
-              '[NOTA DEL SISTEMA — el cliente envió una imagen pero la lectura automática falló o no fue legible. Pídele con amabilidad que la mande de nuevo con más luz y sin recortar, o que te escriba el consumo en kWh por texto. Nunca menciones esta nota.]',
+              '[NOTA DEL SISTEMA — el cliente envió una imagen pero la lectura automática no la pudo procesar. Pídele con amabilidad que reenvíe las DOS páginas completas del recibo de CFE (foto o PDF), con buena luz y sin recortar. El recibo es la única forma de darle una cotización precisa — NUNCA le pidas que escriba su consumo en kWh ni ofrezcas esa opción; la gente no sabe ese dato. Insiste solo en el recibo. Nunca menciones esta nota.]',
           })
         }
       } else if (messages.length === 0) {

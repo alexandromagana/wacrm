@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
-import { aiRequestTimeoutMs } from './defaults'
+import { aiVisionTimeoutMs } from './defaults'
 import type { AiConfig } from './types'
 import {
   CIUDAD_FIELD_NAME,
@@ -258,7 +258,14 @@ export async function extractReceipt(args: {
 
     return parseReceiptJson(raw)
   } catch (err) {
-    console.error('[ai receipt] extraction failed:', err)
+    // AbortSignal.timeout throws a TimeoutError — surface it distinctly
+    // so "read failed" on a valid receipt is diagnosable as slowness vs.
+    // a genuine provider/network error.
+    const isTimeout = err instanceof Error && err.name === 'TimeoutError'
+    console.error(
+      `[ai receipt] extraction failed${isTimeout ? ' (timeout)' : ''}:`,
+      err,
+    )
     return null
   }
 }
@@ -305,19 +312,29 @@ async function visionOpenAi(
           ],
         },
       ],
-      max_completion_tokens: 500,
+      max_completion_tokens: 900,
       response_format: { type: 'json_object' },
     }),
-    signal: AbortSignal.timeout(aiRequestTimeoutMs()),
+    signal: AbortSignal.timeout(aiVisionTimeoutMs()),
   })
   if (!res.ok) {
-    console.error('[ai receipt] OpenAI vision HTTP', res.status)
+    // Log the body, not just the status — an OpenAI 400 explains itself
+    // (unsupported detail, image too large, bad model), and we couldn't
+    // see why reads were failing with only the status code.
+    const body = await res.text().catch(() => '')
+    console.error(
+      `[ai receipt] OpenAI vision HTTP ${res.status}: ${body.slice(0, 500)}`,
+    )
     return null
   }
   const data = (await res.json().catch(() => null)) as {
-    choices?: { message?: { content?: string } }[]
+    choices?: { message?: { content?: string }; finish_reason?: string }[]
   } | null
-  return data?.choices?.[0]?.message?.content ?? null
+  const choice = data?.choices?.[0]
+  if (choice?.finish_reason === 'length') {
+    console.error('[ai receipt] OpenAI vision truncated (hit token cap)')
+  }
+  return choice?.message?.content ?? null
 }
 
 async function visionAnthropic(
@@ -333,7 +350,7 @@ async function visionAnthropic(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: 500,
+      max_tokens: 900,
       system: EXTRACTION_PROMPT,
       messages: [
         {
@@ -363,10 +380,13 @@ async function visionAnthropic(
         },
       ],
     }),
-    signal: AbortSignal.timeout(aiRequestTimeoutMs()),
+    signal: AbortSignal.timeout(aiVisionTimeoutMs()),
   })
   if (!res.ok) {
-    console.error('[ai receipt] Anthropic vision HTTP', res.status)
+    const body = await res.text().catch(() => '')
+    console.error(
+      `[ai receipt] Anthropic vision HTTP ${res.status}: ${body.slice(0, 500)}`,
+    )
     return null
   }
   const data = (await res.json().catch(() => null)) as {

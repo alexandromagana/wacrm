@@ -66,6 +66,20 @@ export function aiRequestTimeoutMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_REQUEST_TIMEOUT_MS
 }
 
+const DEFAULT_VISION_TIMEOUT_MS = 90_000
+
+/**
+ * Vision (receipt reading) timeout — deliberately longer than the chat
+ * timeout. Two full-resolution phone screenshots tile into thousands of
+ * image tokens; the provider genuinely takes 20-60s, and the old 30s
+ * chat timeout was aborting legit reads. Override with
+ * `AI_VISION_TIMEOUT_MS`.
+ */
+export function aiVisionTimeoutMs(): number {
+  const raw = Number(process.env.AI_VISION_TIMEOUT_MS)
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_VISION_TIMEOUT_MS
+}
+
 /** How many recent text messages to feed the model. Override with
  *  `AI_CONTEXT_MESSAGE_LIMIT`. */
 export function aiContextMessageLimit(): number {
