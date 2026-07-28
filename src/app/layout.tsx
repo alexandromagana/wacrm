@@ -35,6 +35,15 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
+  // iOS reads these meta tags, not the manifest, to decide how a
+  // Home-Screen launch behaves. Without `capable`, tapping the icon
+  // opens a plain Safari tab — which on iOS means no Push API at all,
+  // so notifications silently never arrive.
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Gama Energía",
+  },
 };
 
 export const viewport: Viewport = {

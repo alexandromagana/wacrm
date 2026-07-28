@@ -14,6 +14,7 @@ import {
 } from '@/lib/ai/inbound-buffer'
 import { parseLeadForm, applyLeadForm } from '@/lib/contacts/lead-form'
 import { dispatchWebhookEvent } from '@/lib/webhooks/deliver'
+import { sendPushToAccount, sendPushToUser } from '@/lib/push/send'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -738,6 +739,50 @@ async function processMessage(
   // so the broadcast's `replied_count` advances (via the aggregate
   // trigger installed in migration 003).
   await flagBroadcastReplyIfAny(accountId, contactRecord.id)
+
+  // ============================================================
+  // Web Push.
+  //
+  // Placed here, not next to the `message.received` webhook dispatch
+  // further down, because the AI block in between sleeps for the
+  // inbound-burst debounce window (seconds). A notification that
+  // arrives after that delay defeats the point.
+  //
+  // Awaited rather than fire-and-forget: we're inside the route's
+  // `after()` block, which only keeps promises alive that it can see.
+  // Wrapped in try/catch so a push-service problem can never affect
+  // message processing — `sendPushTo*` already swallow their own
+  // errors, this is the belt to that pair of braces.
+  // ============================================================
+  try {
+    const pushPayload = {
+      title: contactRecord.name || senderPhone,
+      body: contentText || `[${message.type}]`,
+      url: `/inbox?c=${conversation.id}`,
+      // One live notification per conversation instead of a stack.
+      tag: conversation.id,
+    }
+    if (conversation.assigned_agent_id) {
+      // Someone owns this thread — notifying the whole team would be
+      // noise for everyone else.
+      await sendPushToUser(
+        supabaseAdmin(),
+        accountId,
+        conversation.assigned_agent_id,
+        'message_received',
+        pushPayload
+      )
+    } else {
+      await sendPushToAccount(
+        supabaseAdmin(),
+        accountId,
+        'message_received',
+        pushPayload
+      )
+    }
+  } catch (err) {
+    console.error('[webhook] push notification failed:', err)
+  }
 
   // ============================================================
   // Flow runner dispatch.

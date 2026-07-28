@@ -145,6 +145,25 @@ const nextConfig: NextConfig = {
         source: "/:path*",
         headers: [...SECURITY_HEADERS],
       },
+      {
+        // The service worker must never be cached. It falls under the
+        // catch-all `s-maxage=300` rule above, and Next merges headers
+        // from every matching rule with the LAST one winning — so this
+        // entry has to stay at the end of the array. A stale sw.js at
+        // the edge means push fixes don't reach devices until the CDN
+        // decides to revalidate.
+        //
+        // Service-Worker-Allowed lets the worker claim the whole origin
+        // even though it is served from /sw.js.
+        source: "/sw.js",
+        headers: [
+          {
+            key: "Cache-Control",
+            value: "no-cache, no-store, must-revalidate",
+          },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
     ];
   },
 };

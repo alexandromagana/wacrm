@@ -1,4 +1,5 @@
 import {
+  Bell,
   Coins,
   FileText,
   KeyRound,
@@ -26,6 +27,7 @@ export const SETTINGS_SECTIONS = [
   'profile',
   'security',
   'appearance',
+  'notifications',
   'whatsapp',
   'templates',
   'quick-replies',
@@ -52,6 +54,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   profile: { id: 'profile', label: 'Your profile', icon: User, group: 'account' },
   security: { id: 'security', label: 'Login & security', icon: Shield, group: 'account' },
   appearance: { id: 'appearance', label: 'Appearance', icon: Palette, group: 'account' },
+  notifications: { id: 'notifications', label: 'Notifications', icon: Bell, group: 'account' },
   whatsapp: { id: 'whatsapp', label: 'WhatsApp', icon: PlugZap, group: 'workspace' },
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   'quick-replies': { id: 'quick-replies', label: 'Quick replies', icon: Zap, group: 'workspace' },

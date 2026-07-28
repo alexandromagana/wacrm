@@ -10,6 +10,10 @@ import {
 } from "@/lib/inbox/conversations";
 import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
+import {
+  playNotifySound,
+  showDesktopNotification,
+} from "@/lib/push/notify-sound";
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
@@ -207,6 +211,27 @@ export default function InboxPage() {
       const newMsg = event.new;
 
       if (event.eventType === "INSERT") {
+        // Audible + desktop alert for an office machine that has the
+        // inbox open but isn't being watched. Complements Web Push
+        // rather than duplicating it: with the tab open, Realtime beats
+        // the push round-trip, and the shared notification tag keeps
+        // the two from showing twice.
+        const isWatchingThisThread =
+          activeConversation?.id === newMsg.conversation_id &&
+          document.visibilityState === "visible";
+
+        if (newMsg.sender_type === "customer" && !isWatchingThisThread) {
+          playNotifySound();
+          const contactName = conversations.find(
+            (c) => c.id === newMsg.conversation_id,
+          )?.contact?.name;
+          showDesktopNotification(
+            contactName || t("newMessage"),
+            newMsg.content_text || `[${newMsg.content_type}]`,
+            () => router.push(`/inbox?c=${newMsg.conversation_id}`),
+          );
+        }
+
         // Add to messages if it belongs to active conversation
         if (
           activeConversation &&
@@ -261,7 +286,7 @@ export default function InboxPage() {
         );
       }
     },
-    [activeConversation, hydrateConversation]
+    [activeConversation, hydrateConversation, conversations, router, t]
   );
 
   // Handle realtime conversation events

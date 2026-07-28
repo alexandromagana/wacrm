@@ -127,7 +127,8 @@
   },
   "Inbox": {
     "page": {
-      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account."
+      "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
+      "newMessage": "New message"
     },
     "conversationList": {
       "searchPlaceholder": "Search conversations...",
@@ -1498,6 +1499,7 @@
       "profile": "Your profile",
       "security": "Login & security",
       "appearance": "Appearance",
+      "notifications": "Notifications",
       "whatsapp": "WhatsApp",
       "templates": "Templates",
       "quick-replies": "Quick replies",
@@ -1693,6 +1695,41 @@
       "reindex": "Reindex",
       "reindexTooltip": "Re-embed all documents (e.g. after adding an embeddings key)",
       "loading": "Loading…"
+    },
+    "notifications": {
+      "title": "Notifications",
+      "description": "Get alerted about new WhatsApp messages on your phone and computer, even when the app is closed.",
+      "devicesTitle": "Devices",
+      "devicesDesc": "Notifications are enabled per device. Add each phone and computer you want alerts on.",
+      "enable": "Enable on this device",
+      "enabling": "Enabling…",
+      "enabled": "Notifications are on for this device.",
+      "notEnabled": "Notifications are off for this device.",
+      "blocked": "Notifications are blocked for this site. Allow them in your browser settings, then reload this page.",
+      "unsupported": "This browser doesn't support push notifications.",
+      "iosTitle": "One extra step on iPhone and iPad",
+      "iosDesc": "Apple only allows notifications from an installed app. In Safari, tap Share, choose \"Add to Home Screen\", then open Gama Energía from your Home Screen and come back here.",
+      "noDevices": "No devices yet.",
+      "remove": "Remove",
+      "removed": "Device removed.",
+      "added": "This device will now receive notifications.",
+      "sendTest": "Send a test notification",
+      "testSent": "Test notification sent.",
+      "eventsTitle": "What to notify me about",
+      "eventsDesc": "Applies to all your devices.",
+      "event_message_received": "Every incoming message",
+      "event_message_receivedDesc": "The assistant answers most messages on its own, so this can get noisy.",
+      "event_handoff": "The assistant hands a chat to a human",
+      "event_handoffDesc": "A customer asked for a person, or the assistant escalated.",
+      "event_conversation_assigned": "A conversation is assigned to me",
+      "event_conversation_assignedDesc": "Someone on the team routes a chat your way.",
+      "event_unanswered": "Nobody answered a message",
+      "event_unansweredDesc": "The assistant was paused or failed, so the customer is still waiting.",
+      "soundTitle": "Sound on this computer",
+      "soundDesc": "Play a chime and show an alert while the inbox is open in this browser.",
+      "saved": "Saved.",
+      "loadFailed": "Couldn't load your notification settings.",
+      "saveFailed": "Couldn't save your notification settings."
     }
   }
 }

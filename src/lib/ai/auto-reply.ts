@@ -11,6 +11,12 @@ import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
+import {
+  sendPushToAccount,
+  sendPushToUser,
+  type PushEvent,
+  type PushPayload,
+} from '@/lib/push/send'
 
 interface DispatchArgs {
   /** Tenancy key — drives config, contact, and whatsapp_config lookups. */
@@ -47,6 +53,55 @@ interface DispatchArgs {
  * reacting to a customer message that just landed — so no separate
  * window check is needed.
  */
+/**
+ * Push an assistant-lifecycle event to whoever should act on it.
+ *
+ * Both events deliberately reuse the conversation id as the push tag,
+ * so they REPLACE the plain "new message" notification already sent by
+ * the webhook rather than stacking a second one. The reader ends up
+ * with a single, more informative notification per thread.
+ */
+async function notifyAssistantEvent(
+  db: ReturnType<typeof supabaseAdmin>,
+  accountId: string,
+  conversationId: string,
+  contactId: string,
+  event: PushEvent,
+  title: string,
+): Promise<void> {
+  try {
+    const [{ data: contact }, { data: conv }] = await Promise.all([
+      db.from('contacts').select('name, phone').eq('id', contactId).maybeSingle(),
+      db
+        .from('conversations')
+        .select('assigned_agent_id')
+        .eq('id', conversationId)
+        .maybeSingle(),
+    ])
+
+    const payload: PushPayload = {
+      title,
+      body: contact?.name || contact?.phone || 'Conversación de WhatsApp',
+      url: `/inbox?c=${conversationId}`,
+      tag: conversationId,
+    }
+
+    if (conv?.assigned_agent_id) {
+      await sendPushToUser(
+        db,
+        accountId,
+        conv.assigned_agent_id,
+        event,
+        payload,
+      )
+    } else {
+      await sendPushToAccount(db, accountId, event, payload)
+    }
+  } catch (err) {
+    console.error(`[ai auto-reply] ${event} push failed:`, err)
+  }
+}
+
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
@@ -59,8 +114,15 @@ export async function dispatchInboundToAiReply(
     accessToken,
   } = args
 
+  // Drives the `unanswered` notification below. Only flipped on once we
+  // know the assistant was actually supposed to take this message —
+  // an account that doesn't use AI, or a thread a human already owns,
+  // isn't "unanswered", it's just not the assistant's job.
+  let assistantWasExpectedToReply = false
+  let assistantHandled = false
+  const db = supabaseAdmin()
+
   try {
-    const db = supabaseAdmin()
 
     const config = await loadAiConfig(db, accountId)
     if (!config || !config.autoReplyEnabled) return
@@ -107,6 +169,12 @@ export async function dispatchInboundToAiReply(
       .maybeSingle()
     if (convErr || !conv) return
     if (conv.assigned_agent_id) return // a human owns this thread
+
+    // Past this point the assistant was expected to answer, so its
+    // silence — a paused bot, an exhausted cap, a provider outage —
+    // means a customer is waiting with nobody watching.
+    assistantWasExpectedToReply = true
+
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound).
@@ -276,6 +344,18 @@ export async function dispatchInboundToAiReply(
           aiGenerated: true,
         })
       }
+
+      // The handoff has its own notification, so don't also report this
+      // thread as unanswered — that would be two pushes for one event.
+      assistantHandled = true
+      await notifyAssistantEvent(
+        db,
+        accountId,
+        conversationId,
+        contactId,
+        'handoff',
+        'El asistente te pasó una conversación',
+      )
       return
     }
 
@@ -309,7 +389,22 @@ export async function dispatchInboundToAiReply(
       text,
       aiGenerated: true,
     })
+    assistantHandled = true
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
+  } finally {
+    // `finally` rather than a call per exit: this function has a dozen
+    // early returns (cap reached, rate limited, provider error) and
+    // every one of them leaves the customer waiting.
+    if (assistantWasExpectedToReply && !assistantHandled) {
+      await notifyAssistantEvent(
+        db,
+        accountId,
+        conversationId,
+        contactId,
+        'unanswered',
+        'Nadie ha respondido este mensaje',
+      )
+    }
   }
 }
