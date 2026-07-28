@@ -42,10 +42,16 @@ ARG NEXT_PUBLIC_SUPABASE_URL
 ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
 ARG NEXT_PUBLIC_SITE_URL
 ARG NEXT_PUBLIC_APP_LOCALE=en
+# The VAPID *public* key is public by design — the browser sends it to
+# the push service to subscribe. The matching private key is a runtime
+# secret and must NOT be a build arg. Leaving this unset builds an app
+# with push disabled rather than a broken one.
+ARG NEXT_PUBLIC_VAPID_PUBLIC_KEY
 ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
     NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
     NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
-    NEXT_PUBLIC_APP_LOCALE=$NEXT_PUBLIC_APP_LOCALE
+    NEXT_PUBLIC_APP_LOCALE=$NEXT_PUBLIC_APP_LOCALE \
+    NEXT_PUBLIC_VAPID_PUBLIC_KEY=$NEXT_PUBLIC_VAPID_PUBLIC_KEY
 
 # Skip telemetry, build to .next/standalone (output: "standalone").
 ENV NEXT_TELEMETRY_DISABLED=1
