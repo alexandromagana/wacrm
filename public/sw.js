@@ -23,17 +23,29 @@ self.addEventListener('push', (event) => {
 
   const title = payload.title || 'Gama Energía';
 
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: payload.body || 'Tienes un mensaje nuevo.',
-      // Same tag replaces the previous notification instead of stacking,
-      // so a customer sending five messages leaves one entry.
-      tag: payload.tag || 'wacrm',
-      data: { url: payload.url || '/inbox' },
-      icon: '/icons/icon-192.png',
-      badge: '/icons/icon-192.png',
-    }),
-  );
+  const options = {
+    body: payload.body || 'Tienes un mensaje nuevo.',
+    data: { url: payload.url || '/inbox' },
+    icon: '/icons/icon-192.png',
+    badge: '/icons/icon-192.png',
+  };
+
+  // A tag collapses repeat notifications for one conversation into a
+  // single panel entry instead of a stack of ten. But replacing is
+  // SILENT by default on Android — no sound, no vibration — so a chatty
+  // customer would alert once and then go quiet while messages piled up
+  // unseen. `renotify` keeps the collapsing and restores the alert.
+  //
+  // Only set when we actually have a per-conversation tag: an untagged
+  // fallback shared by every push would collapse unrelated threads into
+  // one entry, which is worse than stacking. (`renotify` without `tag`
+  // also throws a TypeError.)
+  if (payload.tag) {
+    options.tag = payload.tag;
+    options.renotify = true;
+  }
+
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', (event) => {

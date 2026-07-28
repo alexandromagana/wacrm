@@ -62,6 +62,13 @@ export function playNotifySound(): void {
 export function showDesktopNotification(
   title: string,
   body: string,
+  /**
+   * Conversation id. Shared with the service worker's push tag so the
+   * two paths collapse into one notification instead of showing the
+   * same message twice — and kept per-conversation so a second customer
+   * doesn't silently overwrite the first one's alert.
+   */
+  tag?: string,
   onClick?: () => void,
 ): void {
   if (typeof window === 'undefined' || !('Notification' in window)) return;
@@ -71,9 +78,7 @@ export function showDesktopNotification(
     const notification = new Notification(title, {
       body,
       icon: '/icons/icon-192.png',
-      // Shared tag with the service worker's pushes so a message never
-      // shows twice when both paths fire.
-      tag: 'wacrm-inbox',
+      ...(tag ? { tag } : {}),
     });
     notification.onclick = () => {
       window.focus();

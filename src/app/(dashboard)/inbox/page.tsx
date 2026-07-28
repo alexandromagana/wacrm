@@ -228,6 +228,7 @@ export default function InboxPage() {
           showDesktopNotification(
             contactName || t("newMessage"),
             newMsg.content_text || `[${newMsg.content_type}]`,
+            newMsg.conversation_id,
             () => router.push(`/inbox?c=${newMsg.conversation_id}`),
           );
         }
