@@ -208,13 +208,35 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
         </div>
       );
 
-    case "location":
+    case "location": {
+      // content_text is built server-side as "name - address - lat,lng"
+      // (see the webhook's location case) — pull the coordinates back
+      // out so the agent scheduling the visit can open the pin directly
+      // instead of retyping them into Maps by hand.
+      const coordsMatch = message.content_text?.match(
+        /(-?\d{1,3}\.\d+),(-?\d{1,3}\.\d+)\s*$/,
+      );
+      const label =
+        message.content_text?.replace(/\s*-?\d{1,3}\.\d+,-?\d{1,3}\.\d+\s*$/, '').replace(/\s*-\s*$/, '') ||
+        t("locationShared");
       return (
         <div className="flex items-center gap-2 text-sm">
           <MapPin className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span>{message.content_text || t("locationShared")}</span>
+          {coordsMatch ? (
+            <a
+              href={`https://www.google.com/maps?q=${coordsMatch[1]},${coordsMatch[2]}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:no-underline"
+            >
+              {label}
+            </a>
+          ) : (
+            <span>{message.content_text || t("locationShared")}</span>
+          )}
         </div>
       );
+    }
 
     case "interactive": {
       // Three cases share content_type='interactive':
