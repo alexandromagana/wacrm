@@ -204,13 +204,22 @@ find-or-create hit leaves the existing contact's own columns alone —
 whereas `tags` and `custom_fields` are applied either way, so a lead
 form can enrich someone who already messaged you.
 
+`tags` **merge** here: they are added to whatever the contact already
+carries, and tags you don't name are left alone. This endpoint is an
+intake, so labelling a returning lead `["Facebook Ads"]` must not wipe
+the `hot lead` someone set by hand. To set a contact's tags exactly,
+use `PATCH`.
+
 ### `GET` / `PATCH /api/v1/contacts/{id}`
 
 Read or update one contact. Scopes: `contacts:read` / `contacts:write`.
 `PATCH` updates only the fields you send (`name`, `email`, `company`);
-pass `tags` (an array of tag names) to replace the contact's tags, and
-`custom_fields` to upsert custom values. A contact in another account
-returns `404`.
+pass `custom_fields` to upsert custom values. A contact in another
+account returns `404`.
+
+`tags` **replace** here, unlike `POST`: the contact ends up with
+exactly the tags you send, and `[]` clears them all. This is the only
+way to take a tag off a contact through the API.
 
 ### Custom fields
 

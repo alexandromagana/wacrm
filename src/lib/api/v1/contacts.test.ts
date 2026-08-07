@@ -6,6 +6,7 @@ import {
   findOrCreateContact,
   parseCustomFieldsInput,
   selectTagIds,
+  diffContactTags,
   ContactError,
 } from './contacts';
 
@@ -217,6 +218,49 @@ describe('selectTagIds', () => {
 
   it('returns an empty set for no names — the "clear all tags" case', () => {
     expect(selectTagIds([], accountTags)).toEqual(new Set());
+  });
+});
+
+describe('diffContactTags', () => {
+  // The contact already carries a tag a human set by hand.
+  const existing = new Set(['t-hot']);
+  const desired = new Set(['t-fb']);
+
+  it('merge adds without touching tags the request never named', () => {
+    expect(diffContactTags(existing, desired, 'merge')).toEqual({
+      toAdd: ['t-fb'],
+      toRemove: [],
+    });
+  });
+
+  it('replace removes the tags the request left out', () => {
+    expect(diffContactTags(existing, desired, 'replace')).toEqual({
+      toAdd: ['t-fb'],
+      toRemove: ['t-hot'],
+    });
+  });
+
+  it('re-sending a tag the contact already has is a no-op in both modes', () => {
+    const same = new Set(['t-fb']);
+    expect(diffContactTags(same, same, 'merge')).toEqual({
+      toAdd: [],
+      toRemove: [],
+    });
+    expect(diffContactTags(same, same, 'replace')).toEqual({
+      toAdd: [],
+      toRemove: [],
+    });
+  });
+
+  it('empty desired clears under replace and does nothing under merge', () => {
+    expect(diffContactTags(existing, new Set(), 'replace')).toEqual({
+      toAdd: [],
+      toRemove: ['t-hot'],
+    });
+    expect(diffContactTags(existing, new Set(), 'merge')).toEqual({
+      toAdd: [],
+      toRemove: [],
+    });
   });
 });
 

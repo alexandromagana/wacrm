@@ -11,6 +11,10 @@
 // for lead-form answers that don't fit the scalar columns. Those are
 // upserted whether the contact was created or already existed, so a
 // lead form can enrich someone who already messaged you.
+//
+// `tags` here MERGE onto whatever the contact already has: this is an
+// intake endpoint, and a lead form must not wipe a tag a human set.
+// PATCH is the endpoint that sets the tag set exactly.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -142,12 +146,17 @@ export async function POST(request: Request) {
     );
 
     if (Array.isArray(body.tags)) {
+      // Merge, not replace: this endpoint is an intake, and the contact
+      // may already carry tags a human set. A lead form labelling
+      // someone "Facebook Ads" must not wipe their "hot lead". Use
+      // PATCH when you mean to set the tag set exactly.
       await setContactTags(
         ctx.supabase,
         ctx.accountId,
         auditUserId,
         id,
-        body.tags.filter((t): t is string => typeof t === 'string')
+        body.tags.filter((t): t is string => typeof t === 'string'),
+        'merge'
       );
     }
 

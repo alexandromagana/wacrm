@@ -8,6 +8,10 @@
 // array of tag names) to replace the contact's tags, and
 // `custom_fields` (a `{ question: answer }` map) to upsert custom
 // values — omitted fields are left untouched either way.
+//
+// `tags` REPLACE here, unlike POST's merge: this is the explicit
+// "set the tags to exactly this" operation, and the only way to take
+// a tag off a contact through the API.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';

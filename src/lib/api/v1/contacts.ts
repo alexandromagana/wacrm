@@ -193,17 +193,49 @@ export function selectTagIds(
 }
 
 /**
- * Replace a contact's tags to exactly match `tagNames` (case-
- * insensitive; missing tags are created). A no-op when `tagNames` is
- * undefined — pass `[]` to clear all tags. Reuses `resolveImportTagIds`
- * so API and CSV-import tag handling stay consistent.
+ * How `setContactTags` treats tags the contact already has and this
+ * request didn't name.
+ *
+ * `merge` — leave them. What an intake source wants: a lead form
+ *   labelling someone "Facebook Ads" must not wipe the "hot lead" a
+ *   human put on them.
+ * `replace` — remove them, so the contact ends up matching `tagNames`
+ *   exactly. The only way to take a tag off through the API, so it
+ *   stays the behaviour of the explicit update endpoint.
+ */
+export type TagWriteMode = 'merge' | 'replace';
+
+/**
+ * The writes needed to bring a contact's tags to `desired` under
+ * `mode`. Pure, so the merge/replace rule is pinned by tests rather
+ * than only exercised through a live database.
+ */
+export function diffContactTags(
+  existing: Set<string>,
+  desired: Set<string>,
+  mode: TagWriteMode
+): { toAdd: string[]; toRemove: string[] } {
+  return {
+    toAdd: [...desired].filter((id) => !existing.has(id)),
+    toRemove:
+      mode === 'replace' ? [...existing].filter((id) => !desired.has(id)) : [],
+  };
+}
+
+/**
+ * Apply `tagNames` to a contact (case-insensitive; missing tags are
+ * created). `mode` decides the fate of the contact's other tags — see
+ * `TagWriteMode`. Under `replace`, `[]` clears every tag; under
+ * `merge`, `[]` is a no-op. Reuses `resolveImportTagIds` so API and
+ * CSV-import tag handling stay consistent.
  */
 export async function setContactTags(
   db: SupabaseClient,
   accountId: string,
   auditUserId: string,
   contactId: string,
-  tagNames: string[]
+  tagNames: string[],
+  mode: TagWriteMode = 'replace'
 ): Promise<void> {
   const { tagIdByKey } = await resolveImportTagIds(db, {
     accountId,
@@ -227,8 +259,7 @@ export async function setContactTags(
   }
   const existing = new Set((current ?? []).map((r) => r.tag_id as string));
 
-  const toAdd = [...desired].filter((id) => !existing.has(id));
-  const toRemove = [...existing].filter((id) => !desired.has(id));
+  const { toAdd, toRemove } = diffContactTags(existing, desired, mode);
 
   if (toRemove.length > 0) {
     const { error } = await db
