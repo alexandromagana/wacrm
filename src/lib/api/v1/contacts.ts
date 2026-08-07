@@ -10,12 +10,14 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
+import { canonicalTarget } from '@/lib/contacts/lead-form';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { runAutomationsForTrigger } from '@/lib/automations/engine';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
 
-/** Row select that embeds the contact's tags for serialization. */
-export const CONTACT_SELECT = '*, contact_tags(tags(*))';
+/** Row select that embeds the contact's tags + custom values. */
+export const CONTACT_SELECT =
+  '*, contact_tags(tags(*)), contact_custom_values(value, custom_fields(field_name))';
 
 export interface ApiContact {
   id: string;
@@ -25,6 +27,8 @@ export interface ApiContact {
   company: string | null;
   avatar_url: string | null;
   tags: { id: string; name: string; color: string }[];
+  /** Custom-field values keyed by field name — the same shape callers send. */
+  custom_fields: Record<string, string>;
   created_at: string;
   updated_at: string;
 }
@@ -40,10 +44,26 @@ export class ContactError extends Error {
 }
 
 type RawTagJoin = { tags: { id: string; name: string; color: string } | null };
+type RawCustomJoin = {
+  value: string | null;
+  custom_fields: { field_name: string } | null;
+};
 
 /** Flatten a `CONTACT_SELECT` row into the public contact shape. */
 export function serializeContact(row: Record<string, unknown>): ApiContact {
   const joins = (row.contact_tags as RawTagJoin[] | undefined) ?? [];
+  const customJoins =
+    (row.contact_custom_values as RawCustomJoin[] | undefined) ?? [];
+
+  const custom_fields: Record<string, string> = {};
+  for (const join of customJoins) {
+    // Orphaned join (field deleted mid-read) or an unset value: skip
+    // rather than emit a null the caller has to special-case.
+    const name = join.custom_fields?.field_name;
+    if (!name || join.value == null) continue;
+    custom_fields[name] = join.value;
+  }
+
   return {
     id: row.id as string,
     phone: row.phone as string,
@@ -55,6 +75,7 @@ export function serializeContact(row: Record<string, unknown>): ApiContact {
       .map((j) => j.tags)
       .filter((t): t is NonNullable<RawTagJoin['tags']> => t != null)
       .map((t) => ({ id: t.id, name: t.name, color: t.color })),
+    custom_fields,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
   };
@@ -184,9 +205,7 @@ export async function setContactTags(
   if (readErr) {
     throw new ContactError('Failed to read contact tags', 500);
   }
-  const existing = new Set(
-    (current ?? []).map((r) => r.tag_id as string)
-  );
+  const existing = new Set((current ?? []).map((r) => r.tag_id as string));
 
   const toAdd = [...desired].filter((id) => !existing.has(id));
   const toRemove = [...existing].filter((id) => !desired.has(id));
@@ -215,6 +234,180 @@ export async function setContactTags(
         contactId,
         context: { tag_id: tagId },
       });
+    }
+  }
+}
+
+// ============================================================
+// Custom fields
+//
+// Lead sources that aren't WhatsApp (a Facebook Lead Ads form piped
+// through Make/Zapier, a landing page, a sheet sync) carry qualifying
+// answers that don't fit the contact's scalar columns. `custom_fields`
+// on the request body is a flat `{ question: answer }` map, routed
+// through the SAME `canonicalTarget` mapping the click-to-WhatsApp
+// intake uses — so "¿Estás interesada/o en opciones de financiamiento?"
+// lands on the one `Interesado en financiamiento` field whether the
+// lead arrived over WhatsApp or over the API, instead of forking a
+// near-duplicate column per source.
+// ============================================================
+
+/** Distinct custom fields accepted in one request. */
+const MAX_CUSTOM_FIELDS = 50;
+
+export interface ParsedCustomFields {
+  /** Values destined for find-or-create custom fields. */
+  customs: { fieldName: string; value: string }[];
+  /** Contact-row values the mapping derived (a name/email question). */
+  contactPatch: { name?: string; email?: string };
+}
+
+/**
+ * Coerce one caller-supplied answer to the text we store, or null to
+ * skip it. Numbers/booleans are stringified (JSON senders are loose
+ * about types); an array is joined, since a multi-select question
+ * arrives as a list of chosen options. Objects are the one shape with
+ * no sensible text form — the caller gets a 400 rather than
+ * `[object Object]` silently landing on the contact.
+ */
+function coerceCustomValue(raw: unknown, label: string): string | null {
+  if (raw == null) return null;
+
+  if (Array.isArray(raw)) {
+    const parts: string[] = [];
+    for (const item of raw) {
+      const part = coerceCustomValue(item, label);
+      if (part) parts.push(part);
+    }
+    return parts.length > 0 ? parts.join(', ') : null;
+  }
+
+  if (
+    typeof raw === 'string' ||
+    typeof raw === 'number' ||
+    typeof raw === 'boolean'
+  ) {
+    const text = String(raw).trim();
+    return text.length > 0 ? text : null;
+  }
+
+  throw new ContactError(
+    `'custom_fields.${label}' must be a string, number, boolean, or array of those`,
+    400
+  );
+}
+
+/**
+ * Validate + canonicalize a `custom_fields` body value. Throws a 400
+ * `ContactError` on a bad shape. Empty/null answers are dropped rather
+ * than written as blanks — a form question left unanswered should not
+ * overwrite a value the contact already has.
+ */
+export function parseCustomFieldsInput(input: unknown): ParsedCustomFields {
+  const result: ParsedCustomFields = { customs: [], contactPatch: {} };
+  if (input == null) return result;
+
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new ContactError(
+      "'custom_fields' must be an object of { field name: value }",
+      400
+    );
+  }
+
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > MAX_CUSTOM_FIELDS) {
+    throw new ContactError(
+      `'custom_fields' accepts at most ${MAX_CUSTOM_FIELDS} entries`,
+      400
+    );
+  }
+
+  // Two questions can canonicalize to one field (e.g. "City" and
+  // "Ciudad"); last one wins, and only one row is written.
+  const byFieldName = new Map<string, string>();
+
+  for (const [label, raw] of entries) {
+    const value = coerceCustomValue(raw, label);
+    if (value === null) continue;
+
+    const target = canonicalTarget(label);
+    // The contact's phone is authoritative — a form typo must never
+    // fork or rewrite it.
+    if (target.kind === 'skip') continue;
+    if (target.kind === 'name') result.contactPatch.name = value;
+    else if (target.kind === 'email') result.contactPatch.email = value;
+    else byFieldName.set(target.fieldName, value);
+  }
+
+  result.customs = [...byFieldName].map(([fieldName, value]) => ({
+    fieldName,
+    value,
+  }));
+  return result;
+}
+
+/**
+ * Upsert custom values onto a contact, creating any custom field the
+ * account doesn't have yet (mirroring `applyLeadForm`, so both intake
+ * paths converge on the same rows). Unlike the webhook's version this
+ * one throws — an API caller explicitly asked for these writes, so a
+ * failure must surface as a 500 rather than a misleading 200.
+ */
+export async function setContactCustomFields(
+  db: SupabaseClient,
+  accountId: string,
+  auditUserId: string,
+  contactId: string,
+  customs: { fieldName: string; value: string }[]
+): Promise<void> {
+  if (customs.length === 0) return;
+
+  const { data: existing, error: readErr } = await db
+    .from('custom_fields')
+    .select('id, field_name')
+    .eq('account_id', accountId)
+    .in(
+      'field_name',
+      customs.map((c) => c.fieldName)
+    );
+  if (readErr) {
+    throw new ContactError('Failed to read custom fields', 500);
+  }
+
+  const idByName = new Map(
+    (existing ?? []).map((f) => [f.field_name as string, f.id as string])
+  );
+
+  for (const { fieldName, value } of customs) {
+    let fieldId = idByName.get(fieldName);
+    if (!fieldId) {
+      const { data: created, error: insErr } = await db
+        .from('custom_fields')
+        .insert({
+          account_id: accountId,
+          user_id: auditUserId,
+          field_name: fieldName,
+          field_type: 'text',
+        })
+        .select('id')
+        .single();
+      if (insErr || !created) {
+        console.error('[api/v1/contacts] custom field create error:', insErr);
+        throw new ContactError('Failed to create custom field', 500);
+      }
+      fieldId = created.id as string;
+      idByName.set(fieldName, fieldId);
+    }
+
+    const { error: upErr } = await db
+      .from('contact_custom_values')
+      .upsert(
+        { contact_id: contactId, custom_field_id: fieldId, value },
+        { onConflict: 'contact_id,custom_field_id' }
+      );
+    if (upErr) {
+      console.error('[api/v1/contacts] custom value upsert error:', upErr);
+      throw new ContactError('Failed to save custom field value', 500);
     }
   }
 }

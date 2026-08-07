@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   serializeContact,
   findOrCreateContact,
+  parseCustomFieldsInput,
   ContactError,
 } from './contacts';
 
@@ -31,6 +32,7 @@ describe('serializeContact', () => {
       company: 'Acme',
       avatar_url: null,
       tags: [{ id: 't1', name: 'vip', color: '#fff' }],
+      custom_fields: {},
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-02T00:00:00Z',
     });
@@ -48,6 +50,131 @@ describe('serializeContact', () => {
       updated_at: 'b',
     };
     expect(serializeContact(row).tags).toEqual([]);
+    expect(serializeContact(row).custom_fields).toEqual({});
+  });
+
+  it('flattens custom values into a name→value map, skipping orphans and nulls', () => {
+    const row = {
+      id: 'c3',
+      phone: '+1',
+      name: null,
+      email: null,
+      company: null,
+      avatar_url: null,
+      created_at: 'a',
+      updated_at: 'b',
+      contact_custom_values: [
+        { value: 'Cancún', custom_fields: { field_name: 'Ciudad' } },
+        {
+          value: 'Si',
+          custom_fields: { field_name: 'Interesado en financiamiento' },
+        },
+        { value: 'x', custom_fields: null }, // field deleted — dropped
+        { value: null, custom_fields: { field_name: 'Tamaño de techo' } }, // unset
+      ],
+    };
+    expect(serializeContact(row).custom_fields).toEqual({
+      Ciudad: 'Cancún',
+      'Interesado en financiamiento': 'Si',
+    });
+  });
+});
+
+describe('parseCustomFieldsInput', () => {
+  it('returns empty for a missing value', () => {
+    expect(parseCustomFieldsInput(undefined)).toEqual({
+      customs: [],
+      contactPatch: {},
+    });
+    expect(parseCustomFieldsInput(null).customs).toEqual([]);
+  });
+
+  it('canonicalizes known lead-form questions onto the shared field names', () => {
+    const { customs } = parseCustomFieldsInput({
+      '¿Estás interesada/o en opciones de financiamiento?': 'Si',
+      City: 'Mexico City',
+      '¿Cuál e el tamaño aproximado de tu techo?': '40 m2',
+    });
+    expect(customs).toEqual(
+      expect.arrayContaining([
+        { fieldName: 'Interesado en financiamiento', value: 'Si' },
+        { fieldName: 'Ciudad', value: 'Mexico City' },
+        { fieldName: 'Tamaño de techo', value: '40 m2' },
+      ])
+    );
+    expect(customs).toHaveLength(3);
+  });
+
+  it('routes a name/email question to the contact row, and drops phone', () => {
+    const { customs, contactPatch } = parseCustomFieldsInput({
+      'Full name': 'Ada Lovelace',
+      Email: 'ada@example.com',
+      'Phone number': '+525511481242',
+    });
+    expect(contactPatch).toEqual({
+      name: 'Ada Lovelace',
+      email: 'ada@example.com',
+    });
+    expect(customs).toEqual([]);
+  });
+
+  it('keeps an unknown question as a field named after it', () => {
+    expect(
+      parseCustomFieldsInput({ '¿Cuántos focos tienes?': '12' }).customs
+    ).toEqual([{ fieldName: 'Cuántos focos tienes', value: '12' }]);
+  });
+
+  it('joins an array answer (multi-select) and stringifies scalars', () => {
+    const { customs } = parseCustomFieldsInput({
+      Intereses: ['Paneles', 'Baterías'],
+      Presupuesto: 15000,
+      Contactado: false,
+    });
+    expect(customs).toEqual(
+      expect.arrayContaining([
+        { fieldName: 'Intereses', value: 'Paneles, Baterías' },
+        { fieldName: 'Presupuesto', value: '15000' },
+        { fieldName: 'Contactado', value: 'false' },
+      ])
+    );
+  });
+
+  it('drops empty answers rather than blanking an existing value', () => {
+    const { customs, contactPatch } = parseCustomFieldsInput({
+      Ciudad: '   ',
+      Notas: null,
+      Otros: [],
+      'Full name': '',
+    });
+    expect(customs).toEqual([]);
+    expect(contactPatch).toEqual({});
+  });
+
+  it('collapses two questions that canonicalize to the same field', () => {
+    const { customs } = parseCustomFieldsInput({
+      City: 'Cancún',
+      Ciudad: 'Mérida',
+    });
+    expect(customs).toEqual([{ fieldName: 'Ciudad', value: 'Mérida' }]);
+  });
+
+  it('rejects a non-object, an object-valued answer, and too many entries', () => {
+    expect(() => parseCustomFieldsInput('nope')).toThrow(ContactError);
+    expect(() => parseCustomFieldsInput([1, 2])).toThrow(ContactError);
+    expect(() => parseCustomFieldsInput({ Ciudad: { a: 1 } })).toThrow(
+      ContactError
+    );
+
+    const tooMany = Object.fromEntries(
+      Array.from({ length: 51 }, (_, i) => [`Campo ${i}`, 'x'])
+    );
+    expect(() => parseCustomFieldsInput(tooMany)).toThrow(ContactError);
+  });
+
+  it('reports a 400 status on bad input', () => {
+    expect(() => parseCustomFieldsInput('nope')).toThrow(
+      expect.objectContaining({ status: 400 })
+    );
   });
 });
 

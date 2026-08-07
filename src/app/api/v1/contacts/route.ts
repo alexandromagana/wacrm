@@ -6,6 +6,11 @@
 // supports `?search=` (name/phone) and `?tag=<tagId>` filters. Create
 // is find-or-create by phone: an existing match returns 200 with
 // `created: false`; a new row returns 201 with `created: true`.
+//
+// Create also accepts `custom_fields` — a `{ question: answer }` map
+// for lead-form answers that don't fit the scalar columns. Those are
+// upserted whether the contact was created or already existed, so a
+// lead form can enrich someone who already messaged you.
 // ============================================================
 
 import { requireApiKey } from '@/lib/auth/api-context';
@@ -20,6 +25,8 @@ import {
   serializeContact,
   findOrCreateContact,
   setContactTags,
+  setContactCustomFields,
+  parseCustomFieldsInput,
   getContactById,
   resolveAuditUserId,
   ContactError,
@@ -110,6 +117,12 @@ export async function POST(request: Request) {
       return fail('bad_request', "'phone' is required", 400);
     }
 
+    // Parse before any write so a malformed `custom_fields` is a clean
+    // 400 rather than a half-applied contact.
+    const { customs, contactPatch } = parseCustomFieldsInput(
+      body.custom_fields
+    );
+
     const auditUserId = await resolveAuditUserId(ctx.supabase, ctx.accountId);
 
     const { id, created } = await findOrCreateContact(
@@ -118,8 +131,12 @@ export async function POST(request: Request) {
       auditUserId,
       {
         phone,
-        name: typeof body.name === 'string' ? body.name : undefined,
-        email: typeof body.email === 'string' ? body.email : undefined,
+        // An explicit top-level field wins; a name/email question inside
+        // `custom_fields` is the fallback. Like every scalar here, this
+        // only applies on create — find-or-create leaves an existing
+        // contact's own columns alone.
+        name: typeof body.name === 'string' ? body.name : contactPatch.name,
+        email: typeof body.email === 'string' ? body.email : contactPatch.email,
         company: typeof body.company === 'string' ? body.company : undefined,
       }
     );
@@ -133,6 +150,17 @@ export async function POST(request: Request) {
         body.tags.filter((t): t is string => typeof t === 'string')
       );
     }
+
+    // Unlike the scalar columns, custom values are written for an
+    // existing contact too — enriching a contact who already messaged
+    // you is the point of piping a lead form in here.
+    await setContactCustomFields(
+      ctx.supabase,
+      ctx.accountId,
+      auditUserId,
+      id,
+      customs
+    );
 
     const contact = await getContactById(ctx.supabase, ctx.accountId, id);
     return ok(contact, created ? 201 : 200);
