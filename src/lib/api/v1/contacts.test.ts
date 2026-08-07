@@ -5,6 +5,7 @@ import {
   serializeContact,
   findOrCreateContact,
   parseCustomFieldsInput,
+  selectTagIds,
   ContactError,
 } from './contacts';
 
@@ -175,6 +176,47 @@ describe('parseCustomFieldsInput', () => {
     expect(() => parseCustomFieldsInput('nope')).toThrow(
       expect.objectContaining({ status: 400 })
     );
+  });
+});
+
+describe('selectTagIds', () => {
+  // `resolveImportTagIds` returns a lookup over EVERY tag in the
+  // account, so the map always carries names this request never asked
+  // for. Reading its `.values()` tagged the contact with all of them.
+  const accountTags = new Map([
+    ['cold lead', 't-cold'],
+    ['warm lead', 't-warm'],
+    ['hot lead', 't-hot'],
+    ['facebook ads', 't-fb'],
+    ['quote sent', 't-quote'],
+  ]);
+
+  it('selects only the requested names, not the whole account map', () => {
+    expect(selectTagIds(['Facebook Ads'], accountTags)).toEqual(
+      new Set(['t-fb'])
+    );
+  });
+
+  it('matches case-insensitively and ignores surrounding whitespace', () => {
+    expect(selectTagIds(['  FACEBOOK ads '], accountTags)).toEqual(
+      new Set(['t-fb'])
+    );
+  });
+
+  it('de-duplicates names that resolve to the same tag', () => {
+    expect(selectTagIds(['Facebook Ads', 'facebook ads'], accountTags)).toEqual(
+      new Set(['t-fb'])
+    );
+  });
+
+  it('skips a name with no matching tag', () => {
+    expect(selectTagIds(['Facebook Ads', 'nope'], accountTags)).toEqual(
+      new Set(['t-fb'])
+    );
+  });
+
+  it('returns an empty set for no names — the "clear all tags" case', () => {
+    expect(selectTagIds([], accountTags)).toEqual(new Set());
   });
 });
 

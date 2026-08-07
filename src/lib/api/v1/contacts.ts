@@ -173,6 +173,26 @@ export async function findOrCreateContact(
 }
 
 /**
+ * Pick the ids for `tagNames` out of a `resolveImportTagIds` lookup.
+ *
+ * The map that helper returns is a lookup table over EVERY tag in the
+ * account, not the resolution of this request — so its `.values()` are
+ * all the account's tags. Reading it that way tagged each contact with
+ * the account's entire tag set; resolve name by name instead.
+ */
+export function selectTagIds(
+  tagNames: string[],
+  tagIdByKey: Map<string, string>
+): Set<string> {
+  const ids = new Set<string>();
+  for (const name of tagNames) {
+    const id = tagIdByKey.get(name.trim().toLowerCase());
+    if (id) ids.add(id);
+  }
+  return ids;
+}
+
+/**
  * Replace a contact's tags to exactly match `tagNames` (case-
  * insensitive; missing tags are created). A no-op when `tagNames` is
  * undefined — pass `[]` to clear all tags. Reuses `resolveImportTagIds`
@@ -191,7 +211,7 @@ export async function setContactTags(
     tagNames,
     canCreateTags: true,
   });
-  const desired = new Set(tagIdByKey.values());
+  const desired = selectTagIds(tagNames, tagIdByKey);
 
   // Diff against the current joins rather than delete-all-then-insert:
   // a diff only touches tags that actually change, so a mid-operation
