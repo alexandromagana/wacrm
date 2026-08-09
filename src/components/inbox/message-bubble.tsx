@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
@@ -18,6 +18,7 @@ import {
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
+import { MediaLightbox } from "./media-lightbox";
 import { InteractivePreview } from "@/components/interactive/interactive-preview";
 import { useTranslations } from "next-intl";
 
@@ -51,15 +52,29 @@ function MediaUnavailable({ label, t }: { label: string, t: ReturnType<typeof us
   return (
     <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <ImageOff className="h-4 w-4 shrink-0 text-muted-foreground" />
-      <span>{t("unavailable", { label })}</span>
+      <span className="min-w-0 break-words">{t("unavailable", { label })}</span>
     </div>
   );
 }
 
-function MediaImage({ url, alt }: { url: string; alt: string }) {
+function MediaImage({
+  url,
+  alt,
+  t,
+}: {
+  url: string;
+  alt: string;
+  t: ReturnType<typeof useTranslations>;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  // Held in a ref, not read back off `src`: the cleanup below closes over
+  // the render in which the effect ran, where `src` is still null, so the
+  // object URL was never actually revoked and every photo in a thread
+  // leaked its blob until a full page reload.
+  const objectUrlRef = useRef<string | null>(null);
 
   const loadImage = useCallback(async () => {
     if (!url) return;
@@ -71,6 +86,7 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
         if (!res.ok) throw new Error("Failed to load media");
         const blob = await res.blob();
         const blobUrl = URL.createObjectURL(blob);
+        objectUrlRef.current = blobUrl;
         setSrc(blobUrl);
       } catch {
         setError(true);
@@ -86,16 +102,16 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
   useEffect(() => {
     loadImage();
     return () => {
-      if (src?.startsWith("blob:")) {
-        URL.revokeObjectURL(src);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadImage]);
 
   if (error) {
     return (
-      <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
+      <div className="flex h-40 w-60 max-w-full items-center justify-center rounded-lg bg-muted">
         <ImageOff className="h-8 w-8 text-muted-foreground" />
       </div>
     );
@@ -103,19 +119,38 @@ function MediaImage({ url, alt }: { url: string; alt: string }) {
 
   if (loading) {
     return (
-      <div className="flex h-40 w-60 items-center justify-center rounded-lg bg-muted">
+      <div className="flex h-40 w-60 max-w-full items-center justify-center rounded-lg bg-muted">
         <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
       </div>
     );
   }
 
   return (
-    <img
-      src={src ?? ""}
-      alt={alt}
-      className="max-h-64 max-w-60 rounded-lg object-cover"
-      onError={() => setError(true)}
-    />
+    <>
+      {/* A button, not a bare <img>: opening a photo is a real action and
+          has to be reachable by keyboard, not just by tap. */}
+      <button
+        type="button"
+        onClick={() => setViewerOpen(true)}
+        aria-label={t("openImage")}
+        className="block cursor-zoom-in rounded-lg transition-opacity hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-current"
+      >
+        <img
+          src={src ?? ""}
+          alt={alt}
+          className="max-h-64 max-w-60 rounded-lg object-contain"
+          onError={() => setError(true)}
+        />
+      </button>
+      {src && (
+        <MediaLightbox
+          src={src}
+          alt={alt}
+          open={viewerOpen}
+          onOpenChange={setViewerOpen}
+        />
+      )}
+    </>
   );
 }
 
@@ -132,7 +167,7 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
       return (
         <div>
           {message.media_url ? (
-            <MediaImage url={message.media_url} alt="Shared image" />
+            <MediaImage url={message.media_url} alt={t("photo")} t={t} />
           ) : (
             <MediaUnavailable label={t("photo")} t={t} />
           )}
@@ -184,10 +219,20 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
           href={message.media_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
+          className="flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
         >
-          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" />
-          <span className="truncate">
+          <FileText className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+          {/* Wrapped, not truncated. `content_text` here is whatever the
+           *  sender typed as the caption (falling back to the filename),
+           *  so `truncate` — white-space: nowrap — hid the tail of every
+           *  message sent with an attachment AND made the bubble's
+           *  max-content width the whole caption on one line, which the
+           *  75% column cap could no longer hold back. Same failure the
+           *  reply quote hit in issue #165.
+           *
+           *  `min-w-0` lets this flex child shrink so `break-words` can
+           *  act on a long unbroken filename or URL. */}
+          <span className="min-w-0 whitespace-pre-wrap break-words">
             {message.content_text || t("document")}
           </span>
         </a>
@@ -303,7 +348,14 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          "relative rounded-2xl px-3 py-2",
+          // `max-w-full` is the backstop for the 75% column cap. The
+          // bubble is sized fit-content by `items-end` above, and a
+          // child that refuses to wrap (a nowrap label, an interactive
+          // button title) pushes its max-content width past the cap and
+          // — being right-aligned — bleeds off the left edge of the
+          // window. Clamping here means no single content type can ever
+          // break the thread's layout again.
+          "relative max-w-full rounded-2xl px-3 py-2",
           isAgent
             ? "rounded-br-md bg-primary text-primary-foreground"
             : "rounded-bl-md bg-muted text-foreground",

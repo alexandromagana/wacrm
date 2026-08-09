@@ -217,7 +217,12 @@
       "interactiveReply": "[Interactive reply]",
       "unsupported": "[Unsupported message type]",
       "aiBadge": "AI",
-      "aiBadgeTitle": "Sent automatically by the AI assistant"
+      "aiBadgeTitle": "Sent automatically by the AI assistant",
+      "openImage": "Open image",
+      "lightboxZoom": "Actual size",
+      "lightboxFit": "Fit to screen",
+      "lightboxOpenOriginal": "Open original",
+      "lightboxClose": "Close"
     },
     "actions": {
       "reply": "Reply",
