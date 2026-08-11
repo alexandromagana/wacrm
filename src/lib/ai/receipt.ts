@@ -6,6 +6,9 @@ import {
   CIUDAD_FIELD_NAME,
   PROPIEDAD_FIELD_NAME,
 } from '@/lib/contacts/lead-form'
+import { isPlausibleAverage, resolveQuote } from '@/lib/quotes/pricing'
+import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
+import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 
 // ============================================================
 // CFE receipt reading (vision).
@@ -27,6 +30,28 @@ export interface ReceiptExtraction {
   tarifa: string | null
   /** City/municipality read off the service address, or null. */
   ciudad: string | null
+  /** "Fac. del Periodo" — this bimester's charge, before DAP. */
+  importe_periodo_mxn: number | null
+  /** Derecho de Alumbrado Público, a municipal levy on the same bill. */
+  importe_dap_mxn: number | null
+  /**
+   * The headline "TOTAL A PAGAR". Carried for cross-checking ONLY —
+   * see `costo_periodo_mxn`. Never feed this to a projection.
+   */
+  importe_total_a_pagar_mxn: number | null
+  /** Costs from the history table, aligned by index with the kWh. */
+  historial_bimestres_importe_mxn: (number | null)[]
+  /**
+   * What this bimester of electricity actually cost: period charge plus
+   * DAP. Derived here, never read off the bill.
+   *
+   * This is NOT the total to pay. That total also carries "Adeudo
+   * Anterior" and "Su Pago" — debt and credit from previous periods —
+   * so on a customer who is one bimester behind it can overstate the
+   * period by thousands, and the 25-year projection multiplies the
+   * error by 38.9.
+   */
+  costo_periodo_mxn: number | null
   advertencias: string
 }
 
@@ -67,6 +92,19 @@ se hace por fuera.
   consumo de un bimestre normalmente se parece a los valores del
   historial de la página 2; si tu número es mucho mayor que todos
   ellos, seguramente tomaste la lectura del medidor por error.
+- Página 1, importes en pesos. En el bloque "Desglose del importe a
+  pagar" (o equivalente) reporta por separado, cada uno tal como está
+  impreso:
+    · "Fac. del Periodo" — lo facturado de ESTE bimestre, con IVA.
+      Si el recibo no trae ese renglón, usa el subtotal del periodo
+      (energía + IVA). Nunca sumes tú los renglones.
+    · "DAP" — Derecho de Alumbrado Público, si aparece.
+    · "Total" / "TOTAL A PAGAR" — el número grande.
+  ⚠️ NO conviertas el TOTAL A PAGAR en el costo del bimestre. Ese
+  total puede incluir "Adeudo Anterior" y "Su Pago" — deuda y pagos de
+  periodos anteriores — así que en un cliente atrasado no se parece en
+  nada a lo que costó este bimestre. Solo repórtalos por separado; la
+  cuenta se hace por fuera.
 - Página 2: la tabla o gráfica de "Historial de consumo". Extrae
   ÚNICAMENTE los 5 bimestres MÁS RECIENTES anteriores al periodo
   actual — si la gráfica muestra más de 5 (algunos recibos muestran
@@ -75,6 +113,12 @@ se hace por fuera.
   consumo actual (página 1) más estos 5 bimestres (página 2) forman
   exactamente 6 periodos = 1 año de consumo, que es todo lo que se
   necesita.
+  Si esa tabla trae una columna "Importe", reporta también el importe
+  de esos MISMOS 5 bimestres, en el MISMO ORDEN, uno por uno. Los dos
+  arreglos se leen por posición: si un importe no se alcanza a leer,
+  pon null en su lugar — nunca recorras los valores ni cambies el
+  orden para rellenar un hueco. Si el recibo no trae esa columna,
+  devuelve un arreglo vacío.
 
 # SI LA IMAGEN NO ES UN RECIBO DE CFE
 Deja todos los campos numéricos en null / lista vacía y explica en
@@ -86,16 +130,19 @@ CFE, parece una foto de un techo").
   no es legible, déjalo fuera y repórtalo en "advertencias".
 - Nunca calcules un promedio ni una suma — solo reporta los valores
   crudos que leas. El promedio se calcula por fuera con exactitud a
-  partir de lo que reportes.
+  partir de lo que reportes. Esto aplica igual a los pesos: reporta
+  los renglones tal como vienen y no los combines.
+- Los importes van como número, sin signo de pesos, sin comas y con
+  los centavos tal cual (10237.85, no "$10,237.85" ni 10237).
 
 # COMPACTO (importante)
-Responde de la forma MÁS BREVE posible: solo los 7 campos del JSON de
+Responde de la forma MÁS BREVE posible: solo los 10 campos del JSON de
 abajo, nada más. NO agregues campos extra, NO transcribas la tabla
-completa, NO repitas valores, NO expliques tu razonamiento. El
-historial es un arreglo simple de máximo 5 números (ej. [1002, 1170,
-1701, 1420, 1543]) — nunca objetos, nunca importes ni fechas dentro
-del arreglo. "advertencias" es una frase corta o cadena vacía, jamás
-un párrafo. Una respuesta completa cabe en menos de 200 palabras.
+completa, NO repitas valores, NO expliques tu razonamiento. Los dos
+historiales son arreglos simples de máximo 5 números (ej. [1002, 1170,
+1701, 1420, 1543]) — nunca objetos, nunca fechas dentro del arreglo.
+"advertencias" es una frase corta o cadena vacía, jamás un párrafo.
+Una respuesta completa cabe en menos de 200 palabras.
 
 # FORMATO DE RESPUESTA
 Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
@@ -105,6 +152,10 @@ Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
   "historial_bimestres_kwh": [<máximo 5 números, los más recientes>],
   "tarifa": "<tarifa>" o null,
   "ciudad": "<ciudad o municipio del domicilio>" o null,
+  "importe_periodo_mxn": <"Fac. del Periodo" o null>,
+  "importe_dap_mxn": <DAP o null>,
+  "importe_total_a_pagar_mxn": <el total impreso o null>,
+  "historial_bimestres_importe_mxn": [<mismos 5 bimestres, mismo orden>],
   "advertencias": "<texto breve, o cadena vacía si todo se leyó bien>"
 }`
 
@@ -161,6 +212,37 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
       ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length)
       : null
 
+  // Money. Kept slot-for-slot with the kWh history so a missing importe
+  // cannot silently shift every other period by one.
+  const importePeriodo = num(r.importe_periodo_mxn)
+  const importeDap = num(r.importe_dap_mxn)
+  const importeTotal = num(r.importe_total_a_pagar_mxn)
+  const historialImporte = (
+    Array.isArray(r.historial_bimestres_importe_mxn)
+      ? r.historial_bimestres_importe_mxn.map(num)
+      : []
+  ).slice(0, MAX_HISTORIAL_BIMESTRES)
+
+  const costoPeriodo =
+    importePeriodo != null ? importePeriodo + (importeDap ?? 0) : null
+
+  const advertencias: string[] = []
+  if (typeof r.advertencias === 'string' && r.advertencias) {
+    advertencias.push(r.advertencias)
+  }
+  // A gap between the period charge and the headline total means the
+  // customer carries debt or credit from earlier bimesters. Not an
+  // error — it is precisely the case where using the total would have
+  // poisoned the projection — but worth surfacing to whoever reviews
+  // the quote. 2% absorbs the cent-level rounding CFE prints.
+  if (costoPeriodo != null && importeTotal != null && costoPeriodo > 0) {
+    if (Math.abs(importeTotal - costoPeriodo) / costoPeriodo > 0.02) {
+      advertencias.push(
+        `el total a pagar ($${importeTotal}) no coincide con el costo del periodo ($${costoPeriodo.toFixed(2)}); probablemente trae adeudo o saldo a favor de bimestres anteriores`,
+      )
+    }
+  }
+
   return {
     consumo_periodo_actual_kwh: consumoActual,
     periodo_actual:
@@ -171,7 +253,12 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
     tarifa: typeof r.tarifa === 'string' ? r.tarifa : null,
     ciudad:
       typeof r.ciudad === 'string' && r.ciudad.trim() ? r.ciudad.trim() : null,
-    advertencias: typeof r.advertencias === 'string' ? r.advertencias : '',
+    importe_periodo_mxn: importePeriodo,
+    importe_dap_mxn: importeDap,
+    importe_total_a_pagar_mxn: importeTotal,
+    historial_bimestres_importe_mxn: historialImporte,
+    costo_periodo_mxn: costoPeriodo,
+    advertencias: advertencias.join('; '),
   }
 }
 
@@ -196,12 +283,12 @@ export function inferPropertyType(tarifa: string | null): string | null {
 }
 
 /**
- * Sanity bounds: a residential/commercial bimonthly average outside
- * this range is far more likely a misread than a real bill.
+ * Sanity bounds for a bimonthly average. Defined in `@/lib/quotes` and
+ * re-exported here for the existing callers: it gates what we're willing
+ * to put a price on, which is a quoting rule, and `src/lib/quotes` is
+ * deliberately free of AI/Meta imports so it stays standalone.
  */
-export function isPlausibleAverage(kwh: number): boolean {
-  return kwh >= 50 && kwh <= 20_000
-}
+export { isPlausibleAverage }
 
 /**
  * Render the extraction as the bracketed system note the auto-reply
@@ -222,7 +309,36 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
   if (r.historial_bimestres_kwh.length > 0) {
     lines.push(`historial_kwh: ${r.historial_bimestres_kwh.join(', ')}`)
   }
+  if (r.costo_periodo_mxn != null) {
+    lines.push(
+      `costo_bimestral_mxn: ${r.costo_periodo_mxn.toFixed(2)} (lo que costó este bimestre de luz; NO es el total a pagar del recibo)`,
+    )
+  }
   if (r.tarifa) lines.push(`tarifa: ${r.tarifa}`)
+  // The projection the PDF will print, handed back to the model for the
+  // same reason `pricing.ts` hands back the tier: if the bot quotes one
+  // set of savings in chat and the document shows another, the customer
+  // is the one who notices.
+  const quote = resolveQuote(
+    r.promedio_bimestral_kwh,
+    r.cantidad_periodos_usados,
+  )
+  if (quote.kind === 'ok') {
+    const financials = buildFinancials({
+      costoBimestralMxn: projectionBaseCost({
+        costoPeriodoMxn: r.costo_periodo_mxn,
+        historialImporteMxn: r.historial_bimestres_importe_mxn,
+      }),
+      tier: quote.tier,
+    })
+    if (financials) {
+      lines.push(
+        `proyeccion_25_anios: sin paneles ${formatMxn(financials.sinPaneles25Anios)}, con paneles ${formatMxn(financials.conPaneles25Anios)}, ahorro ${formatMxn(financials.ahorro25Anios)}`,
+        `se_paga_solo_en: ${formatPaybackDuration(financials.paybackAnios, financials.paybackMeses)}`,
+        'Estas cifras son las que llevará la propuesta en PDF: si mencionas alguna, usa exactamente estos números y nunca los recalcules.',
+      )
+    }
+  }
   if (r.ciudad) {
     lines.push(
       `ciudad_detectada: ${r.ciudad} (ya se guardó en el contacto — no la vuelvas a preguntar salvo que el cliente la corrija)`,

@@ -86,6 +86,15 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingRoot: import.meta.dirname,
   /**
+   * Keep the PDF generator out of the server bundle.
+   *
+   * `pdf-lib` ships cjs + esm + umd builds; bundling drags several
+   * hundred KB of UMD and pako into the server chunks for no gain.
+   * Marking them external leaves a plain runtime `require()`, which the
+   * file tracer follows reliably into `.next/standalone`.
+   */
+  serverExternalPackages: ["pdf-lib", "@pdf-lib/fontkit"],
+  /**
    * Cache-Control policy.
    *
    * Why this exists:

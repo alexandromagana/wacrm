@@ -82,6 +82,11 @@ function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtracti
     promedio_bimestral_kwh: null,
     tarifa: null,
     ciudad: null,
+    importe_periodo_mxn: null,
+    importe_dap_mxn: null,
+    importe_total_a_pagar_mxn: null,
+    historial_bimestres_importe_mxn: [],
+    costo_periodo_mxn: null,
     advertencias: '',
     ...overrides,
   }
@@ -215,6 +220,127 @@ describe('parseReceiptJson', () => {
   })
 })
 
+describe('parseReceiptJson — importes en pesos', () => {
+  /** Osvaldo Coyac's real receipt, transcribed from the photos. */
+  const OSVALDO = {
+    consumo_periodo_actual_kwh: 2944,
+    periodo_actual: '22 MAY 26 - 22 JUL 26',
+    historial_bimestres_kwh: [2177, 1487, 1447, 1966, 2788],
+    tarifa: '1D',
+    ciudad: 'CANCUN, Q.R.',
+    importe_periodo_mxn: 9814.27,
+    importe_dap_mxn: 423.03,
+    importe_total_a_pagar_mxn: 10237.85,
+    historial_bimestres_importe_mxn: [6481, 5815, 5589, 7999, 9173],
+    advertencias: '',
+  }
+
+  it('derives the period cost as charge + DAP, not the total to pay', () => {
+    const r = parseReceiptJson(JSON.stringify(OSVALDO))!
+    expect(r.costo_periodo_mxn).toBeCloseTo(10237.3, 2)
+    expect(r.costo_periodo_mxn).not.toBe(r.importe_total_a_pagar_mxn)
+    expect(r.promedio_bimestral_kwh).toBe(2135)
+    expect(r.cantidad_periodos_usados).toBe(6)
+  })
+
+  it('stays quiet when the total matches the period within rounding', () => {
+    // Here the adeudo (6,481.55) and the payment (-6,481.00) nearly
+    // cancel, so the total lands $0.55 from the period cost.
+    expect(parseReceiptJson(JSON.stringify(OSVALDO))!.advertencias).toBe('')
+  })
+
+  it('warns — but still uses the period — when the customer owes', () => {
+    // Same bill, one bimester behind: the total carries the debt.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        importe_total_a_pagar_mxn: 16718.85,
+      }),
+    )!
+    expect(r.costo_periodo_mxn).toBeCloseTo(10237.3, 2)
+    expect(r.advertencias).toMatch(/adeudo|saldo a favor/i)
+  })
+
+  it('keeps an existing warning and appends the mismatch', () => {
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        advertencias: 'la página 2 se ve borrosa',
+        importe_total_a_pagar_mxn: 16718.85,
+      }),
+    )!
+    expect(r.advertencias).toContain('la página 2 se ve borrosa')
+    expect(r.advertencias).toMatch(/adeudo/i)
+  })
+
+  it('works without DAP, which not every receipt prints', () => {
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        importe_dap_mxn: null,
+        importe_total_a_pagar_mxn: 9814.27,
+      }),
+    )!
+    expect(r.importe_dap_mxn).toBeNull()
+    expect(r.costo_periodo_mxn).toBeCloseTo(9814.27, 2)
+    expect(r.advertencias).toBe('')
+  })
+
+  it('leaves the cost null when the period charge is unreadable', () => {
+    // A total on its own is never enough — that is the whole trap.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        importe_periodo_mxn: null,
+        importe_dap_mxn: null,
+      }),
+    )!
+    expect(r.costo_periodo_mxn).toBeNull()
+    expect(r.importe_total_a_pagar_mxn).toBe(10237.85)
+  })
+
+  it('preserves the importe history slot-for-slot, nulls included', () => {
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        historial_bimestres_importe_mxn: [6481, null, 5589, 'ilegible', 9173],
+      }),
+    )!
+    // The third kWh reading and the third importe must still describe
+    // the same bimester — no compaction.
+    expect(r.historial_bimestres_importe_mxn).toEqual([
+      6481,
+      null,
+      5589,
+      null,
+      9173,
+    ])
+    expect(r.historial_bimestres_kwh).toHaveLength(5)
+  })
+
+  it('caps the importe history at five, like the kWh one', () => {
+    const r = parseReceiptJson(
+      JSON.stringify({
+        ...OSVALDO,
+        historial_bimestres_importe_mxn: [1, 2, 3, 4, 5, 6, 7, 8],
+      }),
+    )!
+    expect(r.historial_bimestres_importe_mxn).toEqual([1, 2, 3, 4, 5])
+  })
+
+  it('defaults the money fields when the model omits them entirely', () => {
+    const r = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 1450,
+        historial_bimestres_kwh: [1400],
+      }),
+    )!
+    expect(r.importe_periodo_mxn).toBeNull()
+    expect(r.costo_periodo_mxn).toBeNull()
+    expect(r.historial_bimestres_importe_mxn).toEqual([])
+  })
+})
+
 describe('isPlausibleAverage', () => {
   it('accepts normal residential/commercial ranges', () => {
     expect(isPlausibleAverage(950)).toBe(true)
@@ -252,32 +378,30 @@ describe('inferPropertyType', () => {
 
 describe('formatReceiptNote', () => {
   it('includes the average and the do-not-mention instruction', () => {
-    const note = formatReceiptNote({
-      consumo_periodo_actual_kwh: 1450,
-      periodo_actual: null,
-      historial_bimestres_kwh: [1380, 1420],
-      cantidad_periodos_usados: 3,
-      promedio_bimestral_kwh: 1417,
-      tarifa: 'DAC',
-      ciudad: null,
-      advertencias: '',
-    })
+    const note = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: 1450,
+        historial_bimestres_kwh: [1380, 1420],
+        cantidad_periodos_usados: 3,
+        promedio_bimestral_kwh: 1417,
+        tarifa: 'DAC',
+      }),
+    )
     expect(note).toContain('promedio_bimestral_kwh: 1417')
     expect(note).toContain('tarifa: DAC')
     expect(note).toContain('nunca menciones esta nota')
   })
 
   it('surfaces the detected city and the inferred property type, with the do-not-reask note', () => {
-    const note = formatReceiptNote({
-      consumo_periodo_actual_kwh: 1450,
-      periodo_actual: null,
-      historial_bimestres_kwh: [],
-      cantidad_periodos_usados: 1,
-      promedio_bimestral_kwh: 1450,
-      tarifa: '1A',
-      ciudad: 'Cancún',
-      advertencias: '',
-    })
+    const note = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: 1450,
+        cantidad_periodos_usados: 1,
+        promedio_bimestral_kwh: 1450,
+        tarifa: '1A',
+        ciudad: 'Cancún',
+      }),
+    )
     expect(note).toContain('ciudad_detectada: Cancún')
     expect(note).toContain('tipo_propiedad_sugerido: Casa')
     expect(note).toContain('no la vuelvas a preguntar')
@@ -285,33 +409,31 @@ describe('formatReceiptNote', () => {
   })
 
   it('omits city/property lines when neither was detected', () => {
-    const note = formatReceiptNote({
-      consumo_periodo_actual_kwh: null,
-      periodo_actual: null,
-      historial_bimestres_kwh: [],
-      cantidad_periodos_usados: 0,
-      promedio_bimestral_kwh: 900,
-      tarifa: null,
-      ciudad: null,
-      advertencias: '',
-    })
+    const note = formatReceiptNote(extraction({ promedio_bimestral_kwh: 900 }))
     expect(note).not.toContain('ciudad_detectada')
     expect(note).not.toContain('tipo_propiedad_sugerido')
   })
 
   it('surfaces warnings so the model can re-ask', () => {
-    const note = formatReceiptNote({
-      consumo_periodo_actual_kwh: null,
-      periodo_actual: null,
-      historial_bimestres_kwh: [],
-      cantidad_periodos_usados: 0,
-      promedio_bimestral_kwh: null,
-      tarifa: null,
-      ciudad: null,
-      advertencias: 'la segunda página no es legible',
-    })
+    const note = formatReceiptNote(
+      extraction({ advertencias: 'la segunda página no es legible' }),
+    )
     expect(note).toContain('no legible')
     expect(note).toContain('advertencias: la segunda página no es legible')
+  })
+
+  it('hands the model the period cost, flagged as not the total to pay', () => {
+    // The prose in the chat and the numbers on the PDF have to come
+    // from the same figure, or the customer sees two different answers.
+    const note = formatReceiptNote(
+      extraction({
+        promedio_bimestral_kwh: 2135,
+        costo_periodo_mxn: 10237.3,
+        importe_total_a_pagar_mxn: 10237.85,
+      }),
+    )
+    expect(note).toContain('costo_bimestral_mxn: 10237.30')
+    expect(note).toContain('NO es el total a pagar')
   })
 })
 

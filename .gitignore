@@ -42,3 +42,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Figma source exports. Tens of MB, and only needed on a Mac to rebuild
+# public/quotes/template.pdf via scripts/build-quote-template.mjs.
+/design/
+
+# graphify knowledge-graph output
+/graphify-out/
+
+# Claude Code transient worktrees
+/.claude/worktrees/

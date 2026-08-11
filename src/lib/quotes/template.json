@@ -1,0 +1,198 @@
+{
+  "_comment": "Field map for the proposal template. Coordinates are Figma units taken verbatim from the SVG export in design/ — top-origin, and `baseline` is the tspan's own y, which is already the text baseline. Asset paths are relative to public/. Tweaking a position here needs no TypeScript change. Numeric fields carry no maxWidth on purpose: their content is bounded by the price table, and a silently shrunk or truncated price is worse than one that visibly overflows in review. The exceptions are the 25-year projections and the savings figure, which are bounded by the customer's own bill rather than by the table, so they do get a maxWidth.",
+  "_comment_align": "Right-aligned fields store the RIGHT edge in `x`. The card amounts were derived, not guessed: Figma exports right-aligned text as anchor=start with x = rightEdge − textWidth, and the placeholder \"$ —\" measures 43.225 pt in Archivo Medium 25 — so 334 + 43.225 = 377.2 and 691 + 43.225 = 734.2, matching the two cards' inner rows (82..377 and 439..734) to a quarter point.",
+  "template": "quotes/template.pdf",
+  "pageWidth": 816,
+  "pageHeight": 1056,
+  "pageCount": 4,
+  "fonts": {
+    "archivoRegular": "fonts/Archivo-Regular.ttf",
+    "archivoMedium": "fonts/Archivo-Medium.ttf",
+    "archivoSemiBold": "fonts/Archivo-SemiBold.ttf",
+    "archivoBold": "fonts/Archivo-Bold.ttf",
+    "plexMono": "fonts/IBMPlexMono-Regular.ttf"
+  },
+  "fields": {
+    "nombre": {
+      "page": 0,
+      "x": 60,
+      "baseline": 917.509,
+      "size": 13.5,
+      "font": "archivoSemiBold",
+      "color": "#F4F1E8",
+      "align": "left",
+      "maxWidth": 220,
+      "minSize": 9
+    },
+    "folioPortada": {
+      "page": 0,
+      "x": 292.333,
+      "baseline": 917.509,
+      "size": 13.5,
+      "font": "archivoSemiBold",
+      "color": "#F4F1E8",
+      "align": "left"
+    },
+    "folio": {
+      "page": 1,
+      "x": 756,
+      "baseline": 61.9375,
+      "size": 10.5,
+      "font": "plexMono",
+      "color": "#12241A",
+      "align": "right"
+    },
+    "fecha": {
+      "page": 1,
+      "x": 756,
+      "baseline": 81.9375,
+      "size": 10.5,
+      "font": "plexMono",
+      "color": "#12241A",
+      "align": "right"
+    },
+    "paneles": {
+      "page": 1,
+      "x": 60,
+      "baseline": 846.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    },
+    "wattsPorPanel": {
+      "page": 1,
+      "x": 234.25,
+      "baseline": 846.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    },
+    "kwp": {
+      "page": 1,
+      "x": 408.5,
+      "baseline": 846.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    },
+    "precio": {
+      "page": 2,
+      "x": 60,
+      "baseline": 204.372,
+      "size": 58,
+      "font": "archivoMedium",
+      "color": "#093F1F",
+      "align": "left"
+    },
+    "precotizacion": {
+      "page": 2,
+      "x": 493,
+      "baseline": 69.05,
+      "size": 6.8,
+      "font": "plexMono",
+      "color": "#A8A8A0",
+      "align": "left"
+    },
+    "gastoSinBimestre": {
+      "page": 1,
+      "x": 377,
+      "baseline": 386.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#C8452F",
+      "align": "right"
+    },
+    "gastoSin12Meses": {
+      "page": 1,
+      "x": 377,
+      "baseline": 435.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#C8452F",
+      "align": "right"
+    },
+    "gastoSin25Anios": {
+      "page": 1,
+      "x": 377,
+      "baseline": 484.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#C8452F",
+      "align": "right",
+      "maxWidth": 220,
+      "minSize": 18
+    },
+    "gastoConBimestre": {
+      "page": 1,
+      "x": 734,
+      "baseline": 386.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#FFFFFF",
+      "align": "right"
+    },
+    "gastoCon12Meses": {
+      "page": 1,
+      "x": 734,
+      "baseline": 435.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#FFFFFF",
+      "align": "right"
+    },
+    "gastoCon25Anios": {
+      "page": 1,
+      "x": 734,
+      "baseline": 484.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#FFFFFF",
+      "align": "right",
+      "maxWidth": 220,
+      "minSize": 18
+    },
+    "ahorro25Anios": {
+      "page": 1,
+      "x": 84,
+      "baseline": 663.364,
+      "size": 46,
+      "font": "archivoBold",
+      "color": "#FFFFFF",
+      "align": "left",
+      "maxWidth": 380,
+      "minSize": 30
+    },
+    "payback": {
+      "page": 1,
+      "x": 482,
+      "baseline": 637.507,
+      "size": 10.5,
+      "font": "archivoRegular",
+      "color": "#FFFFFF",
+      "align": "left",
+      "maxWidth": 274,
+      "minSize": 8
+    },
+    "paybackNota": {
+      "page": 1,
+      "x": 482,
+      "baseline": 653.507,
+      "size": 10.5,
+      "font": "archivoRegular",
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    "kwhGenerados": {
+      "page": 1,
+      "x": 582.75,
+      "baseline": 846.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    }
+  }
+}
