@@ -559,7 +559,7 @@ async function visionAnthropic(
  * OCR guess never clobbers an explicit answer the lead form already
  * collected. Consumo always overwrites: the newest reading should win.
  */
-async function upsertField(
+export async function upsertField(
   db: SupabaseClient,
   args: {
     accountId: string

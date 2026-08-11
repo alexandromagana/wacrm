@@ -161,6 +161,9 @@ interface SendMediaEngineArgs {
   caption?: string
   /** Document-only; ignored by Meta for image/video. */
   filename?: string
+  /** Marks the persisted row `ai_generated = true`, like engineSendText.
+   *  Only the auto-reply bot sets this; Flow sends leave it false. */
+  aiGenerated?: boolean
 }
 
 /**
@@ -240,16 +243,28 @@ export async function engineSendMedia(
 
   // content_type='image'|'video'|'document' — these are already in the
   // messages_content_type_check constraint (migration 001 + 010).
-  // content_text carries the caption (or empty) so the conversation
-  // list preview shows something meaningful when the user glances at it.
-  const preview = args.caption?.trim() || `[${args.kind}]`
+  //
+  // Documents fall back to their filename, mirroring what the inbox
+  // composer does for an agent-sent file: `message-bubble` renders
+  // `content_text` as the document card's label, so without it every
+  // file the bot sends reads as a bare "document".
+  const label =
+    args.caption?.trim() ||
+    (args.kind === 'document' ? args.filename?.trim() : '') ||
+    null
+  const preview = label ?? `[${args.kind}]`
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: args.conversationId,
     sender_type: 'bot',
     content_type: args.kind,
-    content_text: args.caption ?? null,
+    content_text: label,
+    // Without this the inbox has no URL to render and shows
+    // "media unavailable" for every file the bot ever sent — the same
+    // row Meta happily delivered to the customer.
+    media_url: args.link,
     message_id: waMessageId,
     status: 'sent',
+    ai_generated: args.aiGenerated ?? false,
   })
   if (msgErr) {
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)

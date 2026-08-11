@@ -6,7 +6,13 @@ import { generateReply } from './generate'
 import { buildSystemPrompt, buildDateTimeNote } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { applyLeadStatusTag, applyQuoteSentTag } from './lead-status'
-import { extractReceipt, formatReceiptNote, saveReceiptData } from './receipt'
+import {
+  extractReceipt,
+  formatReceiptNote,
+  saveReceiptData,
+  type ReceiptExtraction,
+} from './receipt'
+import { sendQuoteProposal } from './quote-pdf'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { engineSendText } from '@/lib/flows/meta-send'
@@ -215,6 +221,11 @@ export async function dispatchInboundToAiReply(
     // the chat model as a system-note user turn. Failures degrade to
     // "no reading" — the prompt tells the model to re-ask. Its own
     // rate limit bounds vision spend against photo spam.
+
+    // Kept in scope past the send: the proposal PDF is built from this
+    // same reading, once the customer-facing reply is safely out.
+    let receiptExtraction: ReceiptExtraction | null = null
+
     if (hasReceipt) {
       const receiptLimit = checkRateLimit(`ai-receipt:${conversationId}`, {
         limit: 4,
@@ -227,6 +238,7 @@ export async function dispatchInboundToAiReply(
           mediaIds: receiptMediaIds!,
         })
         if (extraction) {
+          receiptExtraction = extraction
           void saveReceiptData(db, {
             accountId,
             userId: configOwnerUserId,
@@ -390,6 +402,34 @@ export async function dispatchInboundToAiReply(
       aiGenerated: true,
     })
     assistantHandled = true
+
+    // The branded proposal, after the reply rather than before it: the
+    // text states the numbers and gives the document context, and if
+    // the PDF fails the customer has still been answered. Deliberately
+    // NOT reached on a handoff — once a human owns the thread, they
+    // decide what the customer receives.
+    //
+    // `sendQuoteProposal` never throws and decides for itself whether
+    // this reading deserves a document (quotable, has a peso amount,
+    // and is not the same tier already delivered).
+    if (receiptExtraction) {
+      const outcome = await sendQuoteProposal(db, {
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        extraction: receiptExtraction,
+      })
+      if (outcome.kind === 'sent') {
+        console.log(
+          `[ai auto-reply] proposal ${outcome.folio} sent (${outcome.panels} panels) on ${conversationId}`,
+        )
+      } else if (outcome.kind === 'skipped') {
+        console.log(
+          `[ai auto-reply] proposal skipped (${outcome.reason}) on ${conversationId}`,
+        )
+      }
+    }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)
   } finally {

@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   applyQuoteSentTag: vi.fn(),
   extractReceipt: vi.fn(),
   saveReceiptData: vi.fn(),
+  sendQuoteProposal: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -36,6 +37,7 @@ vi.mock('./receipt', () => ({
   formatReceiptNote: (r: { promedio_bimestral_kwh: number | null }) =>
     `[NOTA: promedio ${r.promedio_bimestral_kwh}]`,
 }))
+vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
@@ -133,6 +135,10 @@ beforeEach(() => {
   h.applyQuoteSentTag.mockResolvedValue(undefined)
   h.extractReceipt.mockResolvedValue(null)
   h.saveReceiptData.mockResolvedValue(undefined)
+  h.sendQuoteProposal.mockResolvedValue({
+    kind: 'skipped',
+    reason: 'not_quotable',
+  })
 })
 
 describe('dispatchInboundToAiReply — eligibility gates', () => {
@@ -431,6 +437,77 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   it('runs no extraction on a plain text turn', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.extractReceipt).not.toHaveBeenCalled()
+  })
+
+  it('sends the proposal from the same reading, after the text reply', async () => {
+    const reading = {
+      consumo_periodo_actual_kwh: 2944,
+      periodo_actual: null,
+      historial_bimestres_kwh: [2177, 1487, 1447, 1966, 2788],
+      cantidad_periodos_usados: 6,
+      promedio_bimestral_kwh: 2135,
+      tarifa: '1D',
+      costo_periodo_mxn: 10237.3,
+      advertencias: '',
+    }
+    h.extractReceipt.mockResolvedValue(reading)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.sendQuoteProposal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        contactId: 'contact-1',
+        extraction: reading,
+      }),
+    )
+    // Order matters: the text explains the numbers the document shows,
+    // and a PDF failure must not cost the customer their reply.
+    expect(h.engineSendText.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendQuoteProposal.mock.invocationCallOrder[0],
+    )
+  })
+
+  it('sends no proposal on a plain text turn', async () => {
+    await dispatchInboundToAiReply(ARGS)
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
+  it('sends no proposal when the reading failed', async () => {
+    h.extractReceipt.mockResolvedValue(null)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
+  it('sends no proposal on handoff — the human owns the thread now', async () => {
+    h.extractReceipt.mockResolvedValue({
+      promedio_bimestral_kwh: 2135,
+      cantidad_periodos_usados: 6,
+      historial_bimestres_kwh: [],
+      consumo_periodo_actual_kwh: 2944,
+      periodo_actual: null,
+      tarifa: null,
+      advertencias: '',
+    })
+    h.generateReply.mockResolvedValue({ text: 'Te paso con alguien', handoff: true })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
+  it('still replies when the proposal blows up', async () => {
+    // sendQuoteProposal owns its errors, but if one ever escapes it must
+    // not retroactively break a reply the customer already received.
+    h.extractReceipt.mockResolvedValue({
+      promedio_bimestral_kwh: 2135,
+      cantidad_periodos_usados: 6,
+      historial_bimestres_kwh: [],
+      consumo_periodo_actual_kwh: 2944,
+      periodo_actual: null,
+      tarifa: null,
+      advertencias: '',
+    })
+    h.sendQuoteProposal.mockRejectedValue(new Error('storage down'))
+    await expect(dispatchInboundToAiReply(RECEIPT_ARGS)).resolves.toBeUndefined()
+    expect(h.engineSendText).toHaveBeenCalled()
   })
 
   it('routes to the configured handoff agent on handoff', async () => {
