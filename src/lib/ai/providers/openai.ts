@@ -10,6 +10,20 @@ import {
 
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
+/**
+ * Reasoning-capable model families (o1/o3/o4-mini, the gpt-5.x line
+ * including the Sol/Terra/Luna tiers). These default to
+ * `reasoning_effort: "medium"` on Chat Completions when the param is
+ * omitted, which can leak the model's own deliberation into the visible
+ * reply instead of the customer-facing text (e.g. a reasoning model
+ * answering "no hagas nada, solo es pregunta" instead of writing the
+ * reply). This bot never uses function tools and only wants direct
+ * text output, so reasoning buys nothing — we turn it off explicitly.
+ * Sending `reasoning_effort` to a non-reasoning model (gpt-4o and
+ * earlier) is a 400, so this must stay opt-in by model name.
+ */
+const REASONING_MODEL_RE = /^(gpt-5|o1|o3|o4)(\b|[.-])/i
+
 interface OpenAiResponse {
   choices?: { message?: { content?: string }; finish_reason?: string }[]
   usage?: {
@@ -43,6 +57,7 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
           ...mergeConsecutive(messages),
         ],
         max_completion_tokens: aiMaxOutputTokens(),
+        ...(REASONING_MODEL_RE.test(model) ? { reasoning_effort: 'none' } : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     })

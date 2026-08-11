@@ -207,6 +207,38 @@ describe('generateReply — OpenAI', () => {
     ).rejects.toBeInstanceOf(AiError)
   })
 
+  it('turns reasoning off for a reasoning-capable model to keep deliberation out of the reply', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({ choices: [{ message: { content: 'Claro, con gusto te ayudo.' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateReply({
+      config: config({ model: 'gpt-5.6-terra' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBe('none')
+  })
+
+  it('omits reasoning_effort for a non-reasoning model (unsupported param → 400)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({ choices: [{ message: { content: 'Claro, con gusto te ayudo.' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateReply({
+      config: config({ model: 'gpt-4o' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
   it('names the reasoning-budget cause when a reasoning model returns nothing', async () => {
     // The exact shape that silenced the bot in prod: gpt-5-mini spent
     // the whole budget thinking and emitted no visible token.
