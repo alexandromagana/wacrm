@@ -1024,8 +1024,39 @@ export interface DownloadMediaArgs {
 }
 
 /**
+ * Identify a buffer by its magic bytes, or null when unrecognised.
+ *
+ * Meta's media CDN is not reliable about `Content-Type`: the same CFE
+ * bill PDF arrives as `application/pdf` from one customer and
+ * `application/octet-stream` from the next, depending on how their
+ * client attached it (forwarded, saved from the CFE portal, shared
+ * from Files on iOS). Everything downstream keys off that header —
+ * the vision extractor drops non-pdf/non-image files, and the media
+ * proxy hands the header to the browser — so a mislabelled receipt is
+ * silently never read AND won't preview in the inbox. The bytes don't
+ * lie, so we sniff them instead of trusting the label.
+ */
+function sniffMediaType(buffer: Buffer): string | null {
+  const head = buffer.subarray(0, 12)
+  if (head.subarray(0, 5).toString('latin1') === '%PDF-') return 'application/pdf'
+  if (head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff) return 'image/jpeg'
+  if (head.subarray(0, 8).toString('latin1') === '\x89PNG\r\n\x1a\n') return 'image/png'
+  if (head.subarray(0, 3).toString('latin1') === 'GIF') return 'image/gif'
+  if (
+    head.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    head.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'image/webp'
+  }
+  return null
+}
+
+/**
  * Fetch the binary bytes for a media URL obtained from getMediaUrl.
  * Step two of the media-proxy flow.
+ *
+ * `contentType` is the sniffed type when the bytes are recognisable,
+ * falling back to whatever the CDN claimed — see `sniffMediaType`.
  */
 export async function downloadMedia(
   args: DownloadMediaArgs
@@ -1037,8 +1068,10 @@ export async function downloadMedia(
   if (!response.ok) {
     throw new Error(`Media download failed: ${response.status}`)
   }
-  const contentType =
-    response.headers.get('content-type') || 'application/octet-stream'
   const buffer = Buffer.from(await response.arrayBuffer())
+  const contentType =
+    sniffMediaType(buffer) ||
+    response.headers.get('content-type') ||
+    'application/octet-stream'
   return { buffer, contentType }
 }

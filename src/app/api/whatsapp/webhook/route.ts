@@ -882,11 +882,20 @@ async function processMessage(
   // Receipt candidates: photos and the PDF CFE emails out. Raw Meta
   // type, not our contentType mapping — stickers also land as
   // content_type='image' but are never receipts.
+  //
+  // The mime alone can't decide it: customers' clients hand Meta
+  // `application/octet-stream` for a perfectly good bill PDF often
+  // enough that a strict equality here dropped those conversations
+  // into the "please resend it" loop. Accept the filename as evidence
+  // too — `extractReceipt` sniffs the real bytes before spending a
+  // vision call, so a mislabelled non-PDF still costs nothing.
+  const documentLooksPdf =
+    message.document?.mime_type === 'application/pdf' ||
+    Boolean(message.document?.filename?.toLowerCase().endsWith('.pdf'))
   const isReceiptCandidate =
     Boolean(mediaUrl) &&
     (message.type === 'image' ||
-      (message.type === 'document' &&
-        message.document?.mime_type === 'application/pdf'))
+      (message.type === 'document' && documentLooksPdf))
   if (
     !flowConsumed &&
     !interactiveReplyId &&

@@ -375,6 +375,13 @@ export async function extractReceipt(args: {
     // Receipts arrive as photos OR as the PDF CFE emails out — accept
     // both; anything else the burst dragged in (a Word doc, a random
     // download) is skipped by mime.
+    //
+    // `downloadMedia` sniffs the magic bytes, so `contentType` is the
+    // file's real type rather than the label Meta's CDN attached to
+    // it. That label was wrong often enough — `application/octet-
+    // stream` on a valid CFE bill — that the skip below was silently
+    // discarding readable receipts and leaving the bot to ask for a
+    // resend of a bill it never opened.
     const files: MediaFile[] = []
     for (const mediaId of mediaIds.slice(0, 3)) {
       const info = await getMediaUrl({ mediaId, accessToken })
@@ -382,7 +389,7 @@ export async function extractReceipt(args: {
         downloadUrl: info.url,
         accessToken,
       })
-      const mimeType = contentType || info.mimeType || 'image/jpeg'
+      const mimeType = contentType || info.mimeType
       if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
         continue
       }
