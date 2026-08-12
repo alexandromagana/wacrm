@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildSendComponents } from './template-send-builder';
+import { buildSendComponents, TemplateSendError } from './template-send-builder';
 import type { MessageTemplate } from '@/types';
 
 function row(overrides: Partial<MessageTemplate> = {}): MessageTemplate {
@@ -146,7 +146,18 @@ describe('buildSendComponents — header', () => {
   it('throws on media header with no link OR id available', () => {
     expect(() =>
       buildSendComponents(row({ header_type: 'image' })),
-    ).toThrow(/requires a media link or id/);
+    ).toThrow(/has no media to send with it/);
+  });
+
+  // The type is the contract the send core keys off to answer 400
+  // ("your template is missing something") instead of 502 ("Meta broke").
+  it('throws a TemplateSendError, not a bare Error, for a build failure', () => {
+    expect(() =>
+      buildSendComponents(row({ header_type: 'image' })),
+    ).toThrow(TemplateSendError);
+    expect(() =>
+      buildSendComponents(row({ body_text: 'Hi {{1}}' }), { body: [] }),
+    ).toThrow(TemplateSendError);
   });
 });
 

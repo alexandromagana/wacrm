@@ -33,6 +33,24 @@
 import type { MessageTemplate, TemplateButton } from '@/types';
 import { extractVariableIndices } from './template-validators';
 
+/**
+ * A send-time template payload that can't be built from the local
+ * template row + caller params — a missing body value, a media header
+ * with no link, a URL button with no suffix.
+ *
+ * Distinct from a Meta API rejection: nothing has been sent yet, the
+ * request never left the process, and the fix is local (fill the
+ * parameter, or repair the template row) rather than upstream. Callers
+ * map it to a 4xx so the cause reaches the user instead of being
+ * flattened into a generic upstream 502.
+ */
+export class TemplateSendError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TemplateSendError';
+  }
+}
+
 export interface SendTimeParams {
   /** Values for body {{1}}, {{2}}, … indexed by variable position. */
   body?: string[];
@@ -84,7 +102,7 @@ function buildHeaderComponent(
     if (varCount === 0) return null;
     const value = params.headerText;
     if (!value || !value.trim()) {
-      throw new Error(
+      throw new TemplateSendError(
         'Header text variable {{1}} requires a value — pass headerText.',
       );
     }
@@ -106,8 +124,8 @@ function buildHeaderComponent(
   const link = params.headerMediaUrl ?? template.header_media_url;
   const id = params.headerMediaId;
   if (!link && !id) {
-    throw new Error(
-      `${headerType} header requires a media link or id at send time — set header_media_url on the template or pass headerMediaUrl/headerMediaId.`,
+    throw new TemplateSendError(
+      `This template's ${headerType} header has no media to send with it — set the header media URL on the template (Settings → Templates), or pass headerMediaUrl/headerMediaId. Templates synced from Meta don't always carry a reusable media URL.`,
     );
   }
   const mediaPayload: { link?: string; id?: string } = id ? { id } : { link };
@@ -131,7 +149,7 @@ function buildBodyComponent(
   const body = params.body ?? [];
   if (varCount === 0 && body.length === 0) return null;
   if (body.length < varCount) {
-    throw new Error(
+    throw new TemplateSendError(
       `Body has ${varCount} variable(s) but only ${body.length} value(s) were supplied.`,
     );
   }
@@ -174,7 +192,7 @@ function buildButtonComponent(
       // Each URL button is its own component with sub_type=url and
       // the button's index in the template's buttons array.
       if (!override || !override.trim()) {
-        throw new Error(
+        throw new TemplateSendError(
           `URL button #${index + 1} uses {{1}} — requires a buttonParams[${index}] value.`,
         );
       }

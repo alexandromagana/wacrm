@@ -232,6 +232,24 @@ export async function POST() {
           ? headerFormat.toLowerCase()
           : null
 
+      // Media headers need a send-time media link, and Meta never
+      // returns the original upload URL — only the approved sample in
+      // `example.header_handle`. For most approved templates that sample
+      // is a plain https:// CDN link, which IS usable at send time; for
+      // the rest it's an opaque Resumable-Upload handle
+      // ("4::aW1hZ2UvanBlZw==:…"), which is NOT — the send builder
+      // rejects those on purpose. So only the URL form is worth keeping.
+      //
+      // Without this, every media-header template pulled from Meta landed
+      // with header_media_url = null and could never be sent: the send
+      // builder threw while assembling the payload, before any Meta call.
+      const headerHandle = header?.example?.header_handle?.[0] ?? null
+      const isMediaHeader = headerType !== null && headerType !== 'text'
+      const syncedMediaUrl =
+        isMediaHeader && headerHandle && /^https?:\/\//i.test(headerHandle)
+          ? headerHandle
+          : null
+
       const row = {
         // Account tenancy + user audit, same split as the submit
         // route. account_id is NOT NULL on message_templates
@@ -243,7 +261,13 @@ export async function POST() {
         language: t.language,
         header_type: headerType,
         header_content: header?.text ?? null,
-        header_handle: header?.example?.header_handle?.[0] ?? null,
+        header_handle: headerHandle,
+        // Written only when Meta gave us a usable URL. Omitting the key
+        // otherwise is load-bearing: an UPDATE touches only the columns
+        // present in this object, so a URL the user set by hand — the
+        // only fix available when the handle is opaque — survives a
+        // re-sync instead of being nulled back to unsendable.
+        ...(syncedMediaUrl ? { header_media_url: syncedMediaUrl } : {}),
         body_text: body?.text ?? '',
         footer_text: footer?.text ?? null,
         buttons: parsedButtons.length ? parsedButtons : null,

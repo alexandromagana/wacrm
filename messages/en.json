@@ -251,6 +251,7 @@
       "pickTemplate": "Pick an approved WhatsApp template to send to this contact.",
       "noApprovedTemplates": "No approved templates",
       "noApprovedTemplatesHint": "Approve a template in Meta WhatsApp Manager, then sync it from Settings → Templates.",
+      "mediaHeaderMissing": "Can't be sent: this template's media header has no image URL. Add one in Settings → Templates.",
       "preview": "Preview",
       "headerValuePlaceholder": "Value for the header variable",
       "bodyValuePlaceholder": "Value for {val}",

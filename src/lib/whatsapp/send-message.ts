@@ -44,6 +44,7 @@ import {
 } from '@/lib/whatsapp/phone-utils';
 import type { MessageTemplate } from '@/types';
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard';
+import { TemplateSendError } from '@/lib/whatsapp/template-send-builder';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -424,6 +425,19 @@ export async function sendMessageToConversation(
 
     if (lastError) throw lastError;
   } catch (err) {
+    // A payload we failed to BUILD never reached Meta, so calling it a
+    // Meta failure sends anyone reading the logs upstream to look for a
+    // problem that isn't there. It's a local one: a missing parameter or
+    // a template row that can't produce a valid send payload. Surface it
+    // as a 4xx — a 5xx also invites a reverse proxy to swap the response
+    // body for its own error page, which hides the reason from the UI.
+    if (err instanceof TemplateSendError) {
+      console.error(
+        '[send-message] template payload rejected before reaching Meta:',
+        err.message
+      );
+      throw new SendMessageError('template_invalid', err.message, 400);
+    }
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
     console.error('[send-message] Meta send failed for all variants:', message);

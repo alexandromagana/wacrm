@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronRight,
   LayoutTemplate,
@@ -42,6 +43,23 @@ function renderBodyPreview(body: string, params: string[]): string {
     const value = params[idx];
     return value && value.trim().length > 0 ? value : `{{${raw}}}`;
   });
+}
+
+/**
+ * Meta requires the media component on EVERY send of a media-header
+ * template, and the only thing that can satisfy it is a media link or a
+ * media id. Templates synced from Meta don't always carry one — Meta
+ * returns the approved sample as an opaque upload handle, which is not
+ * reusable at send time — leaving the row with no `header_media_url`.
+ *
+ * Such a template can't be sent at all: the payload builder throws while
+ * assembling the request, before anything reaches Meta. Detecting it here
+ * turns a mid-send failure into a visible, explained state in the picker.
+ */
+function missingHeaderMedia(template: MessageTemplate): boolean {
+  const headerType = template.header_type;
+  if (!headerType || headerType === "text") return false;
+  return !template.header_media_url;
 }
 
 interface UrlButtonSlot {
@@ -145,6 +163,9 @@ export function TemplatePicker({
   }
 
   function pickTemplate(template: MessageTemplate) {
+    // The list disables these, but the row can also go stale between the
+    // fetch and the click — a send would fail with nothing delivered.
+    if (missingHeaderMedia(template)) return;
     const slots = collectVariableSlots(template);
     const noInputsNeeded =
       slots.bodyVars.length === 0 &&
@@ -216,36 +237,46 @@ export function TemplatePicker({
                 </p>
               </div>
             ) : (
-              templates.map((t) => (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => pickTemplate(t)}
-                  className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors hover:border-primary/40 hover:bg-popover"
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="truncate text-sm font-medium text-popover-foreground">
-                          {t.name}
+              templates.map((tpl) => {
+                const unsendable = missingHeaderMedia(tpl);
+                return (
+                  <button
+                    key={tpl.id}
+                    type="button"
+                    disabled={unsendable}
+                    onClick={() => pickTemplate(tpl)}
+                    className="w-full rounded-md border border-border bg-background/50 p-3 text-left transition-colors enabled:hover:border-primary/40 enabled:hover:bg-popover disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-medium text-popover-foreground">
+                            {tpl.name}
+                          </p>
+                          <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
+                            {tpl.category}
+                          </Badge>
+                          {tpl.language && (
+                            <span className="text-[10px] uppercase text-muted-foreground">
+                              {tpl.language}
+                            </span>
+                          )}
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                          {tpl.body_text}
                         </p>
-                        <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
-                          {t.category}
-                        </Badge>
-                        {t.language && (
-                          <span className="text-[10px] uppercase text-muted-foreground">
-                            {t.language}
-                          </span>
+                        {unsendable && (
+                          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-400">
+                            <AlertTriangle className="mt-px h-3 w-3 flex-shrink-0" />
+                            <span>{t("mediaHeaderMissing")}</span>
+                          </p>
                         )}
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                        {t.body_text}
-                      </p>
+                      <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                     </div>
-                    <ChevronRight className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
-                  </div>
-                </button>
-              ))
+                  </button>
+                );
+              })
             )}
           </div>
         ) : (
