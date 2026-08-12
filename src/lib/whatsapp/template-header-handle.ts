@@ -37,7 +37,7 @@ export async function ensureImageHeaderHandle(
   // and for a manually-pasted public link).
   let res: Response
   try {
-    res = await fetchWithTimeout(payload.header_media_url, {}, 20_000)
+    res = await fetchWithTimeout(payload.header_media_url, {}, 8_000)
   } catch (err) {
     const message = err instanceof Error ? err.message : null
     throw new Error(

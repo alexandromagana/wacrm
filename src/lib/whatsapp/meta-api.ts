@@ -25,6 +25,17 @@ const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
  * Timing out here first means OUR code produces the error — a real JSON
  * response with a message that says what actually happened — before the
  * proxy has a chance to intervene.
+ *
+ * The image-header template submit path chains FOUR of these calls
+ * sequentially (fetch the sample image, open a Resumable Upload
+ * session, upload the bytes, create the template). Per-call budgets
+ * that are individually reasonable can still SUM past whatever the
+ * proxy's own total connection timeout is — the exact failure mode
+ * this function exists to prevent, just spread across multiple calls
+ * instead of one. Keep each call's budget tight (single-digit to
+ * low-double-digit seconds) rather than generous; a real Meta call
+ * under normal conditions finishes in a couple of seconds, so a tight
+ * budget costs nothing on the happy path and buys margin on the sum.
  */
 export async function fetchWithTimeout(
   input: string,
@@ -520,7 +531,7 @@ export async function uploadResumableMedia(
   const startRes = await fetchWithTimeout(
     `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
     { method: 'POST' },
-    15_000,
+    6_000,
   )
   if (!startRes.ok) {
     await throwMetaError(startRes, `Resumable upload start failed: ${startRes.status}`)
@@ -546,7 +557,7 @@ export async function uploadResumableMedia(
       // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
       body: bytes as unknown as BodyInit,
     },
-    30_000,
+    15_000,
   )
   if (!uploadRes.ok) {
     await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`)
@@ -604,7 +615,7 @@ export async function submitMessageTemplate(
       },
       body: JSON.stringify(payload),
     },
-    20_000,
+    10_000,
   )
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)

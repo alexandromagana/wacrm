@@ -182,10 +182,14 @@ export async function POST(request: Request) {
       try {
         await ensureImageHeaderHandle(payload, accessToken)
       } catch (e) {
-        return NextResponse.json(
-          { error: e instanceof Error ? e.message : 'Header image upload failed.' },
-          { status: 400 },
-        )
+        const message = e instanceof Error ? e.message : 'Header image upload failed.'
+        // This branch had no log line before — a failure here (including
+        // our own fetchWithTimeout firing) returned a clean 400 to the
+        // client but left zero trace server-side, so a proxy that cuts
+        // the connection before the client sees that 400 leaves nothing
+        // to diagnose from either end. Logging here closes that gap.
+        console.error('[templates/submit] header image handling failed:', message)
+        return NextResponse.json({ error: message }, { status: 400 })
       }
 
       const metaPayload = buildMetaTemplatePayload(payload)
