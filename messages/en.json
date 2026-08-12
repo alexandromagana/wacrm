@@ -50,6 +50,8 @@
     "automations": "Automations",
     "settings": "Settings",
     "openMenu": "Open menu",
+    "showSidebar": "Show sidebar",
+    "hideSidebar": "Hide sidebar",
     "openAccountMenu": "Open account menu",
     "defaultUser": "User",
     "defaultAvatar": "Avatar",
