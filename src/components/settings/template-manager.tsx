@@ -272,17 +272,23 @@ export function TemplateManager() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(buildSubmitPayload()),
       });
-      const data = await res.json();
+      // A reverse-proxy timeout or gateway error replaces the response
+      // body with its own HTML page — res.json() would throw a raw
+      // "Unexpected token '<'" parse error that says nothing about what
+      // actually happened. Falling back to null lets the !res.ok branch
+      // below build a message from the HTTP status instead.
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
         throw new Error(
-          data?.error || `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status})`,
+          data?.error ||
+            `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status}). The server may be slow or unreachable — try again.`,
         );
       }
       // Refresh first, then close — re-opening the dialog
       // immediately should not show a stale list.
       if (user) await fetchTemplates(user.id);
       toast.success(
-        data.dry_run
+        data?.dry_run
           ? isEdit
             ? t('toastSaveEditDry')
             : t('toastSaveNewDry')

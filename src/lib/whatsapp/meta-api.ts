@@ -12,6 +12,37 @@
 const META_API_VERSION = 'v21.0'
 const META_API_BASE = `https://graph.facebook.com/${META_API_VERSION}`
 
+/**
+ * `fetch` with an upper bound on how long we'll wait.
+ *
+ * Nothing in this file previously set a timeout, so a slow Meta response
+ * just left the request hanging — until the reverse proxy in front of the
+ * app (not this process) gave up and returned its own HTML error page.
+ * The frontend then failed trying to parse that HTML as JSON, showing a
+ * cryptic "Unexpected token '<'" instead of anything actionable, and the
+ * real cause (Meta was just slow) never surfaced anywhere.
+ *
+ * Timing out here first means OUR code produces the error — a real JSON
+ * response with a message that says what actually happened — before the
+ * proxy has a chance to intervene.
+ */
+export async function fetchWithTimeout(
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  try {
+    return await fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) })
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new Error(
+        `Meta API request timed out after ${timeoutMs / 1000}s. Meta may be slow right now — try again.`,
+      )
+    }
+    throw err
+  }
+}
+
 export interface MetaSendResult {
   messageId: string
 }
@@ -486,9 +517,10 @@ export async function uploadResumableMedia(
     file_type: mimeType,
     access_token: accessToken,
   })
-  const startRes = await fetch(
+  const startRes = await fetchWithTimeout(
     `${META_API_BASE}/${appId}/uploads?${startParams.toString()}`,
     { method: 'POST' },
+    15_000,
   )
   if (!startRes.ok) {
     await throwMetaError(startRes, `Resumable upload start failed: ${startRes.status}`)
@@ -499,17 +531,23 @@ export async function uploadResumableMedia(
   }
 
   // Step 2 — upload the bytes. Note the `OAuth` auth scheme (not Bearer)
-  // and the file_offset header, both required by this endpoint.
-  const uploadRes = await fetch(`${META_API_BASE}/${startData.id}`, {
-    method: 'POST',
-    headers: {
-      Authorization: `OAuth ${accessToken}`,
-      file_offset: '0',
+  // and the file_offset header, both required by this endpoint. Longer
+  // budget than the other calls — this one carries up to 5MB of image
+  // data, not just a small JSON request.
+  const uploadRes = await fetchWithTimeout(
+    `${META_API_BASE}/${startData.id}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `OAuth ${accessToken}`,
+        file_offset: '0',
+      },
+      // Uint8Array is a valid BodyInit at runtime; cast around the
+      // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
+      body: bytes as unknown as BodyInit,
     },
-    // Uint8Array is a valid BodyInit at runtime; cast around the
-    // lib.dom ArrayBufferLike-vs-ArrayBuffer generic mismatch.
-    body: bytes as unknown as BodyInit,
-  })
+    30_000,
+  )
   if (!uploadRes.ok) {
     await throwMetaError(uploadRes, `Resumable upload failed: ${uploadRes.status}`)
   }
@@ -556,14 +594,18 @@ export async function submitMessageTemplate(
 ): Promise<SubmitMessageTemplateResult> {
   const { wabaId, accessToken, payload } = args
   const url = `${META_API_BASE}/${wabaId}/message_templates`
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify(payload),
     },
-    body: JSON.stringify(payload),
-  })
+    20_000,
+  )
   if (!response.ok) {
     await throwMetaError(response, `Meta API error: ${response.status}`)
   }

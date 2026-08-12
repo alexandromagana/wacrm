@@ -1,4 +1,4 @@
-import { uploadResumableMedia } from '@/lib/whatsapp/meta-api'
+import { fetchWithTimeout, uploadResumableMedia } from '@/lib/whatsapp/meta-api'
 import type { TemplatePayload } from '@/lib/whatsapp/template-validators'
 
 /**
@@ -37,9 +37,14 @@ export async function ensureImageHeaderHandle(
   // and for a manually-pasted public link).
   let res: Response
   try {
-    res = await fetch(payload.header_media_url)
-  } catch {
-    throw new Error('Could not fetch the header image URL. Make sure it is publicly reachable.')
+    res = await fetchWithTimeout(payload.header_media_url, {}, 20_000)
+  } catch (err) {
+    const message = err instanceof Error ? err.message : null
+    throw new Error(
+      message?.includes('timed out')
+        ? message
+        : 'Could not fetch the header image URL. Make sure it is publicly reachable.',
+    )
   }
   if (!res.ok) {
     throw new Error(`Header image URL returned ${res.status}. It must be publicly reachable.`)

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INTERACTIVE_LIMITS,
+  fetchWithTimeout,
   sendInteractiveButtons,
   sendInteractiveList,
 } from "./meta-api";
@@ -265,5 +266,46 @@ describe("sendInteractiveList — validation", () => {
         },
       },
     });
+  });
+});
+
+describe("fetchWithTimeout", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("turns a timed-out request into a readable, actionable error", async () => {
+    // Mirrors what real fetch (undici) does when its signal is a timeout
+    // AbortSignal: reject with `signal.reason`, a DOMException named
+    // "TimeoutError". AbortSignal.timeout itself is NOT stubbed here —
+    // only fetch — so this exercises the real timing + reason shape.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: RequestInit) =>
+          new Promise((_, reject) => {
+            init.signal!.addEventListener("abort", () =>
+              reject(init.signal!.reason),
+            );
+          }),
+      ),
+    );
+
+    await expect(
+      fetchWithTimeout("https://graph.facebook.com/x", {}, 10),
+    ).rejects.toThrow(/timed out after 0.01s/);
+  });
+
+  it("passes through a non-timeout failure unchanged", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("getaddrinfo ENOTFOUND graph.facebook.com");
+      }),
+    );
+
+    await expect(
+      fetchWithTimeout("https://graph.facebook.com/x", {}, 10_000),
+    ).rejects.toThrow(/ENOTFOUND/);
   });
 });

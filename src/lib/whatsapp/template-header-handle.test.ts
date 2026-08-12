@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Stub the Meta resumable upload so the helper is tested in isolation.
+// fetchWithTimeout is forwarded to the (per-test-stubbed) global fetch —
+// tests control behavior via vi.stubGlobal('fetch', ...) below, and the
+// timeout wrapping itself is covered separately in meta-api.test.ts.
 vi.mock('./meta-api', () => ({
   uploadResumableMedia: vi.fn(async () => ({ handle: 'HANDLE123' })),
+  fetchWithTimeout: vi.fn((url: string, init: RequestInit) => fetch(url, init)),
 }));
 
 import { ensureImageHeaderHandle } from './template-header-handle';
