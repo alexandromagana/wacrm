@@ -165,6 +165,16 @@ export interface Conversation {
   assigned_agent_id?: string;
   last_message_text?: string;
   last_message_at?: string;
+  /**
+   * Timestamp of the most recent INBOUND (sender_type=customer) message
+   * only — distinct from `last_message_at`, which also advances on agent
+   * replies. Drives the derived WhatsApp 24h session-window indicator
+   * (see src/lib/whatsapp/session-window.ts); an agent's own reply does
+   * not reset WhatsApp's real window, so that calc must key off this
+   * field, not `last_message_at`. Null means this contact has never
+   * messaged in (e.g. a fresh outbound-first conversation) — migration 039.
+   */
+  last_customer_message_at?: string | null;
   unread_count: number;
   created_at: string;
   updated_at: string;

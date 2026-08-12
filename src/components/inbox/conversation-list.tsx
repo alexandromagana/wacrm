@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef, memo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   CONVERSATION_SELECT,
   matchesContactFilters,
   normalizeConversations,
 } from "@/lib/inbox/conversations";
+import { getConversationStatus } from "@/lib/conversation-status";
+import { getWhatsAppSessionInfo } from "@/lib/whatsapp/session-window";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X } from "lucide-react";
+import { Search, ChevronDown, X, Clock } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
@@ -36,14 +38,6 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
-const STATUS_COLORS: Record<ConversationStatus, string> = {
-  open: "bg-primary",
-  pending: "bg-amber-500",
-  closed: "bg-muted-foreground",
-};
-
-
-
 type InboxFilter = ConversationStatus | "all" | "unread";
 
 export function ConversationList({
@@ -54,7 +48,60 @@ export function ConversationList({
   resyncToken = 0,
 }: ConversationListProps) {
   const t = useTranslations("Inbox.conversationList");
-  
+  // Status pill labels ("Open"/"Pending"/"Closed") live under the
+  // messageThread namespace — reused here rather than duplicated so
+  // the list and the thread header's status dropdown always agree.
+  const tStatus = useTranslations("Inbox.messageThread");
+  const tTimer = useTranslations("Inbox.sessionTimer");
+
+  // Drives the session-window indicator below. Unlike everything else in
+  // this list, the 24h window turns over purely from time passing, with
+  // no conversation event to trigger a re-render — so without this tick
+  // a row's countdown would sit stale for hours. 60s is coarse on
+  // purpose: nothing here depends on catching the exact second, and each
+  // tick is an O(1) timestamp comparison per row (see the memo below).
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  /**
+   * Describes a conversation whose 24h window is STILL OPEN; null for
+   * expired, never-started, and closed ones.
+   *
+   * Deliberately inverted from marking expired rows: in practice most
+   * conversations here are past the window, so flagging those painted
+   * the majority of the list and buried the signal. What's scarce — and
+   * what you can still act on with a free-text reply — is the open ones,
+   * so those are what get marked.
+   *
+   * Returns plain strings (unpacked into separate props at the call
+   * site) so the row's memo keeps comparing by value; handing it a fresh
+   * object each tick would defeat the memo entirely.
+   */
+  function describeOpenWindow(conv: Conversation) {
+    if (conv.status === "closed") return null;
+    const info = getWhatsAppSessionInfo(
+      conv.last_customer_message_at,
+      new Date(nowTick),
+    );
+    if (!info.hasCustomerMessage || info.windowExpired) return null;
+    if (info.remaining.kind === "hoursRemaining") {
+      return {
+        compact: `${info.remaining.hours}h`,
+        label: tTimer("xhRemaining", { hours: info.remaining.hours }),
+      };
+    }
+    if (info.remaining.kind === "minutesRemaining") {
+      return {
+        compact: `${info.remaining.minutes}m`,
+        label: tTimer("xmRemaining", { minutes: info.remaining.minutes }),
+      };
+    }
+    return null;
+  }
+
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
     { label: t("filterAll"), value: "all" },
     { label: t("filterUnread"), value: "unread" },
@@ -407,15 +454,23 @@ export function ConversationList({
           </div>
         ) : (
           <div className="flex flex-col">
-            {filtered.map((conv) => (
-              <ConversationItem
-                key={conv.id}
-                conversation={conv}
-                isActive={conv.id === activeConversationId}
-                onSelect={handleSelect}
-                t={t}
-              />
-            ))}
+            {filtered.map((conv) => {
+              // Computed here rather than inside the row so the memo
+              // below can skip rows whose countdown didn't change.
+              const openWindow = describeOpenWindow(conv);
+              return (
+                <ConversationItem
+                  key={conv.id}
+                  conversation={conv}
+                  isActive={conv.id === activeConversationId}
+                  onSelect={handleSelect}
+                  t={t}
+                  tStatus={tStatus}
+                  remainingCompact={openWindow?.compact ?? null}
+                  remainingLabel={openWindow?.label ?? null}
+                />
+              );
+            })}
           </div>
         )}
       </ScrollArea>
@@ -428,15 +483,29 @@ interface ConversationItemProps {
   isActive: boolean;
   onSelect: (conversation: Conversation) => void;
   t: ReturnType<typeof useTranslations>;
+  tStatus: ReturnType<typeof useTranslations>;
+  /** Time left in the 24h window, e.g. "3h" — null once it's expired
+   *  (or never started). Computed by the parent from the 60s tick, and
+   *  passed as plain strings so this row only re-renders when its own
+   *  countdown actually changes — see the memo wrapper below. */
+  remainingCompact: string | null;
+  /** Full phrase for tooltip/screen readers, e.g. "3h remaining". */
+  remainingLabel: string | null;
 }
 
-function ConversationItem({
+// Memoized so the list's 60s tick doesn't re-render every row — only
+// ones whose countdown (or other props) actually changed.
+const ConversationItem = memo(function ConversationItem({
   conversation,
   isActive,
   onSelect,
   t,
+  tStatus,
+  remainingCompact,
+  remainingLabel,
 }: ConversationItemProps) {
   const contact = conversation.contact;
+  const statusDisplay = getConversationStatus(conversation.status);
   const displayName = contact?.name || contact?.phone || t("unknown");
   const initials = displayName.charAt(0).toUpperCase();
 
@@ -489,16 +558,34 @@ function ConversationItem({
                 {conversation.unread_count}
               </span>
             )}
+            {remainingCompact && (
+              // Orthogonal to `status` on purpose (not a 4th status
+              // value) — a conversation can be open/pending AND still
+              // have time left on its WhatsApp window. Deliberately NOT
+              // a bordered chip: that shape is the status vocabulary
+              // right next to it, and reusing it here (in green, beside
+              // a green "Open" chip) would read as a second status. A
+              // bare clock + number reads as "time left" instead.
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-emerald-400"
+                title={remainingLabel ?? undefined}
+                aria-label={remainingLabel ?? undefined}
+              >
+                <Clock className="h-3 w-3" />
+                {remainingCompact}
+              </span>
+            )}
             <span
               className={cn(
-                "h-2 w-2 rounded-full",
-                STATUS_COLORS[conversation.status]
+                "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-medium leading-none whitespace-nowrap",
+                statusDisplay.classes
               )}
-              title={conversation.status}
-            />
+            >
+              {tStatus(`status${statusDisplay.labelKey}`)}
+            </span>
           </div>
         </div>
       </div>
     </button>
   );
-}
+});

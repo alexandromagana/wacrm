@@ -6,6 +6,8 @@ import { useAuth } from "@/hooks/use-auth";
 import { usePresence } from "@/hooks/use-presence";
 import { PresenceDot } from "@/components/presence/presence-dot";
 import { presenceLabel } from "@/lib/presence";
+import { conversationStatusConfig } from "@/lib/conversation-status";
+import { getWhatsAppSessionInfo } from "@/lib/whatsapp/session-window";
 import { cn } from "@/lib/utils";
 import type {
   Conversation,
@@ -28,7 +30,7 @@ import {
   PanelRightOpen,
   PanelRightClose,
 } from "lucide-react";
-import { format, isToday, isYesterday, differenceInHours } from "date-fns";
+import { format, isToday, isYesterday } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -135,10 +137,12 @@ function groupMessagesByDate(messages: Message[]) {
   return groups;
 }
 
+// Colors sourced from conversation-status.ts (shared with the row badge
+// in conversation-list.tsx) so the two can't drift apart again.
 const STATUS_OPTIONS: { label: string; value: ConversationStatus; color: string }[] = [
-  { label: "Open", value: "open", color: "text-primary" },
-  { label: "Pending", value: "pending", color: "text-amber-400" },
-  { label: "Closed", value: "closed", color: "text-muted-foreground" },
+  { value: "open", label: conversationStatusConfig.open.labelKey, color: conversationStatusConfig.open.textColor },
+  { value: "pending", label: conversationStatusConfig.pending.labelKey, color: conversationStatusConfig.pending.textColor },
+  { value: "closed", label: conversationStatusConfig.closed.labelKey, color: conversationStatusConfig.closed.textColor },
 ];
 
 /**
@@ -226,31 +230,32 @@ export function MessageThread({
     };
   }, []);
 
-  // 24-hour session timer
+  // 24-hour session timer — math lives in session-window.ts (shared with
+  // the inbox list's expired indicator, so the two can't drift apart).
+  // This memo just adapts the shared result into the {expired, remaining}
+  // shape this component already expects below, so nothing downstream
+  // (the badge, or MessageComposer's sessionExpired prop) needs to change.
   const sessionInfo = useMemo(() => {
-    if (!messages.length) return { expired: false, remaining: "" };
-
-    // Find last customer message
     const lastCustomerMsg = [...messages]
       .reverse()
       .find((m) => m.sender_type === "customer");
+    const info = getWhatsAppSessionInfo(lastCustomerMsg?.created_at ?? null);
 
-    if (!lastCustomerMsg) return { expired: true, remaining: "No customer messages" };
-
-    const hoursSince = differenceInHours(new Date(), new Date(lastCustomerMsg.created_at));
-    const expired = hoursSince >= 24;
-
-    if (expired) {
-      return { expired: true, remaining: tTimer("expired") };
-    }
-
-    const hoursLeft = 24 - hoursSince;
     const remaining =
-      hoursLeft >= 1
-        ? tTimer("xhRemaining", { hours: Math.floor(hoursLeft) })
-        : tTimer("xmRemaining", { minutes: Math.floor(hoursLeft * 60) });
+      info.remaining.kind === "expired"
+        ? tTimer("expired")
+        : info.remaining.kind === "noCustomerMessage"
+          ? tTimer("noCustomerMessages")
+          : info.remaining.kind === "hoursRemaining"
+            ? tTimer("xhRemaining", { hours: info.remaining.hours })
+            : tTimer("xmRemaining", { minutes: info.remaining.minutes });
 
-    return { expired, remaining };
+    // Matches the pre-extraction behavior exactly: both "genuinely
+    // expired" and "no customer message yet" render as this badge's
+    // red/expired state and gate MessageComposer's free-text input via
+    // the `sessionExpired` prop below — WhatsApp only allows template
+    // sends in either case, not just the former.
+    return { expired: !info.hasCustomerMessage || info.windowExpired, remaining };
   }, [messages, tTimer]);
 
   // Store latest callback in a ref so fetchMessages doesn't need to

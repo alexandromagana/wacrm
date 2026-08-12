@@ -681,6 +681,12 @@ async function processMessage(
     .eq('sender_type', 'customer')
   const isFirstInboundMessage = (priorCustomerMsgCount ?? 0) === 0
 
+  // Meta's own clock for this message, not our receive time — reused
+  // below for last_customer_message_at so it matches this row's
+  // created_at exactly (that's the value session-window.ts reads via
+  // the "last customer message" lookup, so the two must never skew).
+  const customerMessageAt = new Date(parseInt(message.timestamp) * 1000)
+
   const { error: msgError } = await supabaseAdmin().from('messages').insert({
     conversation_id: conversation.id,
     sender_type: 'customer',
@@ -689,7 +695,7 @@ async function processMessage(
     media_url: mediaUrl,
     message_id: message.id,
     status: 'delivered',
-    created_at: new Date(parseInt(message.timestamp) * 1000).toISOString(),
+    created_at: customerMessageAt.toISOString(),
     reply_to_message_id: replyToInternalId,
     // Only populated for content_type='interactive'. Migration 010 added
     // the column; null for every other content_type so existing inserts
@@ -726,6 +732,7 @@ async function processMessage(
     .update({
       last_message_text: contentText || `[${message.type}]`,
       last_message_at: new Date().toISOString(),
+      last_customer_message_at: customerMessageAt.toISOString(),
       unread_count: (conversation.unread_count || 0) + 1,
       updated_at: new Date().toISOString(),
     })
