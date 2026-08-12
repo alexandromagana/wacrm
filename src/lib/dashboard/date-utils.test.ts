@@ -105,19 +105,36 @@ describe("lastNDayKeys", () => {
 });
 
 describe("mondayIndex", () => {
+  // Built with the numeric constructor, which is LOCAL midnight. The
+  // date-only string form ("2026-05-18") is parsed as UTC midnight per
+  // spec, so west of Greenwich it lands on the previous day and every
+  // assertion here shifts by one — the helper reads local `getDay()`,
+  // matching the rest of this module. Elsewhere in the file the string
+  // form is safe only because those dates carry a time component,
+  // which flips the parse back to local.
+  const localDate = (y: number, m: number, d: number) => new Date(y, m - 1, d);
+
   it("maps Monday → 0 and Sunday → 6", () => {
-    expect(mondayIndex(new Date("2026-05-18"))).toBe(0); // Mon
-    expect(mondayIndex(new Date("2026-05-19"))).toBe(1); // Tue
-    expect(mondayIndex(new Date("2026-05-23"))).toBe(5); // Sat
-    expect(mondayIndex(new Date("2026-05-24"))).toBe(6); // Sun
+    expect(mondayIndex(localDate(2026, 5, 18))).toBe(0); // Mon
+    expect(mondayIndex(localDate(2026, 5, 19))).toBe(1); // Tue
+    expect(mondayIndex(localDate(2026, 5, 23))).toBe(5); // Sat
+    expect(mondayIndex(localDate(2026, 5, 24))).toBe(6); // Sun
   });
 
   it("aligns with DOW_SHORT_MON_FIRST labels", () => {
-    expect(DOW_SHORT_MON_FIRST[mondayIndex(new Date("2026-05-18"))]).toBe(
+    expect(DOW_SHORT_MON_FIRST[mondayIndex(localDate(2026, 5, 18))]).toBe(
       "Mon",
     );
-    expect(DOW_SHORT_MON_FIRST[mondayIndex(new Date("2026-05-24"))]).toBe(
+    expect(DOW_SHORT_MON_FIRST[mondayIndex(localDate(2026, 5, 24))]).toBe(
       "Sun",
     );
+  });
+
+  it("buckets a late-evening instant into the local day, not the UTC one", () => {
+    // 2026-05-18T23:30 local is still Monday for the user reading the
+    // dashboard, even though it is already Tuesday in UTC for anyone
+    // east of Greenwich. `queries.ts` pairs this with `daysAgoStart`,
+    // which is local-day based, so the two must agree.
+    expect(mondayIndex(new Date(2026, 4, 18, 23, 30))).toBe(0);
   });
 });
