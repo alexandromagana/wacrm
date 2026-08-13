@@ -3,14 +3,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { inboundDebounceMs, resolveInboundBurst } from './inbound-buffer'
 
 /**
- * Fake matching the two query chains in resolveInboundBurst. The
+ * Fake matching the three query chains in resolveInboundBurst. The
  * newest-message query selects 'message_id' and ends in maybeSingle();
  * the media query selects 'media_url, created_at' and is awaited
- * directly (then).
+ * directly (then); the already-answered probe selects 'id' and ends in
+ * maybeSingle(). The two maybeSingle chains are told apart by the
+ * columns they asked for.
  */
 function fakeDb(args: {
   newest: { message_id: string } | null
   media: { media_url: string | null; created_at: string }[]
+  /** An outbound message exists after the freshest media. */
+  answered?: boolean
 }): SupabaseClient {
   const make = (selected: { current: string }) => {
     const chain: Record<string, unknown> = {
@@ -18,9 +22,15 @@ function fakeDb(args: {
       eq: () => chain,
       in: () => chain,
       gte: () => chain,
+      gt: () => chain,
       order: () => chain,
       limit: () => chain,
-      maybeSingle: () => Promise.resolve({ data: args.newest, error: null }),
+      maybeSingle: () =>
+        Promise.resolve(
+          selected.current.includes('message_id')
+            ? { data: args.newest, error: null }
+            : { data: args.answered ? { id: 'msg-1' } : null, error: null },
+        ),
       then: (
         onF: (v: unknown) => unknown,
         onR?: (e: unknown) => unknown,
@@ -99,6 +109,42 @@ describe('resolveInboundBurst', () => {
       { conversationId: 'c1', metaMessageId: 'wamid.A' },
     )
     expect(out.receiptMediaIds).toEqual([])
+  })
+
+  it('does not re-read a receipt the bot has already answered', async () => {
+    // The regression: receipt at 15:23, bot replies, customer asks about
+    // financing at 15:24. The media is still inside the 90s window, so
+    // elapsed time alone would re-run the vision call — and the second
+    // read priced the same roof differently, sending a second, cheaper,
+    // wrong quote on top of the first.
+    const out = await resolveInboundBurst(
+      fakeDb({
+        newest: { message_id: 'wamid.FINANCING' },
+        media: [
+          { media_url: '/api/whatsapp/media/recibo', created_at: secondsAgo(60) },
+        ],
+        answered: true,
+      }),
+      { conversationId: 'c1', metaMessageId: 'wamid.FINANCING' },
+    )
+    expect(out.receiptMediaIds).toEqual([])
+  })
+
+  it('still reads a brand-new receipt sent after an earlier reply', async () => {
+    // The mirror case: `answered` is false because the probe only counts
+    // outbound messages NEWER than the freshest media. A customer who
+    // sends a corrected bill must still get it read.
+    const out = await resolveInboundBurst(
+      fakeDb({
+        newest: { message_id: 'wamid.B' },
+        media: [
+          { media_url: '/api/whatsapp/media/nuevo', created_at: secondsAgo(5) },
+        ],
+        answered: false,
+      }),
+      { conversationId: 'c1', metaMessageId: 'wamid.B' },
+    )
+    expect(out.receiptMediaIds).toEqual(['nuevo'])
   })
 
   it('includes an older page when the burst has one fresh page', async () => {

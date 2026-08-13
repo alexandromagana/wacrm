@@ -66,6 +66,8 @@ function reading(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtraction 
     historial_bimestres_kwh: [2177, 1487, 1447, 1966, 2788],
     cantidad_periodos_usados: 6,
     promedio_bimestral_kwh: 2135,
+    incluye_periodo_actual: true,
+    periodos_promediados_kwh: [2944, 2177, 1487, 1447, 1966, 2788],
     tarifa: '1D',
     ciudad: 'CANCUN, Q.R.',
     importe_periodo_mxn: 9814.27,
@@ -149,6 +151,43 @@ describe('sendQuoteProposal — the happy path', () => {
     })
   })
 
+  it('gives two different systems two different folios', async () => {
+    // The bug this closes: the same contact received a 6-panel and a
+    // 4-panel proposal, both stamped GE-2026-KEYH. Sales reads the folio
+    // back over the phone; it has to identify one document.
+    const catorce = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading(),
+    })
+    const ocho = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading({
+        promedio_bimestral_kwh: 1220,
+        periodos_promediados_kwh: [1300, 1250, 1200, 1150, 1220, 1200],
+      }),
+    })
+
+    expect(catorce.kind).toBe('sent')
+    expect(ocho.kind).toBe('sent')
+    if (catorce.kind !== 'sent' || ocho.kind !== 'sent') return
+    expect(ocho.panels).toBe(8)
+    expect(ocho.folio).not.toBe(catorce.folio)
+  })
+
+  it('reproduces the folio when the same system is re-sent', async () => {
+    // The property that made seeding on the contact worth doing in the
+    // first place, and that the fix must not cost.
+    const primera = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading(),
+    })
+    const repetida = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading(),
+    })
+    expect(primera).toEqual(repetida)
+  })
+
   it('records the delivered tier, but only after the send lands', async () => {
     await sendQuoteProposal(fakeDb(), { ...ARGS, extraction: reading() })
     expect(h.upsertField).toHaveBeenCalledWith(
@@ -187,6 +226,38 @@ describe('sendQuoteProposal — when it must not send', () => {
       extraction: reading({ cantidad_periodos_usados: 1 }),
     })
     expect(out).toEqual({ kind: 'skipped', reason: 'not_quotable' })
+    expectNothingSent()
+  })
+
+  it('holds the document when the history hides an empty house', async () => {
+    // Fabiola's real reading. It prices at 8 panels and the bot has been
+    // told to ask why one bimester reads 216 kWh — the document waits
+    // for the answer instead of arriving alongside the question.
+    const out = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading({
+        consumo_periodo_actual_kwh: 2545,
+        historial_bimestres_kwh: [1126, 879, 1067, 1485, 216],
+        promedio_bimestral_kwh: 1220,
+        periodos_promediados_kwh: [2545, 1126, 879, 1067, 1485, 216],
+      }),
+    })
+    expect(out).toEqual({ kind: 'skipped', reason: 'needs_review' })
+    expectNothingSent()
+  })
+
+  it('holds the document when page 1 never got read', async () => {
+    const out = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading({
+        consumo_periodo_actual_kwh: null,
+        incluye_periodo_actual: false,
+        cantidad_periodos_usados: 5,
+        promedio_bimestral_kwh: 2113,
+        periodos_promediados_kwh: [2177, 1487, 1447, 1966, 2788],
+      }),
+    })
+    expect(out).toEqual({ kind: 'skipped', reason: 'needs_review' })
     expectNothingSent()
   })
 

@@ -74,12 +74,14 @@ function fakeDb(seed: {
 }
 
 function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtraction {
-  return {
+  const base: ReceiptExtraction = {
     consumo_periodo_actual_kwh: null,
     periodo_actual: null,
     historial_bimestres_kwh: [],
     cantidad_periodos_usados: 0,
     promedio_bimestral_kwh: null,
+    incluye_periodo_actual: false,
+    periodos_promediados_kwh: [],
     tarifa: null,
     ciudad: null,
     importe_periodo_mxn: null,
@@ -89,6 +91,21 @@ function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtracti
     costo_periodo_mxn: null,
     advertencias: '',
     ...overrides,
+  }
+  // Derived unless a test states them outright, so a fixture cannot
+  // claim a current period in one field and deny it in another — the
+  // review gate keys off exactly that disagreement.
+  return {
+    ...base,
+    incluye_periodo_actual:
+      overrides.incluye_periodo_actual ??
+      base.consumo_periodo_actual_kwh != null,
+    periodos_promediados_kwh:
+      overrides.periodos_promediados_kwh ??
+      [
+        base.consumo_periodo_actual_kwh,
+        ...base.historial_bimestres_kwh,
+      ].filter((v): v is number => v != null),
   }
 }
 
@@ -157,6 +174,34 @@ describe('parseReceiptJson', () => {
     expect(r!.promedio_bimestral_kwh).toBe(11) // (10+11)/2 = 10.5 → 11
   })
 
+  it('records whether the current period made it into the average', () => {
+    const conActual = parseReceiptJson(
+      '{"consumo_periodo_actual_kwh": 2545, "historial_bimestres_kwh": [1126, 879]}',
+    )!
+    expect(conActual.incluye_periodo_actual).toBe(true)
+    expect(conActual.periodos_promediados_kwh).toEqual([2545, 1126, 879])
+
+    // Page 1 unreadable. The average still computes off history — the
+    // flag is the only thing standing between that and a priced PDF.
+    const sinActual = parseReceiptJson(
+      '{"historial_bimestres_kwh": [1126, 879]}',
+    )!
+    expect(sinActual.incluye_periodo_actual).toBe(false)
+    expect(sinActual.periodos_promediados_kwh).toEqual([1126, 879])
+    expect(sinActual.advertencias).toContain('periodo actual')
+  })
+
+  it('averages exactly the six periods it reports', () => {
+    // Fabiola's bill. The arithmetic here is the whole quote: 7,318 / 6
+    // = 1,220 kWh, which is the 8-panel tier.
+    const r = parseReceiptJson(
+      '{"consumo_periodo_actual_kwh": 2545, "historial_bimestres_kwh": [1126, 879, 1067, 1485, 216]}',
+    )!
+    expect(r.periodos_promediados_kwh).toHaveLength(6)
+    expect(r.cantidad_periodos_usados).toBe(6)
+    expect(r.promedio_bimestral_kwh).toBe(1220)
+  })
+
   it('ignores a model-reported average entirely — always recomputes', () => {
     // Even if the model still emits these (legacy fields), they must
     // never leak through: the average is only ever derived from
@@ -175,7 +220,11 @@ describe('parseReceiptJson', () => {
     expect(r).not.toBeNull()
     expect(r!.historial_bimestres_kwh).toEqual([1380, 1500])
     expect(r!.promedio_bimestral_kwh).toBe(1440) // (1380+1500)/2
-    expect(r!.advertencias).toBe('')
+    // `advertencias: 42` is not a string and must not leak through. The
+    // text that IS here is the one parseReceiptJson raises on its own:
+    // this payload carries no current period.
+    expect(r!.advertencias).not.toContain('42')
+    expect(r!.advertencias).toContain('periodo actual')
     expect(r!.ciudad).toBeNull()
   })
 
@@ -373,6 +422,73 @@ describe('inferPropertyType', () => {
     expect(inferPropertyType(null)).toBeNull()
     expect(inferPropertyType('')).toBeNull()
     expect(inferPropertyType('XYZ')).toBeNull()
+  })
+})
+
+describe('formatReceiptNote — the review gate', () => {
+  // Fabiola's bill, the one that went wrong: 2,545 kWh this bimester on
+  // top of a year that includes a 216 kWh period, when the house sat
+  // empty. It prices at 8 panels and must not go out unasked.
+  const vacancia = () =>
+    extraction({
+      consumo_periodo_actual_kwh: 2545,
+      historial_bimestres_kwh: [1126, 879, 1067, 1485, 216],
+      cantidad_periodos_usados: 6,
+      promedio_bimestral_kwh: 1220,
+      costo_periodo_mxn: 8304.21,
+      tarifa: '1D',
+    })
+
+  it('orders the bot to ask, and not to quote, on an irregular history', () => {
+    const note = formatReceiptNote(vacancia())
+    expect(note).toContain('consumo_irregular')
+    expect(note).toContain('216 kWh')
+    expect(note).toContain('NO des precio')
+    expect(note).toContain('desocupada')
+  })
+
+  it('withholds the projection the PDF would have carried', () => {
+    // The savings lines exist to keep chat and document in agreement.
+    // With no document going out, handing them over just invites the
+    // bot to quote the numbers it was told not to quote.
+    const note = formatReceiptNote(vacancia())
+    expect(note).not.toContain('proyeccion_25_anios')
+    expect(note).not.toContain('se_paga_solo_en')
+  })
+
+  it('tells the bot to answer the customer and re-ask, not to stonewall', () => {
+    // Gregori replied to the question with a question of his own. The
+    // bot answered it and quoted anyway; the fix must not overcorrect
+    // into refusing to answer him.
+    expect(formatReceiptNote(vacancia())).toContain('financiamiento')
+  })
+
+  it('asks for page 1 instead when that is what is missing', () => {
+    const note = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: null,
+        historial_bimestres_kwh: [1126, 879, 1067, 1485, 1200],
+        cantidad_periodos_usados: 5,
+        promedio_bimestral_kwh: 1151,
+      }),
+    )
+    expect(note).toContain('lectura_incompleta')
+    expect(note).toContain('PRIMERA página')
+    expect(note).toContain('NO des precio')
+  })
+
+  it('leaves a clean reading alone', () => {
+    const note = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: 2944,
+        historial_bimestres_kwh: [2177, 1487, 1447, 1966, 2788],
+        cantidad_periodos_usados: 6,
+        promedio_bimestral_kwh: 2135,
+        costo_periodo_mxn: 10237.3,
+      }),
+    )
+    expect(note).not.toContain('NO des precio')
+    expect(note).toContain('Usa el promedio contra tu tabla')
   })
 })
 

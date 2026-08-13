@@ -27,6 +27,18 @@ export interface ReceiptExtraction {
   historial_bimestres_kwh: number[]
   cantidad_periodos_usados: number
   promedio_bimestral_kwh: number | null
+  /**
+   * Whether this bill's own bimester is inside the average. False means
+   * page 1's "Total del periodo" was unreadable and the average rests on
+   * history alone — priceable, but not without asking first.
+   */
+  incluye_periodo_actual: boolean
+  /**
+   * The individual readings the average was taken over, newest first.
+   * Carried so the pricing layer can spot a window that mixes an
+   * occupied house with an empty one, which an average hides by design.
+   */
+  periodos_promediados_kwh: number[]
   tarifa: string | null
   /** City/municipality read off the service address, or null. */
   ciudad: string | null
@@ -230,6 +242,16 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
   if (typeof r.advertencias === 'string' && r.advertencias) {
     advertencias.push(r.advertencias)
   }
+  // Page 1's consumption is the hardest number on the bill to read —
+  // three figures share the "Energía (kWh)" row and only the third is
+  // the period. When it comes back null the average quietly becomes an
+  // average of older bimesters, which is how a house that was empty last
+  // year gets sized for a house nobody lives in. Say so out loud.
+  if (consumoActual == null && historial.length > 0) {
+    advertencias.push(
+      'no se pudo leer el consumo del periodo actual (página 1); el promedio se calculó solo con el historial y puede no reflejar el consumo de hoy',
+    )
+  }
   // A gap between the period charge and the headline total means the
   // customer carries debt or credit from earlier bimesters. Not an
   // error — it is precisely the case where using the total would have
@@ -250,6 +272,8 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
     historial_bimestres_kwh: historial,
     cantidad_periodos_usados: values.length,
     promedio_bimestral_kwh: promedio,
+    incluye_periodo_actual: consumoActual != null,
+    periodos_promediados_kwh: values,
     tarifa: typeof r.tarifa === 'string' ? r.tarifa : null,
     ciudad:
       typeof r.ciudad === 'string' && r.ciudad.trim() ? r.ciudad.trim() : null,
@@ -322,7 +346,30 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
   const quote = resolveQuote(
     r.promedio_bimestral_kwh,
     r.cantidad_periodos_usados,
+    {
+      includesCurrentPeriod: r.incluye_periodo_actual,
+      periods: r.periodos_promediados_kwh,
+    },
   )
+  // A window that prices cleanly but is not trustworthy. No PDF goes out
+  // on this turn (`sendQuoteProposal` skips the same resolution), so the
+  // note has to stop the model from quoting the number in text either —
+  // otherwise the customer gets a firm price the company has to walk
+  // back once they answer.
+  if (quote.kind === 'needs_review') {
+    lines.push(
+      quote.reason === 'missing_current_period'
+        ? 'lectura_incompleta: no se leyó el consumo del bimestre actual. Antes de dar cualquier número, pídele con amabilidad una foto nítida de la PRIMERA página del recibo, donde viene el renglón "Energía (kWh)".'
+        : `consumo_irregular: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por debajo del promedio de ${quote.kwh} kWh. Eso normalmente significa que la casa estuvo desocupada, en obra, o que apenas la van a habitar.`,
+    )
+    lines.push(
+      'NO des precio, ni número de paneles, ni cotización en este mensaje, y NO se enviará PDF.',
+      quote.reason === 'missing_current_period'
+        ? 'Tu única tarea en este turno es pedir esa página. Espera a tenerla antes de cotizar.'
+        : 'Tu única tarea en este turno es preguntar cuál de esas situaciones aplica: si la casa estuvo desocupada, si apenas la va a habitar, o si así es su consumo normal. Espera su respuesta antes de cotizar — dimensionar con el promedio equivocado le vende un sistema que no le alcanza.',
+      'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pregunta al final del mensaje.',
+    )
+  }
   if (quote.kind === 'ok') {
     const financials = buildFinancials({
       costoBimestralMxn: projectionBaseCost({
@@ -352,7 +399,9 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
   }
   if (r.advertencias) lines.push(`advertencias: ${r.advertencias}`)
   lines.push(
-    'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+    quote.kind === 'needs_review'
+      ? 'Respeta la instrucción de arriba: en este turno se pregunta, no se cotiza. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]'
+      : 'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
   )
   return lines.join('\n')
 }

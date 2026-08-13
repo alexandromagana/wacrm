@@ -69,6 +69,20 @@ export function ContactForm({
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
 
+  // Declared above the effect that calls it, not below: hoisting made
+  // the forward reference work, but it broke the moment anyone turned
+  // this into a `const`, and it hid the call from the lint rules that
+  // track what the effect actually depends on.
+  async function fetchTags() {
+    setLoadingTags(true);
+    const { data } = await supabase
+      .from('tags')
+      .select('*')
+      .order('name');
+    if (data) setTags(data);
+    setLoadingTags(false);
+  }
+
   useEffect(() => {
     if (open) {
       setName(contact?.name ?? '');
@@ -79,6 +93,11 @@ export function ContactForm({
       setDupMatch(null);
       fetchTags();
     }
+    // `contactTags` and `fetchTags` are left out deliberately, and the
+    // exhaustive-deps warning here is expected. This effect seeds the
+    // form when the dialog OPENS; re-running it while the dialog is open
+    // would throw away whatever the user has typed. `fetchTags` is also
+    // rebuilt every render, so adding it loops the tag query forever.
   }, [open, contact]);
 
   // Look up an existing contact with this number (new contacts only).
@@ -101,16 +120,6 @@ export function ContactForm({
     } finally {
       setCheckingDup(false);
     }
-  }
-
-  async function fetchTags() {
-    setLoadingTags(true);
-    const { data } = await supabase
-      .from('tags')
-      .select('*')
-      .order('name');
-    if (data) setTags(data);
-    setLoadingTags(false);
   }
 
   function toggleTag(tagId: string) {

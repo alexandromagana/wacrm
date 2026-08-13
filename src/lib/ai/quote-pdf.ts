@@ -34,6 +34,12 @@ export type QuoteSendOutcome =
 export type SkipReason =
   /** Reading unusable, too few periods, or past the price table. */
   | 'not_quotable'
+  /**
+   * Priced, but on a window the bot was told to ask about first — a
+   * missing current period, or a history that mixes an occupied house
+   * with an empty one. The bot asks in text; the document waits.
+   */
+  | 'needs_review'
   /** No readable peso amount, so the comparison cards would be blank. */
   | 'no_financials'
   /** Same tier already delivered — the document would be identical. */
@@ -96,7 +102,17 @@ export async function sendQuoteProposal(
     const quote = resolveQuote(
       extraction.promedio_bimestral_kwh,
       extraction.cantidad_periodos_usados,
+      {
+        includesCurrentPeriod: extraction.incluye_periodo_actual,
+        periods: extraction.periodos_promediados_kwh,
+      },
     )
+    // Reported apart from `not_quotable` because it is the one skip a
+    // human should act on: the numbers priced fine, we are holding the
+    // document until the customer answers the bot's question.
+    if (quote.kind === 'needs_review') {
+      return { kind: 'skipped', reason: 'needs_review' }
+    }
     if (quote.kind !== 'ok') return { kind: 'skipped', reason: 'not_quotable' }
 
     const financials = buildFinancials({
@@ -124,9 +140,12 @@ export async function sendQuoteProposal(
       .maybeSingle()
 
     const now = new Date()
-    // Seeded on the contact, so a re-quote carries the folio the
-    // customer already has written down.
-    const folio = buildFolio(now, contactId)
+    // Seeded on the contact AND the system being quoted: re-sending the
+    // same proposal reproduces the folio the customer already has, while
+    // a genuinely different system gets its own — two PDFs with the same
+    // folio and different prices is the version of this the customer
+    // notices.
+    const folio = buildFolio(now, `${contactId}:${quote.tier.panels}`)
     const { bytes } = await renderQuotePdf(
       buildQuoteFieldValues({
         nombre: (contact?.name as string | null) ?? null,

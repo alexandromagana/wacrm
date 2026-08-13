@@ -104,10 +104,15 @@ export function formatQuoteDate(now: Date): string {
 }
 
 /**
- * "GE-2026-4F7A". Deterministic in `seed` (the contact id), so the same
- * customer keeps one folio instead of collecting a new one each time
- * sales re-sends — which is the whole point of quoting a folio over the
- * phone. FNV-1a: not a security hash, just a stable spread.
+ * "GE-2026-4F7A". Deterministic in `seed`, so re-sending the same
+ * proposal to the same customer reproduces the folio they already wrote
+ * down — the whole point of quoting one over the phone.
+ *
+ * Callers seed with the contact id AND the quoted system, never the
+ * contact alone: two documents that differ on price and panel count must
+ * not share a "unique" folio, or the number sales reads back over the
+ * phone no longer identifies which of them the customer is holding.
+ * FNV-1a: not a security hash, just a stable spread.
  */
 export function buildFolio(now: Date, seed: string): string {
   let h = 0x811c9dc5

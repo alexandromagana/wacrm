@@ -67,6 +67,53 @@ export function isPlausibleAverage(kwh: number): boolean {
 }
 
 /**
+ * A bimester below this fraction of the window's own average is not
+ * "a mild winter" — it is the house standing empty, under construction,
+ * or on a different meter. Cancún's AC swing is roughly 2:1 between a
+ * winter and a summer bimester, which lands near 0.6 of the average;
+ * 0.4 sits well below that so an ordinary seasonal dip never trips it.
+ */
+export const ANOMALY_FLOOR_RATIO = 0.4
+
+/** Why a reading is priced but not safe to put on a PDF unattended. */
+export type ReviewReason =
+  /** The bill's own bimester never made it into the average. */
+  | 'missing_current_period'
+  /** The window mixes occupied and unoccupied periods. */
+  | 'anomalous_history'
+
+/**
+ * Signals the pricing table cannot see for itself. Optional: callers
+ * that only want the tier for a number typed in chat pass nothing and
+ * get the old behaviour. The two callers that put a price on a document
+ * — `formatReceiptNote` and `sendQuoteProposal` — always pass it.
+ */
+export interface QuoteEvidence {
+  /** False when the current period was unreadable and the average is
+   *  built from history alone. */
+  includesCurrentPeriod?: boolean
+  /** The individual readings behind the average, for outlier checks. */
+  periods?: readonly number[]
+}
+
+/**
+ * The lowest reading in the window when it is far enough below the
+ * window's own average to mean the periods are not comparable, else
+ * null. Two periods is enough to ask the question: at n=2 the rule
+ * needs a 4:1 spread, which no thermostat produces.
+ */
+export function findAnomalousPeriod(
+  periods: readonly number[],
+): number | null {
+  const values = periods.filter((v) => Number.isFinite(v) && v >= 0)
+  if (values.length < 2) return null
+  const mean = values.reduce((sum, v) => sum + v, 0) / values.length
+  if (mean <= 0) return null
+  const lowest = Math.min(...values)
+  return lowest < mean * ANOMALY_FLOOR_RATIO ? lowest : null
+}
+
+/**
  * Pure table probe: the tier a consumption falls in, or null when it is
  * outside the table entirely. Total on every input — callers get null
  * for NaN, Infinity, and negatives rather than an exception.
@@ -85,6 +132,19 @@ export type QuoteResolution =
   | { kind: 'ok'; kwh: number; tier: SolarTier }
   /** Quotable, but from too few periods to commit to a document. */
   | { kind: 'low_confidence'; kwh: number; tier: SolarTier; periods: number }
+  /**
+   * Priced, but the window itself is suspect — the bot must ask the
+   * customer before a document goes out. The tier still comes through
+   * so the bot can talk about a ballpark if pressed.
+   */
+  | {
+      kind: 'needs_review'
+      kwh: number
+      tier: SolarTier
+      reason: ReviewReason
+      /** The offending bimester, when the reason is an outlier. */
+      outlierKwh?: number
+    }
   /** Past the table — bespoke design, hand off to a human. */
   | { kind: 'above_table'; kwh: number }
   /** A number, but not one a real bill would show. */
@@ -103,6 +163,7 @@ export type QuoteResolution =
 export function resolveQuote(
   kwh: number | null,
   periodsUsed: number,
+  evidence: QuoteEvidence = {},
 ): QuoteResolution {
   if (kwh == null || !Number.isFinite(kwh)) return { kind: 'unreadable' }
   if (!isPlausibleAverage(kwh)) return { kind: 'implausible', kwh }
@@ -117,6 +178,33 @@ export function resolveQuote(
   if (periodsUsed < MIN_PERIODS_FOR_PDF) {
     return { kind: 'low_confidence', kwh, tier, periods: periodsUsed }
   }
+
+  // Both checks below describe a window that prices cleanly and is still
+  // the wrong window. They run last so "unreadable" and "past the table"
+  // keep their own replies, and they only fire when the caller supplied
+  // the evidence — a bare two-argument call is unchanged.
+  //
+  // The current bimester is the one the customer is looking at while
+  // they type, and on a house that just came back into use it is the
+  // only period that reflects how they actually live. Averaging without
+  // it silently sizes the system for whoever was here before.
+  if (evidence.includesCurrentPeriod === false) {
+    return { kind: 'needs_review', kwh, tier, reason: 'missing_current_period' }
+  }
+
+  if (evidence.periods) {
+    const outlier = findAnomalousPeriod(evidence.periods)
+    if (outlier != null) {
+      return {
+        kind: 'needs_review',
+        kwh,
+        tier,
+        reason: 'anomalous_history',
+        outlierKwh: outlier,
+      }
+    }
+  }
+
   return { kind: 'ok', kwh, tier }
 }
 

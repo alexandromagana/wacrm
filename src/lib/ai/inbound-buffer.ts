@@ -94,6 +94,33 @@ export async function resolveInboundBurst(
     Date.now() - new Date(freshest.created_at).getTime() < FRESH_MEDIA_WINDOW_MS
   if (!hasFreshMedia) return { superseded: false, receiptMediaIds: [] }
 
+  // Elapsed time alone cannot tell "page 2 just landed" from "the
+  // customer asked something else a minute after we already read their
+  // receipt" — inside the window both look like fresh media. Only the
+  // second one re-runs a vision call over an image that has already been
+  // priced, and two reads of one bill are not obliged to agree: that is
+  // how a customer ends up holding two different quotes for one roof.
+  //
+  // An outbound message *after* the media is the durable signal that
+  // this receipt already had its turn. It also covers the case that
+  // matters most — a human took the thread over — where re-reading and
+  // auto-sending a document is exactly what must not happen.
+  const { data: answered, error: answeredErr } = await db
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', conversationId)
+    .in('sender_type', ['agent', 'bot'])
+    .gt('created_at', freshest.created_at)
+    .limit(1)
+    .maybeSingle()
+  if (answeredErr) {
+    // Fail open, like the lookups above: a transient error here should
+    // cost a redundant read, never a receipt that is silently ignored.
+    console.error('[inbound-buffer] reply lookup failed:', answeredErr)
+  } else if (answered) {
+    return { superseded: false, receiptMediaIds: [] }
+  }
+
   // media_url is `/api/whatsapp/media/<mediaId>` — recover the ids,
   // oldest first so page 1 precedes page 2 in the vision call.
   const receiptMediaIds = rows

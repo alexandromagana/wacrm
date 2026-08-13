@@ -5,6 +5,7 @@ import {
   WATTS_PER_PANEL,
   lookupSolarTier,
   resolveQuote,
+  findAnomalousPeriod,
   renderPricingTableForPrompt,
 } from './pricing'
 
@@ -122,6 +123,85 @@ describe('resolveQuote', () => {
     // Otherwise a garbage reading from one page would be reported as
     // "almost quotable" instead of "unusable".
     expect(resolveQuote(30, 1).kind).toBe('implausible')
+  })
+
+  it('stays quotable when no evidence is supplied', () => {
+    // The two-argument call is what answers "¿cuánto por 1,500 kWh?" in
+    // chat, with no receipt behind it and nothing to review.
+    expect(resolveQuote(1_450, 6).kind).toBe('ok')
+  })
+
+  it('holds the document when the current period never made the average', () => {
+    const res = resolveQuote(955, 5, {
+      includesCurrentPeriod: false,
+      periods: [1126, 879, 1067, 1485, 216],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('missing_current_period')
+    // The tier still resolves — the bot may ballpark, it just may not
+    // put this on a PDF unattended.
+    expect(res.tier.panels).toBe(6)
+  })
+
+  it('holds the document when the history hides an empty house', () => {
+    // The real case: six periods averaging 1,220 kWh, one of them 216 —
+    // the bimester the house sat unoccupied. The average prices cleanly
+    // at 8 panels and is still the wrong question to answer silently.
+    const res = resolveQuote(1_220, 6, {
+      includesCurrentPeriod: true,
+      periods: [2545, 1126, 879, 1067, 1485, 216],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('anomalous_history')
+    expect(res.outlierKwh).toBe(216)
+    expect(res.tier.panels).toBe(8)
+  })
+
+  it('reports a missing current period ahead of an outlier', () => {
+    // Both are true here. The missing page is the one the bot can fix by
+    // asking for a photo, so it must be the reason surfaced.
+    const res = resolveQuote(800, 5, {
+      includesCurrentPeriod: false,
+      periods: [1400, 1300, 1200, 1000, 100],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('missing_current_period')
+  })
+
+  it('lets an ordinary Cancún summer/winter swing through', () => {
+    // 2:1 between the hottest and coldest bimester is normal here and
+    // must not be mistaken for a vacancy, or every quote needs a human.
+    const res = resolveQuote(2_135, 6, {
+      includesCurrentPeriod: true,
+      periods: [2944, 2177, 1487, 1447, 1966, 2788],
+    })
+    expect(res.kind).toBe('ok')
+  })
+})
+
+describe('findAnomalousPeriod', () => {
+  it('flags the vacant bimester and returns it', () => {
+    expect(findAnomalousPeriod([2545, 1126, 879, 1067, 1485, 216])).toBe(216)
+  })
+
+  it('ignores a merely seasonal dip', () => {
+    expect(findAnomalousPeriod([2944, 2177, 1487, 1447, 1966, 2788])).toBeNull()
+  })
+
+  it('needs a 4:1 spread before calling it on two periods', () => {
+    // At n=2 the outlier drags the mean it is compared against, so the
+    // rule is deliberately hard to trip.
+    expect(findAnomalousPeriod([2545, 216])).toBe(216)
+    expect(findAnomalousPeriod([1000, 500])).toBeNull()
+  })
+
+  it('says nothing about a single period, or about zeroes', () => {
+    expect(findAnomalousPeriod([1200])).toBeNull()
+    expect(findAnomalousPeriod([])).toBeNull()
+    expect(findAnomalousPeriod([0, 0])).toBeNull()
   })
 })
 
