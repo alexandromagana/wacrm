@@ -4,7 +4,15 @@ import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
-import type { Contact, Deal, ContactNote, Tag } from "@/types";
+import type { Contact, Deal, ContactNote, PipelineStage, Tag } from "@/types";
+import { formatCurrency } from "@/lib/currency";
+import {
+  DealProgressCard,
+  type ReadinessCheck,
+} from "@/components/pipelines/deal-progress-card";
+import { NextStepCard } from "@/components/contacts/next-step-card";
+import { nextDealMilestone } from "@/lib/deals/milestones";
+import { DealForm } from "@/components/pipelines/deal-form";
 import {
   Phone,
   Mail,
@@ -25,17 +33,35 @@ interface ContactSidebarProps {
   contact: Contact | null;
 }
 
+/**
+ * The deal the right column leads with. Open deals win over
+ * closed ones — a won/lost deal isn't what you're working on — and
+ * within each group the list is already newest-first.
+ */
+function pickHeadlineDeal(deals: Deal[]): Deal | null {
+  if (deals.length === 0) return null;
+  return deals.find((d) => (d.status ?? "open") === "open") ?? deals[0];
+}
+
 export function ContactSidebar({ contact }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
+  const tDeal = useTranslations("DealProgress");
 
   const { accountId } = useAuth();
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
+  // Board-ordered stages of the headline deal's pipeline — what the
+  // progress card needs to show what's done and what's still ahead.
+  const [stages, setStages] = useState<PipelineStage[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
   const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  // The deal editor opens as a sheet over the inbox rather than
+  // sending the agent to /pipelines — they're mid-conversation, and
+  // the whole point of this panel is not having to leave it.
+  const [dealFormOpen, setDealFormOpen] = useState(false);
 
   const fetchContactData = useCallback(async () => {
     if (!contact) return;
@@ -62,6 +88,21 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
     if (dealsRes.data) setDeals(dealsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
+
+    // Stages are a second round trip because which pipeline to ask
+    // about only becomes known once the deals come back.
+    const headline = pickHeadlineDeal(dealsRes.data ?? []);
+    if (headline) {
+      const { data: stageRows } = await supabase
+        .from("pipeline_stages")
+        .select("*")
+        .eq("pipeline_id", headline.pipeline_id)
+        .order("position", { ascending: true });
+      setStages(stageRows ?? []);
+    } else {
+      setStages([]);
+    }
+
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
@@ -130,6 +171,14 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   const displayName = contact.name || contact.phone;
   const initials = displayName.charAt(0).toUpperCase();
 
+  const headlineDeal = pickHeadlineDeal(deals);
+  // Readiness rows the deal can't answer by itself — they depend on
+  // the contact record and the notes list the sidebar already holds.
+  const extraChecks: ReadinessCheck[] = [
+    { label: tDeal("checkEmail"), met: Boolean(contact.email) },
+    { label: tDeal("checkNotes"), met: notes.length > 0 },
+  ];
+
   return (
     <div className="flex h-full w-70 flex-col border-l border-border bg-card">
       <ScrollArea className="flex-1">
@@ -177,6 +226,26 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
               </div>
             )}
           </div>
+
+          {/* Headline deal — where it stands, and what's next on it.
+              Both cards sit above the reference lists below because
+              they're the "what do I do about this person" summary. */}
+          {headlineDeal && (
+            <div className="mt-4 space-y-2">
+              <DealProgressCard
+                deal={headlineDeal}
+                stages={stages}
+                extraChecks={extraChecks}
+                onEdit={() => setDealFormOpen(true)}
+              />
+              <NextStepCard
+                milestone={nextDealMilestone(headlineDeal)}
+                latestNote={notes[0]?.note_text}
+                onEdit={() => setDealFormOpen(true)}
+                editLabel={tDeal("editDeal")}
+              />
+            </div>
+          )}
 
           {/* Divider */}
           <div className="my-4 border-t border-border" />
@@ -229,10 +298,7 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
                       {deal.title}
                     </p>
                     <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>
-                        {deal.currency ?? "$"}
-                        {deal.value.toLocaleString()}
-                      </span>
+                      <span>{formatCurrency(deal.value, deal.currency)}</span>
                       {deal.stage && (
                         <span
                           className="rounded-full px-1.5 py-0.5 text-[10px]"
@@ -298,6 +364,19 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
           </div>
         </div>
       </ScrollArea>
+
+      {/* Same editor the pipeline board uses, so the fields and the
+          save path can't drift between the two entry points. */}
+      {headlineDeal && (
+        <DealForm
+          open={dealFormOpen}
+          onOpenChange={setDealFormOpen}
+          deal={headlineDeal}
+          pipelineId={headlineDeal.pipeline_id}
+          stages={stages}
+          onSaved={fetchContactData}
+        />
+      )}
     </div>
   );
 }

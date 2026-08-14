@@ -29,6 +29,10 @@ interface MessageBubbleProps {
   reactions?: MessageReaction[];
   currentUserId?: string;
   onToggleReaction?: (emoji: string) => void;
+  /** Header media of the template this message was sent from, looked
+   *  up by `template_name`. Only needed for messages sent before the
+   *  send path started storing the URL on the message itself. */
+  templateHeader?: TemplateHeaderMedia | null;
 }
 
 function StatusIcon({ status }: { status: Message["status"] }) {
@@ -154,7 +158,33 @@ function MediaImage({
   );
 }
 
-function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof useTranslations> }) {
+/** Media kind of a template header, as stored on `message_templates`. */
+export interface TemplateHeaderMedia {
+  type: "image" | "video" | "document";
+  url: string | null;
+}
+
+/**
+ * Last resort for a stored `media_url` with no template row to say what
+ * it is. Extension-based, so it's a guess — falls back to `image`,
+ * which is what the overwhelming majority of media headers are.
+ */
+function guessMediaType(url: string): TemplateHeaderMedia["type"] {
+  const path = url.split("?")[0].toLowerCase();
+  if (/\.(mp4|3gp|mov|webm)$/.test(path)) return "video";
+  if (/\.(pdf|docx?|xlsx?|pptx?|txt|csv)$/.test(path)) return "document";
+  return "image";
+}
+
+function MessageContent({
+  message,
+  t,
+  templateHeader,
+}: {
+  message: Message;
+  t: ReturnType<typeof useTranslations>;
+  templateHeader?: TemplateHeaderMedia | null;
+}) {
   switch (message.content_type) {
     case "text":
       return (
@@ -238,13 +268,45 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
         </a>
       );
 
-    case "template":
+    case "template": {
+      // A media-header template sends a picture (or video/document)
+      // along with the body. `media_url` is set on the message from the
+      // send onward; `templateHeader` backfills it for messages sent
+      // before that, by looking the template up by name.
+      const headerUrl = message.media_url || templateHeader?.url || null;
+      const headerType = message.media_url
+        ? templateHeader?.type ?? guessMediaType(message.media_url)
+        : templateHeader?.type;
+
       return (
         <div>
           <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
             <LayoutTemplate className="h-3 w-3" />
             {t("template")}
           </span>
+          {headerUrl && headerType === "image" && (
+            <div className="mt-1">
+              <MediaImage url={headerUrl} alt={t("photo")} t={t} />
+            </div>
+          )}
+          {headerUrl && headerType === "video" && (
+            <video
+              src={headerUrl}
+              controls
+              className="mt-1 max-h-64 max-w-60 rounded-lg"
+            />
+          )}
+          {headerUrl && headerType === "document" && (
+            <a
+              href={headerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 flex items-start gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm hover:bg-muted"
+            >
+              <FileText className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 break-words">{t("document")}</span>
+            </a>
+          )}
           {message.content_text && (
             <p className="mt-1 whitespace-pre-wrap break-words text-sm">
               {message.content_text}
@@ -252,6 +314,7 @@ function MessageContent({ message, t }: { message: Message, t: ReturnType<typeof
           )}
         </div>
       );
+    }
 
     case "location": {
       // content_text is built server-side as "name - address - lat,lng"
@@ -331,6 +394,7 @@ export function MessageBubble({
   reactions,
   currentUserId,
   onToggleReaction,
+  templateHeader,
 }: MessageBubbleProps) {
   const t = useTranslations("Inbox.bubble");
 
@@ -357,18 +421,22 @@ export function MessageBubble({
           // break the thread's layout again.
           "relative max-w-full rounded-2xl px-3 py-2",
           isAgent
-            ? "rounded-br-md bg-primary text-primary-foreground"
-            : "rounded-bl-md bg-muted text-foreground",
+            ? "rounded-br-md bg-bubble-out text-bubble-out-foreground"
+            : "rounded-bl-md bg-bubble-in text-bubble-in-foreground",
         )}
       >
         {reply && (
           <ReplyQuote
             authorLabel={reply.authorLabel}
             preview={reply.preview}
-            onPrimary={isAgent}
+            onOutbound={isAgent}
           />
         )}
-        <MessageContent message={message} t={t} />
+        <MessageContent
+          message={message}
+          t={t}
+          templateHeader={templateHeader}
+        />
         <div
           className={cn(
             "mt-1 flex items-center gap-1",
@@ -376,12 +444,12 @@ export function MessageBubble({
           )}
         >
           {/* AI badge — only on replies the auto-reply bot generated
-              (always outbound, so it sits on the primary fill). Lets
+              (always outbound, so it sits on the outbound fill). Lets
               agents tell an AI reply from their own / a Flow's at a
               glance. */}
           {message.ai_generated && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-primary-foreground/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-primary-foreground"
+              className="inline-flex items-center gap-0.5 rounded-full bg-bubble-out-foreground/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-bubble-out-foreground"
               title={t("aiBadgeTitle")}
             >
               <Sparkles className="h-2.5 w-2.5" />
@@ -391,11 +459,12 @@ export function MessageBubble({
           <span
             className={cn(
               "text-[10px]",
-              // Outbound bubbles sit on the primary fill, so the
-              // timestamp must read against that (not the neutral
-              // foreground) — otherwise it goes low-contrast in light
-              // mode. Inbound bubbles use the muted surface.
-              isAgent ? "text-primary-foreground/70" : "text-muted-foreground",
+              // Each side's timestamp reads against its own bubble
+              // fill — the two sides invert between light and dark, so
+              // a single neutral would go low-contrast on one of them.
+              isAgent
+                ? "text-bubble-out-foreground/70"
+                : "text-bubble-in-foreground/60",
             )}
           >
             {time}

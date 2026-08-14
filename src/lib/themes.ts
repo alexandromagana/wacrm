@@ -14,6 +14,7 @@
  */
 
 export const THEME_IDS = [
+  "lime",
   "violet",
   "emerald",
   "cobalt",
@@ -23,7 +24,7 @@ export const THEME_IDS = [
 
 export type ThemeId = (typeof THEME_IDS)[number];
 
-export const DEFAULT_THEME: ThemeId = "emerald";
+export const DEFAULT_THEME: ThemeId = "lime";
 
 export const STORAGE_KEY = "wacrm.theme";
 
@@ -68,16 +69,22 @@ export interface ThemeMeta {
 
 export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
+    id: "lime",
+    name: "Lime",
+    tagline: "High-contrast chartreuse — the default, poster-bright on dark.",
+    swatch: "oklch(0.9 0.175 118)",
+  },
+  {
     id: "violet",
     name: "Violet",
-    tagline: "The default — confident, slightly playful.",
+    tagline: "Confident, slightly playful.",
     swatch: "oklch(0.526 0.247 293)",
   },
   {
     id: "emerald",
     name: "Emerald",
-    tagline: "Growth-coded, nods at messaging without copying WhatsApp green.",
-    swatch: "oklch(0.62 0.16 162)",
+    tagline: "Gama Energía brand green — growth-coded, messaging-adjacent.",
+    swatch: "oklch(0.77 0.17 152)",
   },
   {
     id: "cobalt",

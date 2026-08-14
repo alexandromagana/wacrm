@@ -8,10 +8,11 @@ import {
   normalizeConversations,
 } from "@/lib/inbox/conversations";
 import { getConversationStatus } from "@/lib/conversation-status";
+import { InboxStatTiles } from "@/components/inbox/inbox-stat-tiles";
 import { getWhatsAppSessionInfo } from "@/lib/whatsapp/session-window";
 import { cn } from "@/lib/utils";
 import type { Conversation, ConversationStatus, Tag } from "@/types";
-import { Search, ChevronDown, X, Clock } from "lucide-react";
+import { Search, ChevronDown, X, Clock, LayoutTemplate } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
@@ -68,20 +69,19 @@ export function ConversationList({
 
   /**
    * Describes a conversation whose 24h window is STILL OPEN; null for
-   * expired, never-started, and closed ones.
+   * expired and never-started ones.
    *
-   * Deliberately inverted from marking expired rows: in practice most
-   * conversations here are past the window, so flagging those painted
-   * the majority of the list and buried the signal. What's scarce — and
-   * what you can still act on with a free-text reply — is the open ones,
-   * so those are what get marked.
+   * Closed conversations get a countdown too. They used to be excluded
+   * — no point nagging about a thread someone already wrapped up — but
+   * now that the list groups by window, a closed-but-still-open row
+   * sits under "can reply now" regardless, and hiding its timer there
+   * just makes it look like the one row missing its data.
    *
    * Returns plain strings (unpacked into separate props at the call
    * site) so the row's memo keeps comparing by value; handing it a fresh
    * object each tick would defeat the memo entirely.
    */
   function describeOpenWindow(conv: Conversation) {
-    if (conv.status === "closed") return null;
     const info = getWhatsAppSessionInfo(
       conv.last_customer_message_at,
       new Date(nowTick),
@@ -237,6 +237,42 @@ export function ConversationList({
     return result;
   }, [conversations, filter, search, selectedTagIds, selectedCompany]);
 
+  /**
+   * Split the list by WhatsApp's 24h window, because that's the divide
+   * that decides what you can actually do: inside it you can reply in
+   * free text, outside it only an approved template will send.
+   *
+   * Grouped on the window alone, deliberately ignoring `status` — a
+   * conversation someone marked closed can still be inside its window,
+   * and that's a real "you can still write to this person".
+   *
+   * "Needs template" also collects contacts who have never messaged in.
+   * WhatsApp treats them the same as a lapsed window (templates only);
+   * the row keeps its own label so a fresh lead doesn't read as an
+   * expired conversation.
+   */
+  const groups = useMemo(() => {
+    const now = new Date(nowTick);
+    const openWindow: Conversation[] = [];
+    const needsTemplate: Conversation[] = [];
+
+    for (const conv of filtered) {
+      const info = getWhatsAppSessionInfo(conv.last_customer_message_at, now);
+      if (info.hasCustomerMessage && !info.windowExpired) openWindow.push(conv);
+      else needsTemplate.push(conv);
+    }
+
+    // Oldest inbound message first — that's the window closing soonest,
+    // which is the one worth answering before it lapses.
+    openWindow.sort(
+      (a, b) =>
+        new Date(a.last_customer_message_at ?? 0).getTime() -
+        new Date(b.last_customer_message_at ?? 0).getTime(),
+    );
+
+    return { openWindow, needsTemplate };
+  }, [filtered, nowTick]);
+
   const toggleTag = useCallback((id: string) => {
     setSelectedTagIds((prev) =>
       prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
@@ -266,13 +302,46 @@ export function ConversationList({
 
   const activeFilter = FILTER_OPTIONS.find((o) => o.value === filter);
 
+  // Shared by both groups. `needsTemplate` decides which of the two
+  // trailing markers the row shows — a countdown or a template cue.
+  function renderRow(conv: Conversation, needsTemplate: boolean) {
+    // Computed here rather than inside the row so the memo can skip
+    // rows whose countdown didn't change.
+    const openWindow = describeOpenWindow(conv);
+    return (
+      <ConversationItem
+        key={conv.id}
+        conversation={conv}
+        isActive={conv.id === activeConversationId}
+        onSelect={handleSelect}
+        t={t}
+        tStatus={tStatus}
+        remainingCompact={openWindow?.compact ?? null}
+        remainingLabel={openWindow?.label ?? null}
+        needsTemplate={needsTemplate}
+        neverReplied={!conv.last_customer_message_at}
+      />
+    );
+  }
+
   return (
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
     <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
-      {/* Search + Filter */}
+      {/* Counts + Search + Filter */}
       <div className="space-y-2 border-b border-border p-3">
+        <InboxStatTiles
+          conversations={conversations}
+          active={filter}
+          onSelect={setFilter}
+          labels={{
+            all: t("filterAll"),
+            unread: t("filterUnread"),
+            open: t("filterOpen"),
+            pending: t("filterPending"),
+          }}
+        />
         <div className="relative">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -454,26 +523,59 @@ export function ConversationList({
           </div>
         ) : (
           <div className="flex flex-col">
-            {filtered.map((conv) => {
-              // Computed here rather than inside the row so the memo
-              // below can skip rows whose countdown didn't change.
-              const openWindow = describeOpenWindow(conv);
-              return (
-                <ConversationItem
-                  key={conv.id}
-                  conversation={conv}
-                  isActive={conv.id === activeConversationId}
-                  onSelect={handleSelect}
-                  t={t}
-                  tStatus={tStatus}
-                  remainingCompact={openWindow?.compact ?? null}
-                  remainingLabel={openWindow?.label ?? null}
+            {groups.openWindow.length > 0 && (
+              <>
+                <GroupHeader
+                  label={t("groupOpenWindow")}
+                  count={groups.openWindow.length}
+                  dotClassName="bg-emerald-400"
                 />
-              );
-            })}
+                {groups.openWindow.map((conv) => renderRow(conv, false))}
+              </>
+            )}
+            {groups.needsTemplate.length > 0 && (
+              <>
+                <GroupHeader
+                  label={t("groupNeedsTemplate")}
+                  count={groups.needsTemplate.length}
+                  dotClassName="bg-amber-400"
+                />
+                {groups.needsTemplate.map((conv) => renderRow(conv, true))}
+              </>
+            )}
           </div>
         )}
       </ScrollArea>
+    </div>
+  );
+}
+
+/**
+ * Sticky label above each session-window group. Sticks so that once
+ * you've scrolled into the (usually much longer) template group, it's
+ * still obvious these are the ones you can't free-text.
+ */
+function GroupHeader({
+  label,
+  count,
+  dotClassName,
+}: {
+  label: string;
+  count: number;
+  dotClassName: string;
+}) {
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-1.5 border-b border-border/60 bg-card px-3 py-1.5">
+      <span
+        className={cn("size-1.5 shrink-0 rounded-full", dotClassName)}
+        aria-hidden
+      />
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </span>
+      <span className="text-[10px] font-medium text-muted-foreground/70">
+        {count}
+      </span>
     </div>
   );
 }
@@ -491,6 +593,13 @@ interface ConversationItemProps {
   remainingCompact: string | null;
   /** Full phrase for tooltip/screen readers, e.g. "3h remaining". */
   remainingLabel: string | null;
+  /** True when this row sits in the template-only group — its window
+   *  has lapsed, or the contact has never messaged in. */
+  needsTemplate: boolean;
+  /** Distinguishes the two template-only cases: a fresh lead who has
+   *  never replied isn't the same thing as a conversation that ran
+   *  out of time, even though WhatsApp restricts both identically. */
+  neverReplied: boolean;
 }
 
 // Memoized so the list's 60s tick doesn't re-render every row — only
@@ -503,6 +612,8 @@ const ConversationItem = memo(function ConversationItem({
   tStatus,
   remainingCompact,
   remainingLabel,
+  needsTemplate,
+  neverReplied,
 }: ConversationItemProps) {
   const contact = conversation.contact;
   const statusDisplay = getConversationStatus(conversation.status);
@@ -556,6 +667,22 @@ const ConversationItem = memo(function ConversationItem({
             {conversation.unread_count > 0 && (
               <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">
                 {conversation.unread_count}
+              </span>
+            )}
+            {needsTemplate && (
+              // Same bare-marker treatment as the countdown opposite it
+              // — it answers the same question ("what can I do here?"),
+              // just with the other answer.
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-amber-400"
+                title={
+                  neverReplied
+                    ? t("neverRepliedHint")
+                    : t("expiredHint")
+                }
+              >
+                <LayoutTemplate className="h-3 w-3" />
+                {neverReplied ? t("neverRepliedShort") : t("expiredShort")}
               </span>
             )}
             {remainingCompact && (

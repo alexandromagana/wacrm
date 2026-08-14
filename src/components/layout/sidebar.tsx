@@ -7,26 +7,15 @@ import gamaEnergiaIcon from "../../../public/gama-energia-icon.png";
 import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { useTotalUnread } from "@/hooks/use-total-unread";
-import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 import {
-  Bell,
-  Bot,
   Crown,
-  GitBranch,
-  LayoutDashboard,
   LogOut,
-  MessageSquare,
-  Radio,
   Settings,
   Shield,
   User,
   UserCog,
-  Users,
   UsersRound,
-  Workflow,
   X,
-  Zap,
 } from "lucide-react";
 import type { AccountRole } from "@/lib/auth/roles";
 
@@ -80,49 +69,38 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-interface NavItem {
-  href: string;
-  labelKey: string;
-  icon: typeof LayoutDashboard;
-  /**
-   * When true, the nav row renders a small "Beta" chip after the label.
-   * Purely informational — doesn't affect routing or access.
-   */
-  beta?: boolean;
-}
-
-const navItems: NavItem[] = [
-  { href: "/dashboard", labelKey: "dashboard", icon: LayoutDashboard },
-  { href: "/inbox", labelKey: "inbox", icon: MessageSquare },
-  { href: "/notifications", labelKey: "notifications", icon: Bell },
-  { href: "/contacts", labelKey: "contacts", icon: Users },
-  { href: "/pipelines", labelKey: "pipelines", icon: GitBranch },
-  { href: "/broadcasts", labelKey: "broadcasts", icon: Radio },
-  { href: "/automations", labelKey: "automations", icon: Zap },
-  { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
-  { href: "/agents", labelKey: "aiAgents", icon: Bot },
-];
-
-const bottomNavItems = [
-  { href: "/settings", labelKey: "settings", icon: Settings },
-];
+import {
+  bottomNavItems,
+  isNavItemActive,
+  navItems,
+} from "@/components/layout/nav-items";
 
 interface SidebarProps {
-  /** Controlled on mobile by the Header's hamburger button. Ignored on lg+. */
+  /** Controlled by the Header's hamburger button. */
   open?: boolean;
   onClose?: () => void;
-  /** Desktop-only collapse (hides the panel entirely to free up width). Ignored below lg. */
-  collapsed?: boolean;
+  /** Subscribed once in the dashboard shell and passed to both nav
+   *  surfaces — see the note there on the shared realtime channels. */
+  totalUnread: number;
+  unreadNotifications: number;
 }
 
 import { useTranslations } from "next-intl";
 
-export function Sidebar({ open = false, onClose, collapsed = false }: SidebarProps) {
+/**
+ * Mobile navigation drawer. Desktop uses `IconRailSidebar` instead, so
+ * this component is `lg:hidden` throughout — ten unlabelled icons is a
+ * worse phone experience than the labelled drawer.
+ */
+export function Sidebar({
+  open = false,
+  onClose,
+  totalUnread,
+  unreadNotifications,
+}: SidebarProps) {
   const t = useTranslations("Sidebar");
   const pathname = usePathname();
   const { profile, profileLoading, account, accountRole, signOut } = useAuth();
-  const totalUnread = useTotalUnread();
-  const unreadNotifications = useUnreadNotifications();
   // Only surface the account-name strip when it actually carries
   // information. A solo user's personal account is named after them
   // (the 017 signup trigger seeds it from `full_name`), so showing it
@@ -179,21 +157,14 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
 
       <aside
         className={cn(
-          // Mobile: fixed drawer that slides in from the left.
-          "fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-border bg-card",
+          // Fixed drawer that slides in from the left.
+          "fixed inset-y-0 left-0 z-40 flex h-full w-64 flex-col border-r border-border bg-card lg:hidden",
           "transition-transform duration-200 ease-out will-change-transform",
           open ? "translate-x-0" : "-translate-x-full",
-          // Desktop: static, in-flow — reset all the mobile framing and
-          // toggle width instead of translate, so collapsing actually
-          // gives the page back the space rather than just hiding an
-          // overlay.
-          "lg:static lg:z-0 lg:translate-x-0 lg:transition-[width] lg:duration-200 lg:ease-out lg:will-change-auto",
-          collapsed ? "lg:w-0 lg:overflow-hidden lg:border-r-0" : "lg:w-60",
         )}
         aria-label="Primary"
       >
-        {/* Logo row. On mobile we put a close button here; on desktop the
-            close button is hidden since the sidebar is always-visible. */}
+        {/* Logo row, with the drawer's close button. */}
         <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
           <Link href="/dashboard" className="flex items-center gap-2">
             {/* Brand mark — official Gama Energía sun/leaf logo. */}
@@ -211,7 +182,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
             type="button"
             onClick={onClose}
             aria-label={t("closeMenu")}
-            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground lg:hidden"
+            className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X className="h-5 w-5" />
           </button>
@@ -221,9 +192,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
         <nav className="flex-1 overflow-y-auto px-3 py-4">
           <ul className="flex flex-col gap-1">
             {navItems.map((item) => {
-              const isActive =
-                pathname === item.href ||
-                (item.href !== "/dashboard" && pathname.startsWith(item.href));
+              const isActive = isNavItemActive(item.href, pathname);
 
               const showUnreadDot =
                 item.href === "/inbox" && totalUnread > 0 && !isActive;
@@ -284,7 +253,7 @@ export function Sidebar({ open = false, onClose, collapsed = false }: SidebarPro
 
           <ul className="flex flex-col gap-1">
             {bottomNavItems.map((item) => {
-              const isActive = pathname.startsWith(item.href);
+              const isActive = isNavItemActive(item.href, pathname);
               return (
                 <li key={item.href}>
                   <Link

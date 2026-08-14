@@ -379,7 +379,20 @@ export interface Deal {
   value: number;
   currency?: string;
   notes?: string;
+  /**
+   * Superseded by `technical_visit_at` / `installation_date` in the UI
+   * (migration 040) but kept on the row so existing values survive.
+   * Nothing renders or edits it today.
+   */
   expected_close_date?: string;
+  /** Panels in the quoted/installed system. Migration 040. */
+  panel_count?: number | null;
+  /** Site-survey appointment — date AND time. Migration 040. */
+  technical_visit_at?: string | null;
+  /** Install day (date only — crews are booked by day). Migration 040. */
+  installation_date?: string | null;
+  /** Link to the quote sent to the customer. Migration 040. */
+  quote_url?: string | null;
   status?: DealStatus;
   created_at: string;
   updated_at?: string;

@@ -41,7 +41,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageBubble } from "./message-bubble";
+import {
+  MessageBubble,
+  type TemplateHeaderMedia,
+} from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import {
   MessageComposer,
@@ -206,6 +209,63 @@ export function MessageThread({
     }, 700);
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
+
+  // Header media for template messages sent before the send path began
+  // storing it on the message row. Keyed by template name, and only
+  // looked up for the templates this thread actually needs it for — a
+  // thread with no such message issues no query at all.
+  const [templateHeaders, setTemplateHeaders] = useState<
+    Record<string, TemplateHeaderMedia>
+  >({});
+
+  const legacyTemplateNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const msg of messages) {
+      if (
+        msg.content_type === "template" &&
+        !msg.media_url &&
+        msg.template_name
+      ) {
+        names.add(msg.template_name);
+      }
+    }
+    return [...names].sort();
+  }, [messages]);
+
+  // Joined into a string so the effect keys off the actual set of
+  // names, not the array identity `messages` rebuilds on every
+  // realtime tick.
+  const legacyTemplateKey = legacyTemplateNames.join(" ");
+
+  useEffect(() => {
+    if (!legacyTemplateKey) return;
+    const names = legacyTemplateKey.split(" ");
+    let cancelled = false;
+
+    void (async () => {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("message_templates")
+        .select("name, header_type, header_media_url")
+        .in("name", names);
+      if (cancelled || !data) return;
+
+      const map: Record<string, TemplateHeaderMedia> = {};
+      for (const row of data as MessageTemplate[]) {
+        if (row.header_type && row.header_type !== "text") {
+          map[row.name] = {
+            type: row.header_type,
+            url: row.header_media_url ?? null,
+          };
+        }
+      }
+      setTemplateHeaders(map);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [legacyTemplateKey]);
 
   // Profiles are bounded by RLS to rows the current user is allowed to
   // see — today that's just the current user, but the dropdown keeps the
@@ -1127,6 +1187,11 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
+                          templateHeader={
+                            msg.template_name
+                              ? templateHeaders[msg.template_name]
+                              : undefined
+                          }
                         />
                       </MessageActions>
                     );

@@ -29,10 +29,57 @@ import {
   Trash2,
   MessageSquare,
   DollarSign,
+  Link as LinkIcon,
   Loader2,
+  PanelsTopLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
+
+/**
+ * `technical_visit_at` is a TIMESTAMPTZ but the editor is an
+ * `<input type="datetime-local">`, which has no timezone and wants
+ * exactly "YYYY-MM-DDTHH:mm" in the viewer's local time. These two
+ * convert across that boundary; going through the raw ISO string
+ * instead would shift a 9am visit by the UTC offset.
+ */
+function toLocalInput(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+function fromLocalInput(local: string): string | null {
+  if (!local) return null;
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/**
+ * Kept permissive on purpose — the point is to catch a pasted
+ * "drive.google.com/..." with no scheme (which renders as a broken
+ * relative link) rather than to police what a quote link may be.
+ */
+function normalizeQuoteUrl(raw: string): { url: string | null; valid: boolean } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { url: null, valid: true };
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  try {
+    const parsed = new URL(withScheme);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { url: null, valid: false };
+    }
+    return { url: withScheme, valid: true };
+  } catch {
+    return { url: null, valid: false };
+  }
+}
 
 interface DealFormProps {
   open: boolean;
@@ -63,7 +110,14 @@ export function DealForm({
   const [contactId, setContactId] = useState("");
   const [stageId, setStageId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
-  const [expectedCloseDate, setExpectedCloseDate] = useState("");
+  const [panelCount, setPanelCount] = useState("");
+  // Bound to <input type="datetime-local">, which speaks local wall
+  // time with no zone. Converted to/from the column's TIMESTAMPTZ at
+  // the edges — see toLocalInput / fromLocalInput below.
+  const [technicalVisitAt, setTechnicalVisitAt] = useState("");
+  const [installationDate, setInstallationDate] = useState("");
+  const [quoteUrl, setQuoteUrl] = useState("");
+  const [quoteUrlError, setQuoteUrlError] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
 
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -92,7 +146,15 @@ export function DealForm({
       setContactId(deal.contact_id ?? "");
       setStageId(deal.stage_id);
       setAssignedTo(deal.assigned_to ?? "");
-      setExpectedCloseDate(deal.expected_close_date ?? "");
+      setPanelCount(
+        deal.panel_count === null || deal.panel_count === undefined
+          ? ""
+          : String(deal.panel_count),
+      );
+      setTechnicalVisitAt(toLocalInput(deal.technical_visit_at));
+      setInstallationDate(deal.installation_date ?? "");
+      setQuoteUrl(deal.quote_url ?? "");
+      setQuoteUrlError(null);
       setNotes(deal.notes ?? "");
     } else {
       setTitle("");
@@ -101,7 +163,11 @@ export function DealForm({
       setContactId("");
       setStageId(defaultStageId || stages[0]?.id || "");
       setAssignedTo("");
-      setExpectedCloseDate("");
+      setPanelCount("");
+      setTechnicalVisitAt("");
+      setInstallationDate("");
+      setQuoteUrl("");
+      setQuoteUrlError(null);
       setNotes("");
     }
   }, [open, deal, defaultStageId, stages, defaultCurrency]);
@@ -156,7 +222,17 @@ export function DealForm({
       toast.error(t("toastRequired"));
       return;
     }
+    const quote = normalizeQuoteUrl(quoteUrl);
+    if (!quote.valid) {
+      setQuoteUrlError(t("quoteUrlInvalid"));
+      toast.error(t("quoteUrlInvalid"));
+      return;
+    }
+    setQuoteUrlError(null);
+
     setSaving(true);
+
+    const parsedPanels = parseInt(panelCount, 10);
 
     const payload = {
       title: title.trim(),
@@ -167,7 +243,10 @@ export function DealForm({
       stage_id: stageId,
       assigned_to: assignedTo || null,
       notes: notes.trim() || null,
-      expected_close_date: expectedCloseDate || null,
+      panel_count: Number.isFinite(parsedPanels) ? parsedPanels : null,
+      technical_visit_at: fromLocalInput(technicalVisitAt),
+      installation_date: installationDate || null,
+      quote_url: quote.url,
     };
 
     if (deal) {
@@ -326,13 +405,70 @@ export function DealForm({
             </div>
 
             <div className="grid gap-2">
-              <Label className="text-muted-foreground">{t("expectedCloseDate")}</Label>
+              <Label className="text-muted-foreground">{t("panelCount")}</Label>
+              <div className="relative">
+                <PanelsTopLeft className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={panelCount}
+                  onChange={(e) => setPanelCount(e.target.value)}
+                  placeholder={t("panelCountPlaceholder")}
+                  className="border-border bg-muted pl-7 text-foreground"
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              {/* datetime-local, not date: a site survey is an
+                  appointment someone has to show up to. */}
+              <Label className="text-muted-foreground">
+                {t("technicalVisitAt")}
+              </Label>
               <Input
-                type="date"
-                value={expectedCloseDate}
-                onChange={(e) => setExpectedCloseDate(e.target.value)}
+                type="datetime-local"
+                value={technicalVisitAt}
+                onChange={(e) => setTechnicalVisitAt(e.target.value)}
                 className="border-border bg-muted text-foreground"
               />
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">
+                {t("installationDate")}
+              </Label>
+              <Input
+                type="date"
+                value={installationDate}
+                onChange={(e) => setInstallationDate(e.target.value)}
+                className="border-border bg-muted text-foreground"
+              />
+              <p className="text-xs text-muted-foreground">
+                {t("installationDateHint")}
+              </p>
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-muted-foreground">{t("quoteUrl")}</Label>
+              <div className="relative">
+                <LinkIcon className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="url"
+                  inputMode="url"
+                  value={quoteUrl}
+                  onChange={(e) => {
+                    setQuoteUrl(e.target.value);
+                    if (quoteUrlError) setQuoteUrlError(null);
+                  }}
+                  placeholder={t("quoteUrlPlaceholder")}
+                  aria-invalid={quoteUrlError ? true : undefined}
+                  className="border-border bg-muted pl-7 text-foreground"
+                />
+              </div>
+              {quoteUrlError ? (
+                <p className="text-xs text-destructive">{quoteUrlError}</p>
+              ) : null}
             </div>
 
             <div className="grid gap-2">

@@ -1,8 +1,9 @@
 "use client";
 
 import type { Deal, PipelineStage } from "@/types";
-import { Calendar, Check, X } from "lucide-react";
+import { Calendar, Check, PanelsTopLeft, Wrench, X } from "lucide-react";
 import { formatCurrency } from "@/lib/currency";
+import { nextDealMilestone } from "@/lib/deals/milestones";
 import { useTranslations } from "next-intl";
 
 interface DealCardProps {
@@ -12,8 +13,8 @@ interface DealCardProps {
   isOverlay?: boolean;
 }
 
-function formatDate(dateStr: string) {
-  return new Date(dateStr).toLocaleDateString("en-US", {
+function formatDate(date: Date) {
+  return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -30,6 +31,11 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
   const t = useTranslations("Pipelines.card");
   const contactLabel = deal.contact?.name || deal.contact?.phone || t("noContact");
   const assigneeLabel = deal.assignee?.full_name || null;
+
+  const next = nextDealMilestone(deal);
+  const milestone = next
+    ? { kind: next.kind, label: formatDate(next.date) }
+    : null;
 
   return (
     <button
@@ -80,17 +86,35 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <span className="truncate text-xs text-muted-foreground">{contactLabel}</span>
       </div>
 
-      <div className="mt-2 flex items-center justify-between">
+      <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-primary">
           {formatCurrency(deal.value, deal.currency)}
         </span>
-        {deal.expected_close_date && (
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Calendar className="h-3 w-3" />
-            {formatDate(deal.expected_close_date)}
+        {typeof deal.panel_count === "number" && (
+          <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground">
+            <PanelsTopLeft className="h-3 w-3" />
+            {t("panels", { count: deal.panel_count })}
           </span>
         )}
       </div>
+
+      {/* The next scheduled milestone, not a close date — an install
+          already booked is the more useful thing to see at a glance,
+          so it wins over an upcoming survey when both are set. */}
+      {milestone && (
+        <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+          {milestone.kind === "installation" ? (
+            <Wrench className="h-3 w-3 shrink-0" />
+          ) : (
+            <Calendar className="h-3 w-3 shrink-0" />
+          )}
+          <span className="truncate">
+            {t(milestone.kind === "installation" ? "installOn" : "visitOn", {
+              date: milestone.label,
+            })}
+          </span>
+        </div>
+      )}
 
       {assigneeLabel && (
         <div className="mt-2 flex items-center justify-end">

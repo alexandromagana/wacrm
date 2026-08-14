@@ -462,6 +462,32 @@ export async function sendMessageToConversation(
   const interactiveBody =
     messageType === 'interactive' ? interactivePayload!.body : null;
 
+  // A media-header template ships an image/video/document to the
+  // recipient, but that URL lives on the template row, not on the
+  // send — so without this the stored message had no media_url and the
+  // thread rendered the caption alone, showing the agent less than
+  // what the customer received. Resolved the same way the send builder
+  // resolves it (explicit override first, template row second) so the
+  // record matches what actually went out. `header_handle` is
+  // deliberately not a fallback: an opaque Resumable-Upload handle
+  // isn't a URL and can't be rendered.
+  // `templateMessageParams` is typed `unknown` because it arrives
+  // straight off a request body, so the override is read defensively
+  // rather than cast.
+  const headerMediaOverride =
+    typeof templateMessageParams === 'object' && templateMessageParams !== null
+      ? (templateMessageParams as { headerMediaUrl?: unknown }).headerMediaUrl
+      : undefined;
+
+  const templateHeaderMediaUrl =
+    messageType === 'template' &&
+    templateRow?.header_type &&
+    templateRow.header_type !== 'text'
+      ? (typeof headerMediaOverride === 'string' && headerMediaOverride
+          ? headerMediaOverride
+          : templateRow.header_media_url) || null
+      : null;
+
   const { data: messageRecord, error: msgError } = await db
     .from('messages')
     .insert({
@@ -469,7 +495,7 @@ export async function sendMessageToConversation(
       sender_type: 'agent',
       content_type: messageType,
       content_text: interactiveBody ?? contentText ?? null,
-      media_url: mediaUrl || null,
+      media_url: mediaUrl || templateHeaderMediaUrl,
       template_name: templateName || null,
       interactive_payload:
         messageType === 'interactive' ? interactivePayload : null,

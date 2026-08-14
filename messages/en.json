@@ -145,7 +145,13 @@
       "clearAll": "Clear all",
       "noConversations": "No conversations found",
       "noMessagesYet": "No messages yet",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "groupOpenWindow": "Can reply now",
+      "groupNeedsTemplate": "Template required",
+      "expiredShort": "Expired",
+      "expiredHint": "The 24h reply window has closed — only an approved template will send.",
+      "neverRepliedShort": "New",
+      "neverRepliedHint": "This contact has never messaged in — only an approved template will send."
     },
     "messageThread": {
       "backToConversations": "Back to conversations",
@@ -519,7 +525,10 @@
     "card": {
       "noContact": "No contact",
       "won": "Won",
-      "lost": "Lost"
+      "lost": "Lost",
+      "panels": "{count, plural, =1 {# panel} other {# panels}}",
+      "visitOn": "Visit {date}",
+      "installOn": "Install {date}"
     },
     "form": {
       "editDeal": "Edit Deal",
@@ -561,7 +570,15 @@
       "toastMarkedLost": "Marked as lost",
       "toastReopened": "Deal reopened",
       "toastFailedDelete": "Failed to delete deal",
-      "toastDeleted": "Deal deleted"
+      "toastDeleted": "Deal deleted",
+      "panelCount": "Panels",
+      "panelCountPlaceholder": "e.g. 12",
+      "technicalVisitAt": "Technical visit",
+      "installationDate": "Installation date",
+      "installationDateHint": "Track CFE paperwork from this date to energise the system.",
+      "quoteUrl": "Quote link",
+      "quoteUrlPlaceholder": "https://…",
+      "quoteUrlInvalid": "Enter a valid http(s) link."
     },
     "settings": {
       "managePipeline": "Manage Pipeline",
@@ -1739,5 +1756,28 @@
       "loadFailed": "Couldn't load your notification settings.",
       "saveFailed": "Couldn't save your notification settings."
     }
+  },
+  "DealProgress": {
+    "potentialValue": "Potential value",
+    "checkValue": "Value set",
+    "checkOwner": "Owner assigned",
+    "checkEmail": "Email on file",
+    "checkNotes": "Notes captured",
+    "panels": "Panels",
+    "visit": "Technical visit",
+    "installation": "Installation",
+    "openQuote": "Open quote",
+    "checkPanels": "Panel count set",
+    "checkQuote": "Quote link added",
+    "editDeal": "Edit deal"
+  },
+  "NextStep": {
+    "title": "Next step",
+    "empty": "No visit or install scheduled yet.",
+    "dueToday": "Due today",
+    "dueIn": "In {days, plural, =1 {# day} other {# days}}",
+    "overdue": "{days, plural, =1 {# day} other {# days}} overdue",
+    "visit": "Technical visit",
+    "installation": "Installation"
   }
 }

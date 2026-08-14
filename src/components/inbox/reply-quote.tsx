@@ -15,17 +15,18 @@ interface ReplyQuoteProps {
   /** Present → renders the composer-chip variant with an X button. Absent →
    *  renders the embedded-in-bubble variant. */
   onDismiss?: () => void;
-  /** True when embedded inside an outbound (primary-filled) bubble, so the
-   *  quote must read against the primary surface rather than the neutral
-   *  foreground — otherwise it goes low-contrast in light mode. */
-  onPrimary?: boolean;
+  /** True when embedded inside an outbound bubble, so the quote reads
+   *  against that bubble's fill rather than the neutral foreground.
+   *  The outbound fill inverts between light and dark mode, so a
+   *  neutral ink would go unreadable in one of them. */
+  onOutbound?: boolean;
 }
 
 export function ReplyQuote({
   authorLabel,
   preview,
   onDismiss,
-  onPrimary = false,
+  onOutbound = false,
 }: ReplyQuoteProps) {
   const t = useTranslations("Inbox.replyQuote");
   const isChip = !!onDismiss;
@@ -33,11 +34,11 @@ export function ReplyQuote({
     <div
       className={cn(
         "flex items-start gap-2 border-l-2 px-2 py-1",
-        onPrimary ? "border-primary-foreground/50" : "border-primary",
+        onOutbound ? "border-bubble-out-foreground/50" : "border-primary",
         isChip
           ? "rounded-md bg-muted/80"
-          : onPrimary
-            ? "mb-1.5 rounded-md bg-primary-foreground/15"
+          : onOutbound
+            ? "mb-1.5 rounded-md bg-bubble-out-foreground/15"
             : "mb-1.5 rounded-md bg-background/20",
       )}
     >
@@ -45,7 +46,7 @@ export function ReplyQuote({
         <div
           className={cn(
             "truncate text-[11px] font-medium",
-            onPrimary ? "text-primary-foreground" : "text-primary",
+            onOutbound ? "text-bubble-out-foreground" : "text-primary",
           )}
         >
           {authorLabel}
@@ -57,7 +58,12 @@ export function ReplyQuote({
          *  layout wider, shoving the contact sidebar off-screen.
          *  `break-words` also wraps long URLs that have no whitespace
          *  to break on. Issue #165. */}
-        <div className="whitespace-pre-wrap break-words text-xs text-foreground/80">
+        <div
+          className={cn(
+            "whitespace-pre-wrap break-words text-xs",
+            onOutbound ? "text-bubble-out-foreground/80" : "text-foreground/80",
+          )}
+        >
           {preview}
         </div>
       </div>
