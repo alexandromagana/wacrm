@@ -262,14 +262,12 @@ export function ConversationList({
       else needsTemplate.push(conv);
     }
 
-    // Oldest inbound message first — that's the window closing soonest,
-    // which is the one worth answering before it lapses.
-    openWindow.sort(
-      (a, b) =>
-        new Date(a.last_customer_message_at ?? 0).getTime() -
-        new Date(b.last_customer_message_at ?? 0).getTime(),
-    );
-
+    // Both groups keep the query's order: newest message first. This
+    // used to sort the open-window group by the window closing soonest,
+    // which buried a conversation that just came in at the bottom of the
+    // list — surprising when you glance at the inbox after a new reply.
+    // Urgency isn't lost: every row still carries its countdown badge,
+    // and the "Pending" tile counts what's waiting.
     return { openWindow, needsTemplate };
   }, [filtered, nowTick]);
 
