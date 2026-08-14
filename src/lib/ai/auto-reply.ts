@@ -108,6 +108,45 @@ async function notifyAssistantEvent(
   }
 }
 
+/**
+ * Pause the bot on a thread and route it to a human — the shared tail of
+ * every handoff path (model-triggered escalation, cap exhaustion, lost
+ * claim race). Writes the internal note, disables auto-reply so it's
+ * sticky, assigns the configured handoff agent (never stomping an
+ * existing human assignment), and fires the `handoff` push so whoever
+ * picks it up gets one clear notification instead of a generic
+ * "unanswered" one.
+ */
+async function performHandoff(
+  db: ReturnType<typeof supabaseAdmin>,
+  args: {
+    accountId: string
+    conversationId: string
+    contactId: string
+    handoffAgentId: string | null | undefined
+    alreadyAssigned: string | null | undefined
+    summary: string
+  },
+): Promise<void> {
+  const { accountId, conversationId, contactId, handoffAgentId, alreadyAssigned, summary } = args
+  const update: Record<string, unknown> = {
+    ai_autoreply_disabled: true,
+    ai_handoff_summary: summary,
+  }
+  if (handoffAgentId && !alreadyAssigned) {
+    update.assigned_agent_id = handoffAgentId
+  }
+  await db.from('conversations').update(update).eq('id', conversationId)
+  await notifyAssistantEvent(
+    db,
+    accountId,
+    conversationId,
+    contactId,
+    'handoff',
+    'El asistente te pasó una conversación',
+  )
+}
+
 export async function dispatchInboundToAiReply(
   args: DispatchArgs,
 ): Promise<void> {
@@ -183,8 +222,25 @@ export async function dispatchInboundToAiReply(
 
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
     // Cheap early-out; the authoritative cap check is the atomic claim
-    // below (this read can race a concurrent inbound).
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) return
+    // below (this read can race a concurrent inbound). The bot has run
+    // out of replies for this thread — hand it off rather than leaving
+    // the customer's message sitting unflagged.
+    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+      const messages = await buildConversationContext(db, conversationId)
+      await performHandoff(db, {
+        accountId,
+        conversationId,
+        contactId,
+        handoffAgentId: config.handoffAgentId,
+        alreadyAssigned: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+        }),
+      })
+      assistantHandled = true
+      return
+    }
 
     const messages = await buildConversationContext(db, conversationId)
     // Image-only turns have no text rows yet — the receipt note below
@@ -326,20 +382,17 @@ export async function dispatchInboundToAiReply(
       // and (c) leave a short internal note so whoever picks it up has
       // context. Assigning fires the `on_conversation_assigned` trigger,
       // which notifies the agent.
-      const summary = buildHandoffSummary({
-        messages,
-        replyCount: conv.ai_reply_count ?? 0,
+      await performHandoff(db, {
+        accountId,
+        conversationId,
+        contactId,
+        handoffAgentId: config.handoffAgentId,
+        alreadyAssigned: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+        }),
       })
-      const update: Record<string, unknown> = {
-        ai_autoreply_disabled: true,
-        ai_handoff_summary: summary,
-      }
-      // Only set the assignee when a target is configured AND the thread
-      // isn't already owned — never stomp an existing human assignment.
-      if (config.handoffAgentId && !conv.assigned_agent_id) {
-        update.assigned_agent_id = config.handoffAgentId
-      }
-      await db.from('conversations').update(update).eq('id', conversationId)
       // If the model wrote a farewell alongside the sentinel ("a teammate
       // will continue this conversation"), send it so the customer isn't
       // left hanging in silence until a human picks the thread up. The
@@ -357,17 +410,10 @@ export async function dispatchInboundToAiReply(
         })
       }
 
-      // The handoff has its own notification, so don't also report this
-      // thread as unanswered — that would be two pushes for one event.
+      // performHandoff already sent the 'handoff' push, so don't also
+      // report this thread as unanswered — that would be two pushes for
+      // one event.
       assistantHandled = true
-      await notifyAssistantEvent(
-        db,
-        accountId,
-        conversationId,
-        contactId,
-        'handoff',
-        'El asistente te pasó una conversación',
-      )
       return
     }
 
@@ -391,7 +437,25 @@ export async function dispatchInboundToAiReply(
       console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
       return
     }
-    if (claimed !== true) return // lost the per-conversation cap race
+    if (claimed !== true) {
+      // Lost the per-conversation cap race — a concurrent inbound claimed
+      // the last slot first. The reply we generated is discarded unsent,
+      // and the thread is now at the same "cap exhausted" state as the
+      // early-out above, so it gets the same handoff treatment.
+      await performHandoff(db, {
+        accountId,
+        conversationId,
+        contactId,
+        handoffAgentId: config.handoffAgentId,
+        alreadyAssigned: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+        }),
+      })
+      assistantHandled = true
+      return
+    }
 
     await engineSendText({
       accountId,
