@@ -176,7 +176,14 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   // the contact record and the notes list the sidebar already holds.
   const extraChecks: ReadinessCheck[] = [
     { label: tDeal("checkEmail"), met: Boolean(contact.email) },
-    { label: tDeal("checkNotes"), met: notes.length > 0 },
+    {
+      label: tDeal("checkNotes"),
+      // Two separate places write a note: the deal editor's own
+      // `notes` field and the contact-notes list below. Counting only
+      // the latter meant typing into the editor saved fine and still
+      // left this row showing a red X.
+      met: notes.length > 0 || Boolean(headlineDeal?.notes?.trim()),
+    },
   ];
 
   return (

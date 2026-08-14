@@ -1769,7 +1769,8 @@
     "openQuote": "Open quote",
     "checkPanels": "Panel count set",
     "checkQuote": "Quote link added",
-    "editDeal": "Edit deal"
+    "editDeal": "Edit deal",
+    "dealNotes": "Deal notes"
   },
   "NextStep": {
     "title": "Next step",

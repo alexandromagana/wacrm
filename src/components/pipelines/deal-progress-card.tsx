@@ -8,6 +8,7 @@ import {
   ExternalLink,
   FileText,
   Pencil,
+  StickyNote,
   Wrench,
   X,
 } from "lucide-react";
@@ -211,6 +212,25 @@ export function DealProgressCard({
             </li>
           ))}
         </ul>
+      )}
+
+      {/* The deal's own notes field, which the editor writes to. It
+          used to be invisible here, so anyone who typed into "Notes"
+          in the editor saved something they could then never see —
+          the contact-notes list further down the panel is a separate
+          table and doesn't show it. */}
+      {deal.notes?.trim() && (
+        <div className="mt-3 flex items-start gap-1.5">
+          <StickyNote className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
+          <div className="min-w-0">
+            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              {t("dealNotes")}
+            </p>
+            <p className="whitespace-pre-wrap break-words text-xs text-foreground">
+              {deal.notes.trim()}
+            </p>
+          </div>
+        </div>
       )}
 
       {deal.quote_url && (
