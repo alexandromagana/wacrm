@@ -5,7 +5,7 @@ import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt, buildDateTimeNote } from './defaults'
 import { buildHandoffSummary } from './handoff'
-import { applyLeadStatusTag, applyQuoteSentTag } from './lead-status'
+import { applyLeadStatusTag } from './lead-status'
 import {
   extractReceipt,
   formatReceiptNote,
@@ -330,7 +330,7 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, leadStatus, quoteSent, usage } = await generateReply({
+    const { text, handoff, leadStatus, usage } = await generateReply({
       config,
       systemPrompt,
       messages,
@@ -349,16 +349,14 @@ export async function dispatchInboundToAiReply(
       })
     }
 
-    // The bot just delivered a price estimate ([COTIZACION_ENVIADA]
-    // marker) → tag "Quote sent", which starts the tag-driven follow-up
-    // sequence. Same fire-and-forget contract as lead status.
-    if (quoteSent) {
-      void applyQuoteSentTag(db, {
-        accountId,
-        userId: configOwnerUserId,
-        contactId,
-      })
-    }
+    // NOTE: the "Quote sent" tag is deliberately NOT applied here. The
+    // [COTIZACION_ENVIADA] marker only means the bot said a price out
+    // loud, which it does repeatedly across a conversation — tagging on
+    // it re-applied the tag seconds after the "clear tag on reply"
+    // automation removed it, so the 48h follow-up never had a stable
+    // starting point. The tag now belongs to `sendQuoteProposal`, which
+    // fires it once the PDF is genuinely delivered. `generateReply`
+    // still strips the marker from the customer-facing text.
 
     // Record token spend on the account's BYO key. Fire-and-forget so it
     // never adds latency to the customer-facing send: `logAiUsage`

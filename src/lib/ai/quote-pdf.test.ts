@@ -7,6 +7,7 @@ const h = vi.hoisted(() => ({
   uploadServerMedia: vi.fn(),
   engineSendMedia: vi.fn(),
   upsertField: vi.fn(),
+  applyQuoteSentTag: vi.fn(),
 }))
 
 vi.mock('@/lib/quotes/render', () => ({ renderQuotePdf: h.renderQuotePdf }))
@@ -15,16 +16,50 @@ vi.mock('@/lib/storage/upload-server', () => ({
 }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendMedia: h.engineSendMedia }))
 vi.mock('./receipt', () => ({ upsertField: h.upsertField }))
+vi.mock('./lead-status', () => ({ applyQuoteSentTag: h.applyQuoteSentTag }))
 
 import { sendQuoteProposal, PROPUESTA_FIELD_NAME } from './quote-pdf'
 
+interface Seed {
+  name?: string | null
+  sentPanels?: string
+  /** The contact's newest open deal; null means they have none. */
+  openDeal?: { id: string } | null
+}
+
 /**
- * Fake covering exactly what the module reads: the contact's name, and
- * the custom field holding the last delivered panel count.
+ * Fake covering what the module touches: the contact's name, the custom
+ * field holding the last delivered panel count, and the contact's open
+ * deal (looked up, then updated with the quoted figures).
+ *
+ * `dealUpdates` collects the update payloads so a test can assert what
+ * landed on the deal without a real database.
  */
-function fakeDb(seed: { name?: string | null; sentPanels?: string } = {}) {
+function fakeDb(seed: Seed = {}) {
+  const dealUpdates: Record<string, unknown>[] = []
+  const openDeal = seed.openDeal === undefined ? { id: 'deal-1' } : seed.openDeal
+
   const db = {
     from: (table: string) => {
+      if (table === 'deals') {
+        // Thenable: the update path is awaited on the trailing .eq(),
+        // while the select path resolves through maybeSingle().
+        const chain = {
+          select: () => chain,
+          update: (payload: Record<string, unknown>) => {
+            dealUpdates.push(payload)
+            return chain
+          },
+          eq: () => chain,
+          order: () => chain,
+          limit: () => chain,
+          maybeSingle: () => Promise.resolve({ data: openDeal, error: null }),
+          then: (resolve: (v: { error: null }) => void) =>
+            resolve({ error: null }),
+        }
+        return chain
+      }
+
       const chain = {
         select: () => chain,
         eq: () => chain,
@@ -55,7 +90,8 @@ function fakeDb(seed: { name?: string | null; sentPanels?: string } = {}) {
       return chain
     },
   } as unknown as SupabaseClient
-  return db
+
+  return Object.assign(db, { dealUpdates })
 }
 
 /** Osvaldo's receipt: 2,135 kWh -> 14 panels, $10,237.30 a bimester. */
@@ -98,6 +134,7 @@ beforeEach(() => {
   })
   h.engineSendMedia.mockResolvedValue({ whatsapp_message_id: 'wamid.1' })
   h.upsertField.mockResolvedValue(undefined)
+  h.applyQuoteSentTag.mockResolvedValue(undefined)
 })
 
 describe('sendQuoteProposal — the happy path', () => {
@@ -204,11 +241,60 @@ describe('sendQuoteProposal — the happy path', () => {
   })
 })
 
+describe('sendQuoteProposal — what the sale sees afterwards', () => {
+  it('carries the quoted figures onto the open deal', async () => {
+    // The board used to show a $0 card next to a $127,000 proposal,
+    // because nothing wrote the numbers back out of the PDF.
+    const db = fakeDb()
+    await sendQuoteProposal(db, { ...ARGS, extraction: reading() })
+
+    expect(db.dealUpdates).toEqual([
+      {
+        value: 127_000,
+        panel_count: 14,
+        quote_url: 'https://storage.test/account-acct-1/1-propuesta.pdf',
+      },
+    ])
+  })
+
+  it('tags "Quote sent" once the document is genuinely delivered', async () => {
+    await sendQuoteProposal(fakeDb(), { ...ARGS, extraction: reading() })
+    expect(h.applyQuoteSentTag).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ accountId: 'acct-1', contactId: 'contact-1' }),
+    )
+  })
+
+  it('fills the deal BEFORE tagging, so the moved card is already correct', async () => {
+    // Tagging fires the "Quote sent -> Proposal Sent" automation, which
+    // moves this same deal. Writing the figures first means the card
+    // never shows up in the new stage with stale numbers on it.
+    const db = fakeDb()
+    await sendQuoteProposal(db, { ...ARGS, extraction: reading() })
+    expect(db.dealUpdates).toHaveLength(1)
+    expect(h.applyQuoteSentTag).toHaveBeenCalled()
+  })
+
+  it('still sends and tags when the contact has no open deal', async () => {
+    // A contact quoted before the pipeline automation existed has
+    // nothing to update — that is a no-op, not a failed quote.
+    const db = fakeDb({ openDeal: null })
+    const out = await sendQuoteProposal(db, { ...ARGS, extraction: reading() })
+
+    expect(out).toMatchObject({ kind: 'sent', panels: 14 })
+    expect(db.dealUpdates).toEqual([])
+    expect(h.applyQuoteSentTag).toHaveBeenCalled()
+  })
+})
+
 describe('sendQuoteProposal — when it must not send', () => {
   const expectNothingSent = () => {
     expect(h.renderQuotePdf).not.toHaveBeenCalled()
     expect(h.engineSendMedia).not.toHaveBeenCalled()
     expect(h.upsertField).not.toHaveBeenCalled()
+    // No document, no tag — otherwise the 48h follow-up would start
+    // counting against a proposal the customer never received.
+    expect(h.applyQuoteSentTag).not.toHaveBeenCalled()
   }
 
   it('skips an unreadable consumption', async () => {
@@ -333,5 +419,7 @@ describe('sendQuoteProposal — failure is never the conversation’s problem', 
     })
     expect(out).toMatchObject({ kind: 'failed' })
     expect(h.upsertField).not.toHaveBeenCalled()
+    // Nothing reached the customer, so the follow-up clock must not start.
+    expect(h.applyQuoteSentTag).not.toHaveBeenCalled()
   })
 })

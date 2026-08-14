@@ -361,7 +361,12 @@ describe('dispatchInboundToAiReply — lead status', () => {
     expect(h.applyLeadStatusTag).not.toHaveBeenCalled()
   })
 
-  it('tags "Quote sent" when the model marked the turn as a quote', async () => {
+  it('does NOT tag "Quote sent" when the model merely quoted a price in chat', async () => {
+    // The marker means "the bot said a number out loud", which happens
+    // repeatedly in one conversation. Tagging on it re-applied the tag
+    // seconds after the clear-on-reply automation removed it, so the
+    // 48h follow-up never had a stable start. The tag now belongs to
+    // `sendQuoteProposal`, once the PDF actually goes out.
     h.generateReply.mockResolvedValue({
       text: 'Necesitarías 12 paneles, aprox $106,900.',
       handoff: false,
@@ -369,10 +374,7 @@ describe('dispatchInboundToAiReply — lead status', () => {
       quoteSent: true,
     })
     await dispatchInboundToAiReply(ARGS)
-    expect(h.applyQuoteSentTag).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ accountId: 'acct-1', contactId: 'contact-1' }),
-    )
+    expect(h.applyQuoteSentTag).not.toHaveBeenCalled()
     // The customer still gets the clean reply, marker-free.
     expect(h.engineSendText).toHaveBeenCalledWith(
       expect.objectContaining({

@@ -5,6 +5,7 @@ import { buildFolio, buildQuoteFieldValues } from '@/lib/quotes/fields'
 import { renderQuotePdf } from '@/lib/quotes/render'
 import { uploadServerMedia } from '@/lib/storage/upload-server'
 import { engineSendMedia } from '@/lib/flows/meta-send'
+import { applyQuoteSentTag } from './lead-status'
 import { upsertField, type ReceiptExtraction } from './receipt'
 
 // ============================================================
@@ -68,6 +69,63 @@ async function readSentPanels(
 
   const parsed = Number(value?.value)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Carry the numbers we just put on the PDF onto the contact's deal, so
+ * the board shows the real figure instead of a $0 card that a human has
+ * to fill in by hand from the document.
+ *
+ * The contact's newest open deal wins — the same rule the `move_deal`
+ * automation step uses, so the deal this writes to is the deal the
+ * "Quote sent → Proposal Sent" automation subsequently moves.
+ *
+ * No open deal is a soft no-op, not a failure: a contact quoted before
+ * the pipeline automation existed simply has nothing to update, and a
+ * deal is NOT invented here — picking a pipeline and stage is a
+ * configuration decision that belongs to the automation, not to the
+ * quoting path.
+ *
+ * `currency` is deliberately left alone: the price table is MXN and the
+ * account default is MXN, so the existing value already agrees. Never
+ * throws — a bookkeeping miss must not cost the customer their PDF.
+ */
+async function recordQuoteOnDeal(
+  db: SupabaseClient,
+  args: {
+    accountId: string
+    contactId: string
+    valueMxn: number
+    panels: number
+    quoteUrl: string
+  },
+): Promise<void> {
+  const { accountId, contactId, valueMxn, panels, quoteUrl } = args
+  try {
+    const { data: deal } = await db
+      .from('deals')
+      .select('id')
+      .eq('account_id', accountId)
+      .eq('contact_id', contactId)
+      .eq('status', 'open')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    if (!deal) return
+
+    const { error } = await db
+      .from('deals')
+      .update({
+        value: valueMxn,
+        panel_count: panels,
+        quote_url: quoteUrl,
+      })
+      .eq('id', deal.id)
+      .eq('account_id', accountId)
+    if (error) throw error
+  } catch (err) {
+    console.error('[ai quote-pdf] failed to record quote on deal:', err)
+  }
 }
 
 /**
@@ -192,6 +250,25 @@ export async function sendQuoteProposal(
       value: String(quote.tier.panels),
       overwrite: true,
     })
+
+    // Deal first, tag second, and the order is load-bearing: applying
+    // the tag fires the "Quote sent → Proposal Sent" automation, which
+    // moves this very deal. Writing the figures beforehand means the
+    // card is already correct the moment it lands in the new stage.
+    await recordQuoteOnDeal(db, {
+      accountId,
+      contactId,
+      valueMxn: quote.tier.priceMxn,
+      panels: quote.tier.panels,
+      quoteUrl: publicUrl,
+    })
+
+    // "Quote sent" belongs to the document actually going out, not to
+    // the bot mentioning a price in chat — that distinction is what
+    // makes the 48h follow-up sequence trustworthy. The `same_tier`
+    // guard above already returned for a re-send of an identical
+    // proposal, so this runs once per genuinely new quote.
+    await applyQuoteSentTag(db, { accountId, userId, contactId })
 
     return { kind: 'sent', panels: quote.tier.panels, folio }
   } catch (err) {
