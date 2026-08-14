@@ -48,6 +48,35 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
+/**
+ * Ask an open tab to route itself, and resolve true only once it
+ * confirms. `client.navigate()` on a tab that already has the app open
+ * is a full document load: it throws away a half-typed reply, resets
+ * scroll, and flashes the whole UI — for what is really just a change
+ * of route. So the page is given the chance to handle it in-app first.
+ *
+ * The ack matters because the page may be an older build with no
+ * listener (a new worker activates before open tabs reload). Without
+ * one, the click would silently do nothing at all — strictly worse
+ * than the reload it replaced.
+ */
+function requestClientNavigate(client, url) {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => resolve(false), 400);
+    channel.port1.onmessage = (e) => {
+      clearTimeout(timer);
+      resolve(e.data === 'ok');
+    };
+    try {
+      client.postMessage({ type: 'sw-navigate', url }, [channel.port2]);
+    } catch {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = (event.notification.data && event.notification.data.url) || '/inbox';
@@ -65,7 +94,8 @@ self.addEventListener('notificationclick', (event) => {
       for (const client of windows) {
         if (new URL(client.url).origin === self.location.origin) {
           await client.focus();
-          if ('navigate' in client) await client.navigate(url);
+          const handled = await requestClientNavigate(client, url);
+          if (!handled && 'navigate' in client) await client.navigate(url);
           return;
         }
       }

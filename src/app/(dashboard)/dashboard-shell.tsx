@@ -41,6 +41,36 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
     }
   }, [user, loading, router]);
 
+  /**
+   * Route in-app when a push notification is clicked.
+   *
+   * The service worker would otherwise call `client.navigate()` on this
+   * already-open tab, which is a full document load — it discards a
+   * half-typed reply and reloads the whole app just to change route.
+   * Acking on the port tells the worker we handled it, so it skips
+   * that fallback; staying silent (older build, no listener) lets the
+   * reload still happen rather than the click doing nothing.
+   */
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type !== "sw-navigate") return;
+      const url = event.data.url;
+      if (typeof url !== "string") return;
+      // Same-origin, app-relative only — never follow a path handed to
+      // us that could bounce the user off the app.
+      if (!url.startsWith("/") || url.startsWith("//")) return;
+      router.push(url);
+      event.ports?.[0]?.postMessage("ok");
+    };
+
+    navigator.serviceWorker.addEventListener("message", onMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", onMessage);
+    };
+  }, [router]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background">
