@@ -474,6 +474,80 @@ describe("triggerMatches — tag_added", () => {
   });
 });
 
+describe("triggerMatches — deal_stage_changed", () => {
+  function automation(stage_id?: string): Automation {
+    return {
+      id: "a3",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: "visita tecnica agendada",
+      trigger_type: "deal_stage_changed",
+      trigger_config: stage_id ? { stage_id } : {},
+      is_active: true,
+      execution_count: 0,
+      created_at: "",
+      updated_at: "",
+    };
+  }
+
+  it("matches when the deal lands in the configured stage", () => {
+    expect(
+      triggerMatches(automation("stage-visit"), {
+        deal_id: "d1",
+        stage_id: "stage-visit",
+        from_stage_id: "stage-proposal",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not match a move into a different stage", () => {
+    expect(
+      triggerMatches(automation("stage-visit"), {
+        deal_id: "d1",
+        stage_id: "stage-signed",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not match when the dispatch carries no stage", () => {
+    expect(triggerMatches(automation("stage-visit"), { deal_id: "d1" })).toBe(false);
+  });
+
+  it("acts as a catch-all when no stage is configured", () => {
+    // Mirrors tag_added: an automation saved without a stage watches the
+    // whole board.
+    expect(
+      triggerMatches(automation(), { deal_id: "d1", stage_id: "stage-any" }),
+    ).toBe(true);
+  });
+});
+
+describe("triggerMatches — deal_won / deal_lost", () => {
+  function automation(trigger_type: "deal_won" | "deal_lost"): Automation {
+    return {
+      id: "a4",
+      account_id: ACCOUNT,
+      user_id: "u1",
+      name: trigger_type,
+      trigger_config: {},
+      trigger_type,
+      is_active: true,
+      execution_count: 0,
+      created_at: "",
+      updated_at: "",
+    };
+  }
+
+  it("fires on the dispatch it was named for — the route decides which", () => {
+    // Won and lost are separate trigger types rather than one
+    // status-changed trigger with a config, so there is nothing left to
+    // match on here: PATCH /api/deals/[dealId] only dispatches deal_won
+    // when the status actually became "won".
+    expect(triggerMatches(automation("deal_won"), { deal_id: "d1" })).toBe(true);
+    expect(triggerMatches(automation("deal_lost"), { deal_id: "d1" })).toBe(true);
+  });
+});
+
 describe("interpolate", () => {
   // Only the fields interpolate reads; the rest of ExecuteArgs is
   // irrelevant to placeholder expansion.

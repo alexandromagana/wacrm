@@ -102,7 +102,7 @@ export function DealForm({
 }: DealFormProps) {
   const t = useTranslations("Pipelines.form");
   const supabase = createClient();
-  const { accountId, defaultCurrency } = useAuth();
+  const { defaultCurrency } = useAuth();
 
   const [title, setTitle] = useState("");
   const [value, setValue] = useState("");
@@ -249,39 +249,24 @@ export function DealForm({
       quote_url: quote.url,
     };
 
-    if (deal) {
-      const { error } = await supabase
-        .from("deals")
-        .update(payload)
-        .eq("id", deal.id);
-      if (error) {
-        toast.error(t("toastFailedSave"));
-        setSaving(false);
-        return;
-      }
-    } else {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const user = session?.user;
-      if (!user) {
-        toast.error(t("toastNotSignedIn"));
-        setSaving(false);
-        return;
-      }
-      if (!accountId) {
-        toast.error(t("toastNotLinked"));
-        setSaving(false);
-        return;
-      }
-      const { error } = await supabase
-        .from("deals")
-        .insert({ ...payload, user_id: user.id, account_id: accountId, status: "open" });
-      if (error) {
-        toast.error(t("toastFailedCreate"));
-        setSaving(false);
-        return;
-      }
+    // Both paths go through the API rather than straight to Supabase:
+    // the server owns account_id / user_id / status, and the PATCH hop
+    // is what lets a stage change fire its automation trigger.
+    const res = deal
+      ? await fetch(`/api/deals/${deal.id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+      : await fetch("/api/deals", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+    if (!res.ok) {
+      toast.error(deal ? t("toastFailedSave") : t("toastFailedCreate"));
+      setSaving(false);
+      return;
     }
 
     setSaving(false);
@@ -293,12 +278,14 @@ export function DealForm({
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
-    const { error } = await supabase
-      .from("deals")
-      .update({ status })
-      .eq("id", deal.id);
+    // Won / lost fire their own triggers server-side.
+    const res = await fetch(`/api/deals/${deal.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
     setStatusAction(null);
-    if (error) {
+    if (!res.ok) {
       toast.error(t("toastFailedStatus"));
       return;
     }
@@ -312,9 +299,9 @@ export function DealForm({
   async function handleDelete() {
     if (!deal) return;
     setDeleting(true);
-    const { error } = await supabase.from("deals").delete().eq("id", deal.id);
+    const res = await fetch(`/api/deals/${deal.id}`, { method: "DELETE" });
     setDeleting(false);
-    if (error) {
+    if (!res.ok) {
       toast.error(t("toastFailedDelete"));
       return;
     }

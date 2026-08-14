@@ -903,6 +903,18 @@
         "time_based": {
           "label": "Time-Based",
           "hint": "On a recurring schedule"
+        },
+        "deal_stage_changed": {
+          "label": "Deal Stage Changed",
+          "hint": "A deal moves into a pipeline stage — dragging a card, an automation, or the API all count"
+        },
+        "deal_won": {
+          "label": "Deal Won",
+          "hint": "A deal is marked won"
+        },
+        "deal_lost": {
+          "label": "Deal Lost",
+          "hint": "A deal is marked lost"
         }
       },
       "trigger": "Trigger",

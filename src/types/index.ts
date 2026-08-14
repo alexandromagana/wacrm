@@ -462,7 +462,16 @@ export type AutomationTriggerType =
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */
-  | 'interactive_reply';
+  | 'interactive_reply'
+  /** A deal landed in a different pipeline stage. Fires for every route
+   *  that moves one — dragging a card on the board, the `move_deal`
+   *  step, or a direct API call — because they all go through
+   *  PATCH /api/deals/[dealId]. */
+  | 'deal_stage_changed'
+  /** A deal was marked won. */
+  | 'deal_won'
+  /** A deal was marked lost. */
+  | 'deal_lost';
 
 export type AutomationStepType =
   | 'send_message'
@@ -492,6 +501,12 @@ export interface TagTriggerConfig {
   tag_id: string;
 }
 
+export interface DealStageChangedTriggerConfig {
+  /** Fire only when the deal lands in this stage. Omit to match any
+   *  move, mirroring the `tag_added` catch-all. */
+  stage_id?: string;
+}
+
 export interface TimeBasedTriggerConfig {
   /** Cron expression or simple HH:mm string; engine can accept either. */
   schedule: string;
@@ -509,6 +524,7 @@ export type AutomationTriggerConfig =
   | TagTriggerConfig
   | TimeBasedTriggerConfig
   | InteractiveReplyTriggerConfig
+  | DealStageChangedTriggerConfig
   | Record<string, unknown>;
 
 export interface SendMessageStepConfig {

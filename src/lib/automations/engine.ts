@@ -7,6 +7,7 @@ import type {
   KeywordMatchTriggerConfig,
   InteractiveReplyTriggerConfig,
   MoveDealStepConfig,
+  DealStageChangedTriggerConfig,
   TagTriggerConfig,
   SendMessageStepConfig,
   SendButtonsStepConfig,
@@ -41,6 +42,12 @@ export interface AutomationContext {
   agent_id?: string
   /** Button / list-row id the customer tapped, for interactive_reply. */
   interactive_reply_id?: string
+  /** The deal behind a deal_stage_changed / deal_won / deal_lost event. */
+  deal_id?: string
+  /** Stage the deal just landed in, for deal_stage_changed. */
+  stage_id?: string
+  /** Stage it came from, for message interpolation and webhooks. */
+  from_stage_id?: string
 }
 
 export interface DispatchInput {
@@ -740,6 +747,16 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
       return false
     }
     return cfg.reply_ids.includes(replyId)
+  }
+
+  // Same catch-all shape as tag_added: no stage configured means "any
+  // move on this board". Fires wherever the deal was moved from — the
+  // Kanban, the move_deal step, or the API — because all three land on
+  // the same route.
+  if (automation.trigger_type === 'deal_stage_changed') {
+    const cfg = automation.trigger_config as DealStageChangedTriggerConfig
+    if (!cfg?.stage_id) return true
+    return ctx?.stage_id === cfg.stage_id
   }
 
   return true

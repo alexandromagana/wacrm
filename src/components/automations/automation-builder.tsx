@@ -140,6 +140,9 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "new_contact_created" },
   { value: "conversation_assigned" },
   { value: "tag_added" },
+  { value: "deal_stage_changed" },
+  { value: "deal_won" },
+  { value: "deal_lost" },
   { value: "time_based" },
 ]
 
