@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   Eye,
@@ -35,6 +35,13 @@ const MASKED_TOKEN = '••••••••••••••••';
 
 type ConnectionStatus = 'connected' | 'disconnected' | 'unknown';
 type ResetReason = 'token_corrupted' | 'meta_api_error' | null;
+
+// next-intl's rich-text tags are bare markers — an attribute inside the
+// tag (`<strong class="…">`) makes the whole message fail to parse, so the
+// catalog carries plain <strong> and the styling is applied here.
+const emphasized = (chunks: ReactNode) => (
+  <strong className="text-foreground">{chunks}</strong>
+);
 
 export function WhatsAppConfig() {
   const t = useTranslations('Settings.whatsapp');
@@ -794,9 +801,9 @@ export function WhatsAppConfig() {
                 <AccordionContent className="text-muted-foreground">
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step3_1')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_2') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step3_4') }} />
+                    <li>{t.rich('step3_2', { strong: emphasized })}</li>
+                    <li>{t.rich('step3_3', { strong: emphasized })}</li>
+                    <li>{t.rich('step3_4', { strong: emphasized })}</li>
                   </ol>
                 </AccordionContent>
               </AccordionItem>
@@ -812,8 +819,8 @@ export function WhatsAppConfig() {
                   <ol className="list-decimal list-inside space-y-1 text-sm">
                     <li>{t('step4_1')}</li>
                     <li>{t('step4_2')}</li>
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_3') }} />
-                    <li dangerouslySetInnerHTML={{ __html: t('step4_4') }} />
+                    <li>{t.rich('step4_3', { strong: emphasized })}</li>
+                    <li>{t.rich('step4_4', { strong: emphasized })}</li>
                     <li>{t('step4_5')}</li>
                   </ol>
                 </AccordionContent>
