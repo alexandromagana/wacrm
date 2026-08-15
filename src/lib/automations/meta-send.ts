@@ -11,6 +11,8 @@ import {
   phoneVariants,
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
+import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import type { MessageTemplate } from '@/types'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -142,6 +144,38 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   const accessToken = decrypt(config.access_token)
 
+  // The template row carries the header and button components. Without
+  // it `sendTemplateMessage` falls back to a body-only payload, and any
+  // template with a media header — which is most of the marketing ones —
+  // is rejected by Meta with "(#132012) Parameter format does not match
+  // format in the created template". Broadcasts have always passed this;
+  // automations did not, which is why tag-driven follow-ups never
+  // actually delivered.
+  let templateRow: MessageTemplate | null = null
+  if (input.kind === 'template') {
+    const { data: raw } = await db
+      .from('message_templates')
+      .select('*')
+      .eq('account_id', input.accountId)
+      .eq('name', input.templateName)
+      .eq('language', input.language)
+      .maybeSingle()
+    if (raw && !isMessageTemplate(raw)) {
+      throw new Error(
+        'template row is malformed locally — run "Sync from Meta" in Settings',
+      )
+    }
+    templateRow = (raw as MessageTemplate | null) ?? null
+    if (!templateRow) {
+      // A name/language pair with no local row means the components
+      // cannot be built. Fail loudly here rather than letting Meta
+      // return an opaque parameter error per recipient.
+      throw new Error(
+        `template "${input.templateName}" (${input.language}) is not synced locally — run "Sync from Meta" in Settings`,
+      )
+    }
+  }
+
   const attempt = async (phone: string): Promise<string> => {
     if (input.kind === 'template') {
       const r = await sendTemplateMessage({
@@ -150,6 +184,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
         to: phone,
         templateName: input.templateName,
         language: input.language,
+        template: templateRow ?? undefined,
         params: input.params,
       })
       return r.messageId
