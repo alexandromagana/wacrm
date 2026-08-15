@@ -52,3 +52,5 @@ next-env.d.ts
 
 # Claude Code transient worktrees
 /.claude/worktrees/
+# Per-machine Claude Code permission allowlist — personal, not shared.
+/.claude/settings.local.json
