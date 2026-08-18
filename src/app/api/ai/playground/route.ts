@@ -85,8 +85,8 @@ export async function POST(request: Request) {
     })
 
     // Mirror the auto-reply's clock injection so the playground
-    // faithfully previews schedule-aware behaviour (horario de
-    // atención, proposing valid dates).
+    // faithfully previews date-aware behaviour (resolving "mañana",
+    // never referencing days that already passed).
     const { text, handoff } = await generateReply({
       config,
       systemPrompt,

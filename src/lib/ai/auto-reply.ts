@@ -267,9 +267,10 @@ export async function dispatchInboundToAiReply(
     }
 
     // Give the model a clock. As a user-role turn — never in the system
-    // prompt, which must stay byte-identical for provider caching. The
-    // business prompt's schedule rules (horario de atención, proponer
-    // fechas válidas) are dead letters without this.
+    // prompt, which must stay byte-identical for provider caching.
+    // Without it the model can't resolve "mañana"/"el lunes" or tell a
+    // date already passed. It's a calendar, not an open/closed flag —
+    // the assistant answers 24/7.
     messages.push({ role: 'user', content: buildDateTimeNote() })
 
     // CFE receipt images: run the dedicated vision extraction, persist

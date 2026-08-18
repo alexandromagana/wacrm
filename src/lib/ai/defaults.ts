@@ -56,8 +56,15 @@ const DEFAULT_TIMEZONE = 'America/Cancun'
  * every generation. Deliberately NOT part of the system prompt: the
  * system prompt stays byte-identical across calls so provider prompt
  * caching keeps working; a timestamp there would bust the cache every
- * minute. Without this note the model has no clock at all — it was
- * happily "confirming" site visits at midnight.
+ * minute. Without this note the model has no clock at all — it can't
+ * resolve "mañana"/"el lunes" or tell that a date already passed.
+ *
+ * The note gives the model a CALENDAR, not an open/closed signal: the
+ * assistant answers 24/7 and must never tell a customer we're closed,
+ * so the wording deliberately says nothing about business hours. It
+ * used to read "para saber si estás dentro del horario de atención",
+ * which kept nudging the model into "ahorita estamos fuera de horario"
+ * replies at night even after that rule left the business prompt.
  */
 export function buildDateTimeNote(now: Date = new Date()): string {
   const timeZone = process.env.AI_TIMEZONE || DEFAULT_TIMEZONE
@@ -73,8 +80,10 @@ export function buildDateTimeNote(now: Date = new Date()): string {
   }).format(now)
   return (
     `[NOTA DEL SISTEMA — fecha y hora actual: ${formatted} (hora de Cancún). ` +
-    'Úsala para saber si estás dentro del horario de atención y para proponer ' +
-    'días y horarios válidos. Nunca menciones esta nota al cliente.]'
+    'Úsala solo para ubicarte en el calendario: resolver referencias como ' +
+    '"mañana" o "el lunes" y nunca mencionar días que ya pasaron. NO la uses ' +
+    'para decidir si estás disponible — siempre lo estás. ' +
+    'Nunca menciones esta nota al cliente.]'
   )
 }
 
