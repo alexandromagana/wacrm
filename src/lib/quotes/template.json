@@ -2,9 +2,6 @@
   "_comment": "Field map for the proposal template. Coordinates are Figma units taken verbatim from the SVG export in design/ — top-origin, and `baseline` is the tspan's own y, which is already the text baseline. Asset paths are relative to public/. Tweaking a position here needs no TypeScript change. Numeric fields carry no maxWidth on purpose: their content is bounded by the price table, and a silently shrunk or truncated price is worse than one that visibly overflows in review. The exceptions are the 25-year projections and the savings figure, which are bounded by the customer's own bill rather than by the table, so they do get a maxWidth.",
   "_comment_align": "Right-aligned fields store the RIGHT edge in `x`. The card amounts were derived, not guessed: Figma exports right-aligned text as anchor=start with x = rightEdge − textWidth, and the placeholder \"$ —\" measures 43.225 pt in Archivo Medium 25 — so 334 + 43.225 = 377.2 and 691 + 43.225 = 734.2, matching the two cards' inner rows (82..377 and 439..734) to a quarter point.",
   "template": "quotes/template.pdf",
-  "pageWidth": 816,
-  "pageHeight": 1056,
-  "pageCount": 4,
   "fonts": {
     "archivoRegular": "fonts/Archivo-Regular.ttf",
     "archivoMedium": "fonts/Archivo-Medium.ttf",
@@ -193,6 +190,121 @@
       "font": "archivoMedium",
       "color": "#108040",
       "align": "left"
+    },
+    "folioFinanciamiento": {
+      "page": 4,
+      "x": 1000,
+      "baseline": 131.938,
+      "size": 10.5,
+      "font": "plexMono",
+      "color": "#FFFFFF",
+      "align": "right"
+    },
+    "sistemaFinanciado": {
+      "page": 4,
+      "x": 56,
+      "baseline": 287.848,
+      "size": 22,
+      "font": "archivoSemiBold",
+      "color": "#12241A",
+      "align": "left",
+      "maxWidth": 944,
+      "minSize": 16
+    },
+    "enganche": {
+      "page": 4,
+      "x": 88,
+      "baseline": 415.364,
+      "size": 46,
+      "font": "archivoBold",
+      "color": "#FBC63C",
+      "align": "left",
+      "maxWidth": 480,
+      "minSize": 46
+    },
+    "mensualidad12": {
+      "page": 4,
+      "x": 56,
+      "baseline": 592.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#375FA0",
+      "align": "left",
+      "maxWidth": 176,
+      "minSize": 30,
+      "row": "mensualidades"
+    },
+    "mensualidad24": {
+      "page": 4,
+      "x": 248,
+      "baseline": 592.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#375FA0",
+      "align": "left",
+      "maxWidth": 176,
+      "minSize": 30,
+      "row": "mensualidades"
+    },
+    "mensualidad36": {
+      "page": 4,
+      "x": 440,
+      "baseline": 592.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#375FA0",
+      "align": "left",
+      "maxWidth": 176,
+      "minSize": 30,
+      "row": "mensualidades"
+    },
+    "mensualidad48": {
+      "page": 4,
+      "x": 632,
+      "baseline": 592.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#375FA0",
+      "align": "left",
+      "maxWidth": 176,
+      "minSize": 30,
+      "row": "mensualidades"
+    },
+    "mensualidad60": {
+      "page": 4,
+      "x": 824,
+      "baseline": 592.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#375FA0",
+      "align": "left",
+      "maxWidth": 176,
+      "minSize": 30,
+      "row": "mensualidades"
     }
-  }
+  },
+  "_comment_pages": "Page sizes are PER PAGE, not global: pages 1-4 are portrait 816x1056 and page 5 — the financing annex — is landscape 1056x816. `layout.placeText` flips the baseline against the page it draws on, so a single global height would scatter every field on page 5 off the sheet with no error raised.",
+  "_comment_row": "`row` groups fields that must share one type size. Only the five instalment columns use it: they are 176 wide, and from the 12-panel tier up the 12-month payment crosses into five digits and measures 183 at 36pt while its four neighbours measure ~162. Fitting each on its own would print one column at 34.5pt beside four at 36pt. See layout.fitRowSize.",
+  "pages": [
+    {
+      "width": 816,
+      "height": 1056
+    },
+    {
+      "width": 816,
+      "height": 1056
+    },
+    {
+      "width": 816,
+      "height": 1056
+    },
+    {
+      "width": 816,
+      "height": 1056
+    },
+    {
+      "width": 1056,
+      "height": 816
+    }
+  ]
 }

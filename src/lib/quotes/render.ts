@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import template from './template.json';
-import { placeText, type Align, type FieldBox } from './layout';
+import { fitRowSize, placeText, type Align, type FieldBox } from './layout';
 import { prepareFont, measureText, type TextFont } from './text-font';
 import type { FieldKey } from './fields';
 
@@ -27,6 +27,8 @@ interface FieldSpec {
   align: Align;
   maxWidth?: number;
   minSize?: number;
+  /** Fields sharing a `row` are drawn at one common size. */
+  row?: string;
 }
 
 const FIELDS = template.fields as Record<FieldKey, FieldSpec>;
@@ -106,22 +108,26 @@ export async function renderQuotePdf(
   pdf.registerFontkit(fontkit);
 
   const pages = pdf.getPages();
-  if (pages.length !== template.pageCount) {
+  if (pages.length !== template.pages.length) {
     throw new Error(
-      `template has ${pages.length} pages, expected ${template.pageCount}`
+      `template has ${pages.length} pages, expected ${template.pages.length}`
     );
   }
   // A silent re-export at a different size would scatter every field
   // across the page with nothing to show for it, so refuse to draw.
+  // Checked per page: the financing annex is landscape while the four
+  // pages before it are portrait, so a single expected size would
+  // either reject the annex or wave through a rotated re-export.
   for (const [i, page] of pages.entries()) {
     const { width, height } = page.getSize();
+    const expected = template.pages[i];
     if (
-      Math.round(width) !== template.pageWidth ||
-      Math.round(height) !== template.pageHeight
+      Math.round(width) !== expected.width ||
+      Math.round(height) !== expected.height
     ) {
       throw new Error(
         `template page ${i + 1} is ${width}x${height}, expected ` +
-          `${template.pageWidth}x${template.pageHeight}. Re-run ` +
+          `${expected.width}x${expected.height}. Re-run ` +
           'scripts/build-quote-template.mjs after changing the design.'
       );
     }
@@ -139,24 +145,47 @@ export async function renderQuotePdf(
     );
   }
 
-  for (const [key, spec] of Object.entries(FIELDS) as [FieldKey, FieldSpec][]) {
+  const boxOf = (spec: FieldSpec): FieldBox => ({
+    x: spec.x,
+    baseline: spec.baseline,
+    size: spec.size,
+    align: spec.align,
+    maxWidth: spec.maxWidth,
+    minSize: spec.minSize,
+  });
+
+  // Rows first: a field that shares a `row` is drawn at the size that
+  // fits the WHOLE row, so five instalment columns never print in two
+  // different sizes. Blank fields are excluded from the calculation but
+  // not from the group — a row is defined by the design, not by which
+  // of its values happen to be filled today.
+  const entries = Object.entries(FIELDS) as [FieldKey, FieldSpec][];
+  const rowSizes = new Map<string, number>();
+  for (const row of new Set(entries.map(([, s]) => s.row).filter(Boolean))) {
+    const members = entries.filter(([, s]) => s.row === row);
+    const tf = embedded[members[0][1].font];
+    rowSizes.set(
+      row as string,
+      fitRowSize({
+        boxes: members.map(([, s]) => boxOf(s)),
+        texts: members.map(([k]) => values[k] ?? ''),
+        measure: (t, size) => measureText(tf, t, size),
+      })
+    );
+  }
+
+  for (const [key, spec] of entries) {
     const text = values[key];
     if (!text) continue; // blank is a legitimate value; draw nothing
 
     const tf = embedded[spec.font];
-    const box: FieldBox = {
-      x: spec.x,
-      baseline: spec.baseline,
-      size: spec.size,
-      align: spec.align,
-      maxWidth: spec.maxWidth,
-      minSize: spec.minSize,
-    };
+    const box = boxOf(spec);
     const placement = placeText({
       box,
       text,
-      pageHeight: template.pageHeight,
+      pageHeight: template.pages[spec.page].height,
       measure: (t, size) => measureText(tf, t, size),
+      startSize: spec.row ? rowSizes.get(spec.row) : undefined,
     });
 
     const style = {

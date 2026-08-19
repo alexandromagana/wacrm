@@ -1,6 +1,7 @@
 import type { SolarTier } from './pricing'
 import { WATTS_PER_PANEL } from './pricing'
 import type { Financials } from './finance'
+import { buildFinancing } from './financing'
 
 // ============================================================
 // The exact strings drawn onto the proposal template.
@@ -30,6 +31,13 @@ const VIGENCIA = '15 DÍAS NATURALES'
  */
 const PAYBACK_NOTA = 'de ahí, todo lo que produce tu techo es ganancia.'
 
+/**
+ * The microinverter brand named on the financing annex. A constant
+ * rather than a tier field because every tier in the table ships the
+ * same hardware; the day one doesn't, this belongs on `SolarTier`.
+ */
+const MICROINVERSORES = 'Hoymiles'
+
 export type FieldKey =
   | 'nombre'
   | 'folioPortada'
@@ -51,6 +59,17 @@ export type FieldKey =
   | 'payback'
   | 'paybackNota'
   | 'kwhGenerados'
+  // Page 5, the financing annex. The folio repeats here because the
+  // annex travels as its own sheet once printed, and a page of peso
+  // amounts with no folio on it cannot be tied back to a quote.
+  | 'folioFinanciamiento'
+  | 'sistemaFinanciado'
+  | 'enganche'
+  | 'mensualidad12'
+  | 'mensualidad24'
+  | 'mensualidad36'
+  | 'mensualidad48'
+  | 'mensualidad60'
 
 export interface QuoteInput {
   /** From `contacts.name`, which is nullable. */
@@ -83,6 +102,19 @@ export function formatKwh(value: number): string {
  */
 export function formatMxn(value: number): string {
   return `$ ${new Intl.NumberFormat('es-MX').format(Math.round(value))}`
+}
+
+/**
+ * "$9,060.00" — the financing annex's own format, and deliberately NOT
+ * `formatMxn`'s "$ 95,000". No space after the sign, and centavos
+ * always shown: these are instalments the customer will check against a
+ * lender's contract, where a rounded peso is a discrepancy.
+ */
+export function formatMxnCentavos(value: number): string {
+  return `$${new Intl.NumberFormat('es-MX', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)}`
 }
 
 /** "6.25 kWp". Trailing zeros trimmed — 5 kW reads "5", not "5.00". */
@@ -212,5 +244,52 @@ export function buildQuoteFieldValues(
       : '',
     paybackNota: f ? PAYBACK_NOTA : '',
     kwhGenerados: f ? `${formatKwh(f.kwhGeneradosBimestre)} kWh` : '',
+
+    // The annex depends only on the quoted price, never on the bill —
+    // so it fills in even when `financials` is null and page 2's
+    // comparison cards come out blank.
+    ...buildFinancingFieldValues(tier, folio),
+  }
+}
+
+type FinancingFieldKey = Extract<
+  FieldKey,
+  | 'folioFinanciamiento'
+  | 'sistemaFinanciado'
+  | 'enganche'
+  | 'mensualidad12'
+  | 'mensualidad24'
+  | 'mensualidad36'
+  | 'mensualidad48'
+  | 'mensualidad60'
+>
+
+/**
+ * Page 5's eight values. Split out because the annex is the one block
+ * of the document that is a function of the PRICE alone.
+ */
+function buildFinancingFieldValues(
+  tier: SolarTier,
+  folio: string,
+): Record<FinancingFieldKey, string> {
+  const financing = buildFinancing(tier.priceMxn)
+  // Blank rather than invented, same contract as the savings cards. In
+  // practice unreachable — every tier carries a positive price — but a
+  // future account-defined project type priced at zero would land here.
+  const mensualidad = (meses: number) => {
+    const plan = financing?.esquema.find((p) => p.meses === meses)
+    return plan ? formatMxnCentavos(plan.mensualidad) : ''
+  }
+  return {
+    folioFinanciamiento: folio,
+    sistemaFinanciado: financing
+      ? `${tier.panels} paneles de ${WATTS_PER_PANEL} W con microinversores ${MICROINVERSORES}`
+      : '',
+    enganche: financing ? formatMxnCentavos(financing.engancheMxn) : '',
+    mensualidad12: mensualidad(12),
+    mensualidad24: mensualidad(24),
+    mensualidad36: mensualidad(36),
+    mensualidad48: mensualidad(48),
+    mensualidad60: mensualidad(60),
   }
 }

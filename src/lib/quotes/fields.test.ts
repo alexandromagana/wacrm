@@ -161,7 +161,38 @@ describe('buildQuoteFieldValues', () => {
       payback: '',
       paybackNota: '',
       kwhGenerados: '',
+      // The annex fills in regardless: it is priced off the tier, not
+      // off the bill the customer never sent.
+      folioFinanciamiento: 'GE-2026-4F7A',
+      sistemaFinanciado: '10 paneles de 625 W con microinversores Hoymiles',
+      enganche: '$11,400.00',
+      mensualidad12: '$9,115.41',
+      mensualidad24: '$4,877.31',
+      mensualidad36: '$3,506.13',
+      mensualidad48: '$2,854.91',
+      mensualidad60: '$2,494.49',
     })
+  })
+
+  it('prices the annex off the tier even with no readable bill', () => {
+    // $95,000 x 1.20 = $114,000; 10% of that is the down payment.
+    const v = buildQuoteFieldValues({ ...base, nombre: null })
+    expect(v.enganche).toBe('$11,400.00')
+    expect(v.gastoSinBimestre).toBe('') // the bill-driven half stays blank
+  })
+
+  it('repeats the folio on the annex', () => {
+    const v = buildQuoteFieldValues({ ...base, nombre: null })
+    expect(v.folioFinanciamiento).toBe(v.folio)
+  })
+
+  it('names the annex system from the tier', () => {
+    for (const tier of SOLAR_TIERS) {
+      const v = buildQuoteFieldValues({ ...base, tier, nombre: null })
+      expect(v.sistemaFinanciado).toBe(
+        `${tier.panels} paneles de 625 W con microinversores Hoymiles`,
+      )
+    }
   })
 
   it('fills the comparison cards when the bill was readable', () => {

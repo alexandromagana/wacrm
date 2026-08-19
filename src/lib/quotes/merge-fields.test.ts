@@ -41,6 +41,27 @@ describe('buildQuoteMergeFields', () => {
     }
   })
 
+  // The gap this catches is a real one that shipped: the financing
+  // annex added eight PDF fields, buildQuoteMergeFields picked them up
+  // for free through the spread, and QUOTE_MERGE_TAGS did not — so the
+  // values existed at runtime while the upload dialog flagged
+  // {{enganche}} as an unknown marker. Every drawable field is a tag.
+  it('advertises every field the PDF draws', () => {
+    const drawn = Object.keys(buildQuoteFieldValues(input))
+    const advertised = new Set<string>(QUOTE_MERGE_TAGS)
+    const missing = drawn.filter((key) => !advertised.has(key))
+    expect(missing, 'PDF fields absent from QUOTE_MERGE_TAGS').toEqual([])
+  })
+
+  it('fills the financing tags even with no readable bill', () => {
+    // The annex is priced off the tier, so unlike the savings tags it
+    // never blanks — a hand-built template can rely on that.
+    const fields = buildQuoteMergeFields({ ...input, financials: null })
+    expect(fields.enganche).toBe('$15,240.00')
+    expect(fields.mensualidad60).toBe('$3,334.74')
+    expect(fields.gastoSin25Anios).toBe('')
+  })
+
   it('formats the extra tags the PDF does not carry', () => {
     const fields = buildQuoteMergeFields(input)
     expect(fields.tipoProyecto).toBe('Residencial')

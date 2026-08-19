@@ -27,10 +27,16 @@ export interface QuoteMergeInput extends QuoteInput {
 }
 
 /**
- * Every tag a quote template may reference: the nineteen the fixed-
+ * Every tag a quote template may reference: the twenty-seven the fixed-
  * position PDF already draws, plus three the generator knows and it
  * does not (the bot has exactly one project type, and prints neither
  * the city nor the raw consumption).
+ *
+ * The financing eight are here for the same reason as the rest: a
+ * hand-built template quoting an instalment must get it from the same
+ * amortisation the bot's annex prints, not from someone retyping it.
+ * They fill in on every quote — the annex is priced off the tier alone,
+ * so unlike the savings tags they never come back blank.
  */
 export const QUOTE_MERGE_TAGS = [
   'nombre',
@@ -52,6 +58,15 @@ export const QUOTE_MERGE_TAGS = [
   'payback',
   'paybackNota',
   'kwhGenerados',
+  // Page 5, the financing annex.
+  'folioFinanciamiento',
+  'sistemaFinanciado',
+  'enganche',
+  'mensualidad12',
+  'mensualidad24',
+  'mensualidad36',
+  'mensualidad48',
+  'mensualidad60',
   'tipoProyecto',
   'ciudad',
   'consumoKwh',
