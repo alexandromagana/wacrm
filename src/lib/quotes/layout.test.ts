@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { placeText, type FieldBox, type Measure } from './layout'
+import { fitRowSize, placeText, type FieldBox, type Measure } from './layout'
 
 /** Every glyph half an em wide — enough to exercise the geometry. */
 const measure: Measure = (text, size) => text.length * size * 0.5
@@ -110,5 +110,70 @@ describe('placeText — overflow', () => {
     const p = placeText({ box, text, pageHeight: PAGE_H, measure })
     expect(p.text).toBe(text)
     expect(p.size).toBe(36)
+  })
+})
+
+describe('fitRowSize — one size for a row of fields', () => {
+  const row = (n: number): FieldBox[] =>
+    Array.from({ length: n }, (_, i) => ({
+      x: 56 + i * 192,
+      baseline: 592.024,
+      size: 36,
+      align: 'left' as const,
+      maxWidth: 176,
+      minSize: 30,
+    }))
+
+  it('keeps the full size when every text already fits', () => {
+    const texts = ['$4,145.11', '$2,217.34', '$1,594.05', '$1,297.90', '$1,134.05']
+    expect(fitRowSize({ boxes: row(5), texts, measure })).toBe(36)
+  })
+
+  it('shrinks the whole row for the one text that overflows', () => {
+    // The 16-panel tier: the 12-month figure is the only five-digit one.
+    const texts = ['$13,433.23', '$7,186.66', '$5,166.31', '$4,206.68', '$3,675.55']
+    const size = fitRowSize({ boxes: row(5), texts, measure })
+    expect(size).toBeLessThan(36)
+    // And at that size EVERY column fits — the point of a shared size.
+    for (const text of texts) expect(measure(text, size)).toBeLessThanOrEqual(176)
+  })
+
+  it('never returns a size below the row minimum', () => {
+    const texts = Array(5).fill('$999,999,999,999.99')
+    expect(fitRowSize({ boxes: row(5), texts, measure })).toBe(30)
+  })
+
+  it('ignores blank fields', () => {
+    // A row of empty strings has nothing to shrink for.
+    expect(fitRowSize({ boxes: row(5), texts: ['', '', '', '', ''], measure })).toBe(36)
+  })
+
+  it('returns 0 for an empty row rather than throwing', () => {
+    expect(fitRowSize({ boxes: [], texts: [], measure })).toBe(0)
+  })
+})
+
+describe('placeText — startSize', () => {
+  const box: FieldBox = {
+    x: 56, baseline: 592.024, size: 36, align: 'left', maxWidth: 176, minSize: 30,
+  }
+
+  it('draws at the row size instead of the box size', () => {
+    const p = placeText({
+      box, text: '$1,982.46', pageHeight: 816, measure, startSize: 34.5,
+    })
+    expect(p.size).toBe(34.5)
+  })
+
+  it('still shrinks below the row size if that text alone overflows', () => {
+    const p = placeText({
+      box, text: '$13,433,433.23', pageHeight: 816, measure, startSize: 34.5,
+    })
+    expect(p.size).toBeLessThan(34.5)
+  })
+
+  it('flips against the landscape page height', () => {
+    const p = placeText({ box, text: '$1,982.46', pageHeight: 816, measure })
+    expect(p.y).toBeCloseTo(816 - 592.024, 6)
   })
 })
