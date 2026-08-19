@@ -407,6 +407,35 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
 }
 
 /**
+ * Run the vision extraction on bytes already in hand.
+ *
+ * Split out of `extractReceipt` for the Cotizador, which uploads a
+ * receipt through a browser form and so has the file itself, not a Meta
+ * media id to download.
+ *
+ * Unlike `extractReceipt` this does NOT swallow errors: a provider
+ * timeout or a network failure propagates. The bot wants them
+ * swallowed — a failed read just means "ask the customer again" — but a
+ * person standing in front of the generator waiting for a document
+ * needs "the AI provider is down" told apart from "this photo isn't
+ * readable", and only the throw carries that difference.
+ */
+export async function extractReceiptFromFiles(
+  config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>,
+  files: MediaFile[],
+): Promise<ReceiptExtraction | null> {
+  if (files.length === 0) return null
+
+  const raw =
+    config.provider === 'anthropic'
+      ? await visionAnthropic(config, files)
+      : await visionOpenAi(config, files)
+  if (!raw) return null
+
+  return parseReceiptJson(raw)
+}
+
+/**
  * Download the customer's images from Meta and run the vision
  * extraction with the account's own key/model. Returns null on any
  * failure — the caller treats that as "no reading" and the bot follows
@@ -446,13 +475,7 @@ export async function extractReceipt(args: {
     }
     if (files.length === 0) return null
 
-    const raw =
-      config.provider === 'anthropic'
-        ? await visionAnthropic(config, files)
-        : await visionOpenAi(config, files)
-    if (!raw) return null
-
-    return parseReceiptJson(raw)
+    return await extractReceiptFromFiles(config, files)
   } catch (err) {
     // AbortSignal.timeout throws a TimeoutError — surface it distinctly
     // so "read failed" on a valid receipt is diagnosable as slowness vs.
@@ -466,7 +489,7 @@ export async function extractReceipt(args: {
   }
 }
 
-interface MediaFile {
+export interface MediaFile {
   base64: string
   mimeType: string
 }

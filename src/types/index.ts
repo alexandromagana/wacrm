@@ -696,3 +696,90 @@ export interface QuickReply {
   created_at: string;
   updated_at: string;
 }
+
+// ============================================================
+// Cotizador — project types, rate tiers, templates, generated
+// quotes (migration 041)
+// ============================================================
+
+/** The buckets `inferPropertyType()` derives from a CFE tariff code. */
+export type CfePropertyTypeHint = 'Casa' | 'Negocio' | 'Industria';
+
+export interface QuoteProjectType {
+  id: string;
+  account_id: string;
+  created_by?: string | null;
+  name: string;
+  /** Null disables the receipt-vs-project-type cross-check. */
+  cfe_property_type_hint?: CfePropertyTypeHint | null;
+  annual_inflation: number;
+  fixed_charge_bimonthly_mxn: number;
+  peak_sun_hours: number;
+  system_efficiency: number;
+  horizon_years: number;
+  created_at: string;
+  updated_at: string;
+  /** Hydrated by the nested select in GET /api/quotes/project-types. */
+  quote_rate_tiers?: QuoteRateTier[];
+}
+
+export interface QuoteRateTier {
+  id: string;
+  project_type_id: string;
+  min_kwh: number;
+  max_kwh: number;
+  panels: number;
+  system_kw: number;
+  price_mxn: number;
+}
+
+export type QuoteTemplateFileType = 'docx' | 'pptx';
+
+export interface QuoteTemplate {
+  id: string;
+  account_id: string;
+  created_by?: string | null;
+  name: string;
+  file_type: QuoteTemplateFileType;
+  storage_path: string;
+  storage_url: string;
+  /** The {{tags}} found in the file at upload time. */
+  detected_tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export type QuoteStatus =
+  | 'generated'
+  | 'sent'
+  | 'accepted'
+  | 'rejected'
+  | 'expired';
+
+export interface Quote {
+  id: string;
+  account_id: string;
+  contact_id?: string | null;
+  /** Traceability only — the numbers below are snapshots, not lookups. */
+  project_type_id?: string | null;
+  tier_id?: string | null;
+  template_id?: string | null;
+  created_by?: string | null;
+  folio: string;
+  status: QuoteStatus;
+  consumo_kwh?: number | null;
+  panels: number;
+  system_kw: number;
+  price_mxn: number;
+  /** The `Financials` object from `@/lib/quotes/finance`, as stored. */
+  financials?: Record<string, number> | null;
+  source_tarifa?: string | null;
+  source_ciudad?: string | null;
+  property_type_hint?: string | null;
+  receipt_storage_path?: string | null;
+  output_storage_path: string;
+  output_mime_type: string;
+  output_url: string;
+  warnings?: string | null;
+  created_at: string;
+}

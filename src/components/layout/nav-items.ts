@@ -1,6 +1,7 @@
 import {
   Bell,
   Bot,
+  Calculator,
   GitBranch,
   LayoutDashboard,
   MessageSquare,
@@ -41,6 +42,7 @@ export const navItems: NavItem[] = [
   { href: "/automations", labelKey: "automations", icon: Zap },
   { href: "/flows", labelKey: "flows", icon: Workflow, beta: true },
   { href: "/agents", labelKey: "aiAgents", icon: Bot },
+  { href: "/quotes", labelKey: "quotes", icon: Calculator },
 ];
 
 export const bottomNavItems: NavItem[] = [

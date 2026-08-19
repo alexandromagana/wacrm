@@ -55,6 +55,32 @@ export type ProjectionBase = 'periodo_actual' | 'promedio_6'
 export const PROJECTION_BASE: ProjectionBase = 'periodo_actual'
 
 /**
+ * The assumptions above, as data.
+ *
+ * The bot quotes one product in one city and reads them as constants.
+ * The Cotizador prices project types the account defines itself, and a
+ * commercial roof in a different city does not share a residential
+ * roof's sun hours or its CFE minimum charge — so those callers pass
+ * their own set. `BIMESTERS_PER_YEAR` and `DAYS_PER_BIMESTER` are
+ * absent on purpose: they are calendar facts, not assumptions.
+ */
+export interface FinanceConstants {
+  annualInflation: number
+  fixedChargeBimonthlyMxn: number
+  peakSunHours: number
+  systemEfficiency: number
+  horizonYears: number
+}
+
+export const DEFAULT_FINANCE_CONSTANTS: FinanceConstants = Object.freeze({
+  annualInflation: ANNUAL_INFLATION,
+  fixedChargeBimonthlyMxn: FIXED_CHARGE_BIMONTHLY_MXN,
+  peakSunHours: PEAK_SUN_HOURS,
+  systemEfficiency: SYSTEM_EFFICIENCY,
+  horizonYears: HORIZON_YEARS,
+})
+
+/**
  * Sum of a series growing at `inflation` for `years` years, relative to
  * the first year: ((1 + i)^n − 1) / i. 38.9499 at 25 years and 3.5%.
  *
@@ -78,9 +104,21 @@ export function cumulativeFactor(years: number, inflation: number): number {
  * covers 90.6%–97.2% of each tier's ceiling, rising monotonically, so
  * the table and this formula were built on the same assumption.
  */
-export function bimonthlyGenerationKwh(panels: number): number {
+export function bimonthlyGenerationKwh(
+  panels: number,
+  opts: {
+    wattsPerPanel?: number
+    peakSunHours?: number
+    systemEfficiency?: number
+  } = {},
+): number {
+  const {
+    wattsPerPanel = WATTS_PER_PANEL,
+    peakSunHours = PEAK_SUN_HOURS,
+    systemEfficiency = SYSTEM_EFFICIENCY,
+  } = opts
   return (
-    ((WATTS_PER_PANEL * PEAK_SUN_HOURS * SYSTEM_EFFICIENCY) / 1000) *
+    ((wattsPerPanel * peakSunHours * systemEfficiency) / 1000) *
     DAYS_PER_BIMESTER *
     panels
   )
@@ -139,12 +177,14 @@ export interface Financials {
 function computePayback(
   priceMxn: number,
   firstYearSavingMxn: number,
+  annualInflation: number = ANNUAL_INFLATION,
+  horizonYears: number = HORIZON_YEARS,
 ): { anios: number; meses: number } | null {
   if (firstYearSavingMxn <= 0) return null
 
   let accumulated = 0
   let yearly = firstYearSavingMxn
-  for (let years = 0; years < HORIZON_YEARS; years++) {
+  for (let years = 0; years < horizonYears; years++) {
     if (accumulated + yearly >= priceMxn) {
       const months = Math.round(((priceMxn - accumulated) / yearly) * 12)
       // A remainder that rounds up to a full year is reported as the
@@ -154,7 +194,7 @@ function computePayback(
         : { anios: years, meses: months }
     }
     accumulated += yearly
-    yearly *= 1 + ANNUAL_INFLATION
+    yearly *= 1 + annualInflation
   }
   return null
 }
@@ -168,20 +208,29 @@ export function buildFinancials(args: {
   /** What the customer pays CFE per bimester today, MXN. */
   costoBimestralMxn: number | null
   tier: SolarTier
+  /** Defaults to the residential assumptions this module declares. */
+  constants?: FinanceConstants
 }): Financials | null {
-  const { costoBimestralMxn, tier } = args
+  const {
+    costoBimestralMxn,
+    tier,
+    constants = DEFAULT_FINANCE_CONSTANTS,
+  } = args
   if (costoBimestralMxn == null || !Number.isFinite(costoBimestralMxn)) {
     return null
   }
-  if (costoBimestralMxn <= FIXED_CHARGE_BIMONTHLY_MXN) return null
+  if (costoBimestralMxn <= constants.fixedChargeBimonthlyMxn) return null
 
-  const factor = cumulativeFactor(HORIZON_YEARS, ANNUAL_INFLATION)
+  const factor = cumulativeFactor(
+    constants.horizonYears,
+    constants.annualInflation,
+  )
 
   const sinPanelesBimestre = costoBimestralMxn
   const sinPaneles12Meses = sinPanelesBimestre * BIMESTERS_PER_YEAR
   const sinPaneles25Anios = sinPaneles12Meses * factor
 
-  const conPanelesBimestre = FIXED_CHARGE_BIMONTHLY_MXN
+  const conPanelesBimestre = constants.fixedChargeBimonthlyMxn
   const conPaneles12Meses = conPanelesBimestre * BIMESTERS_PER_YEAR
   // The system is bought once; only the residual CFE charge inflates.
   const conPaneles25Anios = tier.priceMxn + conPaneles12Meses * factor
@@ -189,6 +238,8 @@ export function buildFinancials(args: {
   const payback = computePayback(
     tier.priceMxn,
     sinPaneles12Meses - conPaneles12Meses,
+    constants.annualInflation,
+    constants.horizonYears,
   )
   if (!payback) return null
 
@@ -202,6 +253,13 @@ export function buildFinancials(args: {
     ahorro25Anios: sinPaneles25Anios - conPaneles25Anios,
     paybackAnios: payback.anios,
     paybackMeses: payback.meses,
-    kwhGeneradosBimestre: bimonthlyGenerationKwh(tier.panels),
+    // Derived from the tier rather than WATTS_PER_PANEL: an account
+    // whose panels aren't 625 W states that by the kW its tier sells,
+    // and the residential table divides out to exactly 625 anyway.
+    kwhGeneradosBimestre: bimonthlyGenerationKwh(tier.panels, {
+      wattsPerPanel: (tier.systemKw * 1000) / tier.panels,
+      peakSunHours: constants.peakSunHours,
+      systemEfficiency: constants.systemEfficiency,
+    }),
   }
 }

@@ -86,14 +86,23 @@ const nextConfig: NextConfig = {
    */
   outputFileTracingRoot: import.meta.dirname,
   /**
-   * Keep the PDF generator out of the server bundle.
+   * Keep the document generators out of the server bundle.
    *
    * `pdf-lib` ships cjs + esm + umd builds; bundling drags several
    * hundred KB of UMD and pako into the server chunks for no gain.
    * Marking them external leaves a plain runtime `require()`, which the
    * file tracer follows reliably into `.next/standalone`.
+   *
+   * `docxtemplater` / `pizzip` (the Cotizador's .docx/.pptx templating)
+   * are multi-build packages of the same shape, and are listed for the
+   * same reason.
    */
-  serverExternalPackages: ["pdf-lib", "@pdf-lib/fontkit"],
+  serverExternalPackages: [
+    "pdf-lib",
+    "@pdf-lib/fontkit",
+    "docxtemplater",
+    "pizzip",
+  ],
   /**
    * Cache-Control policy.
    *

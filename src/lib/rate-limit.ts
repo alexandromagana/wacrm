@@ -159,6 +159,15 @@ export const RATE_LIMITS = {
    *  key past the provider's own rate limit. 60/min ≈ three busy agents
    *  drafting flat-out. */
   aiDraftAccount: { limit: 60, windowMs: 60_000 },
+  /** Cotizador document generation, per user. Each call is one vision
+   *  read on the account's BYO key plus a document render, and a person
+   *  is waiting on it — 20/min is far above anyone quoting by hand
+   *  while bounding a stuck retry loop. */
+  quoteGenerate: { limit: 20, windowMs: 60_000 },
+  /** Cotizador generation, per account. Same reasoning as
+   *  `aiDraftAccount`: caps the whole team's draws on the one shared
+   *  provider key, which the per-user limit alone cannot do. */
+  quoteGenerateAccount: { limit: 30, windowMs: 60_000 },
   /** AI auto-reply generation, per account. The per-conversation cap
    *  (`auto_reply_max_per_conversation`) bounds one thread; this bounds
    *  the whole account across threads, so a burst of inbound from many

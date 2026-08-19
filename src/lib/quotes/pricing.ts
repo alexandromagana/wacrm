@@ -35,8 +35,18 @@ export const SOLAR_TIERS: readonly SolarTier[] = Object.freeze([
   { minKwh: 2_305, maxKwh: 2_624, panels: 16, systemKw: 10, priceMxn: 140_000 },
 ])
 
+/**
+ * The ceiling of a tier table — above it the system needs a bespoke
+ * design, so escalate rather than guess. Takes the table as an argument
+ * because the Cotizador prices against account-defined tables whose
+ * ceiling is whatever the owner typed, not this module's.
+ */
+export function maxQuotableKwh(tiers: readonly SolarTier[]): number {
+  return tiers.length > 0 ? tiers[tiers.length - 1].maxKwh : 0
+}
+
 /** Above this the system needs a bespoke design — escalate, never guess. */
-export const MAX_QUOTABLE_KWH = SOLAR_TIERS[SOLAR_TIERS.length - 1].maxKwh
+export const MAX_QUOTABLE_KWH = maxQuotableKwh(SOLAR_TIERS)
 
 /**
  * Panel wattage, derived from the table rather than configured: every
@@ -118,13 +128,16 @@ export function findAnomalousPeriod(
  * outside the table entirely. Total on every input — callers get null
  * for NaN, Infinity, and negatives rather than an exception.
  */
-export function lookupSolarTier(kwh: number): SolarTier | null {
+export function lookupSolarTier(
+  kwh: number,
+  tiers: readonly SolarTier[] = SOLAR_TIERS,
+): SolarTier | null {
   if (!Number.isFinite(kwh)) return null
   // `promedio_bimestral_kwh` already arrives rounded, but this function
   // is exported and must not leave a gap between 704 and 705 for a
   // caller that passes a raw average.
   const value = Math.round(kwh)
-  return SOLAR_TIERS.find((t) => value >= t.minKwh && value <= t.maxKwh) ?? null
+  return tiers.find((t) => value >= t.minKwh && value <= t.maxKwh) ?? null
 }
 
 export type QuoteResolution =
@@ -159,17 +172,21 @@ export type QuoteResolution =
  * also happens to exceed the table, because "that reading looks wrong"
  * and "your project is too big for a standard package" call for
  * completely different replies.
+ *
+ * `tiers` defaults to the residential table above, so the bot's calls
+ * are unchanged. The Cotizador passes an account-defined table instead.
  */
 export function resolveQuote(
   kwh: number | null,
   periodsUsed: number,
   evidence: QuoteEvidence = {},
+  tiers: readonly SolarTier[] = SOLAR_TIERS,
 ): QuoteResolution {
   if (kwh == null || !Number.isFinite(kwh)) return { kind: 'unreadable' }
   if (!isPlausibleAverage(kwh)) return { kind: 'implausible', kwh }
-  if (kwh > MAX_QUOTABLE_KWH) return { kind: 'above_table', kwh }
+  if (kwh > maxQuotableKwh(tiers)) return { kind: 'above_table', kwh }
 
-  const tier = lookupSolarTier(kwh)
+  const tier = lookupSolarTier(kwh, tiers)
   // Unreachable given the guards above; treated as "don't guess" rather
   // than asserted, so a future edit that opens a gap in the table
   // degrades to a handoff instead of a crash mid-conversation.
