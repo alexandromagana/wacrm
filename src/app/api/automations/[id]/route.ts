@@ -81,6 +81,7 @@ export async function PATCH(
   for (const k of [
     'name',
     'description',
+    'template_group',
     'trigger_type',
     'trigger_config',
     'is_active',
@@ -88,13 +89,27 @@ export async function PATCH(
     if (k in body) update[k] = body[k]
   }
 
+  // Re-filing is not an edit. `template_group` is display-only metadata
+  // — it cannot make a valid automation invalid — so a PATCH carrying
+  // nothing else skips the activation check below. Without this, moving
+  // an *active* automation to another group would run it through
+  // validation and could be rejected over unrelated config drift, i.e.
+  // renaming a folder could fail on the contents of the folder.
+  // `body.steps` is deliberately part of the test: steps are replaced
+  // further down, outside `update`, so a patch carrying both would
+  // otherwise rewrite the step tree with validation switched off.
+  const onlyRefiling =
+    'template_group' in update &&
+    Object.keys(update).length === 1 &&
+    !Array.isArray(body.steps)
+
   // If this PATCH leaves the automation active (either explicitly
   // activating it OR editing an already-active one), validate the
   // merged configuration first. Activation is the natural gate — drafts
   // are still allowed to be incomplete.
   const willBeActive =
     typeof update.is_active === 'boolean' ? update.is_active : existing.is_active
-  if (willBeActive) {
+  if (willBeActive && !onlyRefiling) {
     const mergedTriggerType = (update.trigger_type ?? existing.trigger_type) as string
     const mergedTriggerConfig = update.trigger_config ?? existing.trigger_config
     const mergedSteps = Array.isArray(body.steps)

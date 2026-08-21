@@ -12,6 +12,7 @@ import {
   Pencil,
   RotateCcw,
   Upload,
+  FolderOpen,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
@@ -48,6 +49,19 @@ import type {
   TemplateSampleValues,
 } from '@/types';
 import { templateStatusConfig } from '@/lib/template-status';
+import {
+  TEMPLATE_GROUPS,
+  TEMPLATE_GROUP_CONFIG,
+  UNGROUPED,
+  groupByTemplateGroup,
+  groupDisplay,
+} from '@/lib/template-groups';
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from '@/components/ui/accordion';
 import {
   extractVariableIndices,
   TEMPLATE_LIMITS,
@@ -202,6 +216,72 @@ export function TemplateManager() {
       toast.error(t('toastLoadFailed'));
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Meta's `name` is frozen at approval, so the list can only be filed
+  // by `template_group`. Sections render collapsed-by-default only for
+  // the housekeeping groups — the ones an agent opens this page to read
+  // stay open, or the page would greet them with nothing but headers.
+  const groups = useMemo(
+    () => groupByTemplateGroup(templates, TEMPLATE_GROUP_CONFIG),
+    [templates],
+  );
+
+  const defaultOpenGroups = useMemo(
+    () =>
+      groups
+        .map((g) => g.name)
+        .filter((name) => name !== 'Sistema' && name !== UNGROUPED),
+    [groups],
+  );
+
+  /**
+   * Re-file a template.
+   *
+   * Written straight to Supabase rather than through
+   * /api/whatsapp/templates/[id]: that route is the *Meta* edit path,
+   * and for an APPROVED template a PATCH there costs a resubmission and
+   * a fresh review. The group is ours alone — Meta neither stores nor
+   * validates it — so re-filing must not put an approved template back
+   * in the queue. RLS ("Users can manage own templates") scopes the
+   * write; the local state is patched optimistically because the only
+   * failure mode is the toast below.
+   */
+  async function handleGroupChange(
+    template: MessageTemplate,
+    // base-ui's Select types its value as nullable for clearable
+    // selects. This one always has a selection — `UNGROUPED` is a real
+    // option, not an empty state — so a null is not a "no group" choice
+    // and is ignored rather than written.
+    next: string | null,
+  ) {
+    if (next === null) return;
+    const value = next === UNGROUPED ? null : next;
+    const previous = template.template_group ?? null;
+    if (value === previous) return;
+
+    setTemplates((prev) =>
+      prev.map((row) =>
+        row.id === template.id ? { ...row, template_group: value } : row,
+      ),
+    );
+
+    const { error } = await supabase
+      .from('message_templates')
+      .update({ template_group: value })
+      .eq('id', template.id);
+
+    if (error) {
+      console.error('Failed to change template group:', error);
+      setTemplates((prev) =>
+        prev.map((row) =>
+          row.id === template.id
+            ? { ...row, template_group: previous }
+            : row,
+        ),
+      );
+      toast.error(t('toastGroupFailed'));
     }
   }
 
@@ -521,117 +601,186 @@ export function TemplateManager() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 xl:grid-cols-2">
-          {templates.map((template) => {
-            const statusKey = template.status || 'DRAFT';
-            const status = templateStatusConfig[statusKey];
+        <Accordion defaultValue={defaultOpenGroups} className="gap-2">
+          {groups.map((group) => {
+            const display = groupDisplay(TEMPLATE_GROUP_CONFIG, group.name);
             return (
-              <Card key={template.id}>
-                <CardContent className="flex items-start justify-between pt-4">
-                  <div className="space-y-2 min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <h3 className="font-medium text-foreground">{template.name}</h3>
-                      <Badge
-                        className={`text-xs border ${categoryColors[template.category] || ''}`}
-                      >
-                        {template.category}
-                      </Badge>
-                      <Badge className={`text-xs border ${status.classes}`}>
-                        {status.label}
-                      </Badge>
-                      {template.language && (
-                        <span className="text-xs text-muted-foreground uppercase">
-                          {template.language}
-                        </span>
-                      )}
-                      {template.quality_score && (
-                        <span
-                          className={`text-[10px] uppercase font-medium ${
-                            template.quality_score === 'GREEN'
-                              ? 'text-emerald-400'
-                              : template.quality_score === 'YELLOW'
-                                ? 'text-yellow-400'
-                                : 'text-red-400'
-                          }`}
-                          title="Meta quality score"
-                        >
-                          {template.quality_score}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-muted-foreground line-clamp-2">
-                      {template.body_text}
-                    </p>
-                    {template.footer_text && (
-                      <p className="text-xs text-muted-foreground italic">
-                        {template.footer_text}
-                      </p>
+              <AccordionItem
+                key={group.name}
+                value={group.name}
+                className="border-border"
+              >
+                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <FolderOpen className="size-4 shrink-0" />
+                    <span className="font-medium text-foreground">{group.name}</span>
+                    <Badge className={`text-xs border ${display.classes}`}>
+                      {group.items.length}
+                    </Badge>
+                    {display.hint && (
+                      <span className="hidden text-xs font-normal text-muted-foreground sm:inline">
+                        {display.hint}
+                      </span>
                     )}
-                    {(template.rejection_reason || template.submission_error) && (
-                      <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
-                        <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-                        <span>
-                          {template.rejection_reason || template.submission_error}
-                        </span>
-                      </div>
-                    )}
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="grid gap-3 xl:grid-cols-2">
+                  {group.items.map((template) => {
+                    const statusKey = template.status || 'DRAFT';
+                    const status = templateStatusConfig[statusKey];
+                    return (
+                      <Card key={template.id}>
+                        <CardContent className="flex items-start justify-between pt-4">
+                          <div className="space-y-2 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <h3 className="font-medium text-foreground">{template.name}</h3>
+                              <Badge
+                                className={`text-xs border ${categoryColors[template.category] || ''}`}
+                              >
+                                {template.category}
+                              </Badge>
+                              <Badge className={`text-xs border ${status.classes}`}>
+                                {status.label}
+                              </Badge>
+                              {template.language && (
+                                <span className="text-xs text-muted-foreground uppercase">
+                                  {template.language}
+                                </span>
+                              )}
+                              {template.quality_score && (
+                                <span
+                                  className={`text-[10px] uppercase font-medium ${
+                                    template.quality_score === 'GREEN'
+                                      ? 'text-emerald-400'
+                                      : template.quality_score === 'YELLOW'
+                                        ? 'text-yellow-400'
+                                        : 'text-red-400'
+                                  }`}
+                                  title="Meta quality score"
+                                >
+                                  {template.quality_score}
+                                </span>
+                              )}
+                            </div>
+                            {/* Re-filing is deliberately its own control and not
+                                a field in the edit dialog: that dialog submits
+                                to Meta, and for an APPROVED template opening it
+                                costs a re-review. The group never leaves our
+                                DB, so changing it is a one-click write. */}
+                            <Select
+                              value={template.template_group || UNGROUPED}
+                              onValueChange={(val) => handleGroupChange(template, val)}
+                            >
+                              <SelectTrigger
+                                aria-label={t('groupLabel')}
+                                className="h-7 w-auto min-w-40 gap-1 border-border bg-muted px-2 text-xs text-muted-foreground"
+                              >
+                                <FolderOpen className="size-3" />
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="bg-popover border-border">
+                                {[...TEMPLATE_GROUPS, UNGROUPED].map((name) => (
+                                  <SelectItem
+                                    key={name}
+                                    value={name}
+                                    className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                                  >
+                                    {name}
+                                  </SelectItem>
+                                ))}
+                                {/* A group typed straight into the DB is a real
+                                    filing — keep it selectable instead of
+                                    silently resetting the row on next change. */}
+                                {template.template_group &&
+                                  !TEMPLATE_GROUPS.includes(template.template_group) && (
+                                    <SelectItem
+                                      value={template.template_group}
+                                      className="text-popover-foreground focus:bg-muted focus:text-popover-foreground"
+                                    >
+                                      {template.template_group}
+                                    </SelectItem>
+                                  )}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-sm text-muted-foreground line-clamp-2">
+                              {template.body_text}
+                            </p>
+                            {template.footer_text && (
+                              <p className="text-xs text-muted-foreground italic">
+                                {template.footer_text}
+                              </p>
+                            )}
+                            {(template.rejection_reason || template.submission_error) && (
+                              <div className="flex items-start gap-1.5 text-xs text-red-400 bg-red-950/20 border border-red-900/40 rounded px-2 py-1.5">
+                                <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
+                                <span>
+                                  {template.rejection_reason || template.submission_error}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0 ml-2">
+                            {statusKey === 'APPROVED' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEdit(template)}
+                                title={t('editTitle')}
+                                aria-label={t('editLabel')}
+                                className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                              >
+                                <Pencil className="size-3.5" />
+                                {t('edit')}
+                              </Button>
+                            )}
+                            {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openEdit(template)}
+                                title={t('resubmitTitle')}
+                                aria-label={t('resubmitLabel')}
+                                className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
+                              >
+                                <RotateCcw className="size-3.5" />
+                                {t('resubmit')}
+                              </Button>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setTemplateToDelete(template)}
+                              disabled={deletingId === template.id}
+                              aria-label={
+                                template.meta_template_id
+                                  ? t('deleteMetaLocallyAria')
+                                  : t('deleteLocallyAria')
+                              }
+                              title={
+                                template.meta_template_id
+                                  ? t('deleteMetaLocallyTitle')
+                                  : t('deleteLocallyTitle')
+                              }
+                              className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
+                            >
+                              {deletingId === template.id ? (
+                                <Loader2 className="size-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="size-4" />
+                              )}
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                   </div>
-                  <div className="flex items-center gap-1 shrink-0 ml-2">
-                    {statusKey === 'APPROVED' && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(template)}
-                        title={t('editTitle')}
-                        aria-label={t('editLabel')}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
-                      >
-                        <Pencil className="size-3.5" />
-                        {t('edit')}
-                      </Button>
-                    )}
-                    {(statusKey === 'REJECTED' || statusKey === 'PAUSED') && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => openEdit(template)}
-                        title={t('resubmitTitle')}
-                        aria-label={t('resubmitLabel')}
-                        className="text-muted-foreground hover:text-primary hover:bg-primary/10 h-8 px-2"
-                      >
-                        <RotateCcw className="size-3.5" />
-                        {t('resubmit')}
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setTemplateToDelete(template)}
-                      disabled={deletingId === template.id}
-                      aria-label={
-                        template.meta_template_id
-                          ? t('deleteMetaLocallyAria')
-                          : t('deleteLocallyAria')
-                      }
-                      title={
-                        template.meta_template_id
-                          ? t('deleteMetaLocallyTitle')
-                          : t('deleteLocallyTitle')
-                      }
-                      className="text-muted-foreground hover:text-red-400 hover:bg-red-950/30 h-8 w-8"
-                    >
-                      {deletingId === template.id ? (
-                        <Loader2 className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4" />
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                </AccordionContent>
+              </AccordionItem>
             );
           })}
-        </div>
+        </Accordion>
       )}
 
       <Dialog

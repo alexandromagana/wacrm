@@ -1,6 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import {
+  TEMPLATE_GROUP_CONFIG,
+  groupByTemplateGroup,
+  groupDisplay,
+  humanizeTemplateName,
+} from "@/lib/template-groups";
 import { createClient } from "@/lib/supabase/client";
 import type { MessageTemplate } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -105,6 +111,15 @@ export function TemplatePicker({
   const [params, setParams] = useState<string[]>([]);
   const [headerText, setHeaderText] = useState<string>("");
   const [buttonParams, setButtonParams] = useState<Record<number, string>>({});
+
+  // Sections, not an accordion. This dialog is on the send path — the
+  // settings and automations lists are read, but here every extra click
+  // sits between the agent and a reply, so the groups are headers you
+  // scroll past rather than panels you open.
+  const groups = useMemo(
+    () => groupByTemplateGroup(templates, TEMPLATE_GROUP_CONFIG),
+    [templates],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -214,7 +229,7 @@ export function TemplatePicker({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-popover-foreground">
             <LayoutTemplate className="h-4 w-4 text-primary" />
-            {selected ? selected.name : t("sendTemplate")}
+            {selected ? humanizeTemplateName(selected.name) : t("sendTemplate")}
           </DialogTitle>
           <DialogDescription className="text-muted-foreground">
             {selected
@@ -237,7 +252,25 @@ export function TemplatePicker({
                 </p>
               </div>
             ) : (
-              templates.map((tpl) => {
+              groups.map((group) => (
+                <div key={group.name} className="space-y-2">
+                  {/* Sticky so the group stays named while you scroll
+                      its templates — the whole point is knowing which
+                      kind of message you're about to send. */}
+                  <div className="sticky top-0 z-10 -mx-1 flex items-center gap-2 bg-popover px-1 py-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                      {group.name}
+                    </span>
+                    <span
+                      className={`inline-flex items-center rounded border px-1.5 text-[10px] font-medium ${
+                        groupDisplay(TEMPLATE_GROUP_CONFIG, group.name).classes
+                      }`}
+                    >
+                      {group.items.length}
+                    </span>
+                    <span className="h-px flex-1 bg-border" />
+                  </div>
+                  {group.items.map((tpl) => {
                 const unsendable = missingHeaderMedia(tpl);
                 return (
                   <button
@@ -250,8 +283,11 @@ export function TemplatePicker({
                     <div className="flex items-start gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-medium text-popover-foreground">
-                            {tpl.name}
+                          <p
+                            title={tpl.name}
+                            className="truncate text-sm font-medium text-popover-foreground"
+                          >
+                            {humanizeTemplateName(tpl.name)}
                           </p>
                           <Badge className="border border-primary/30 bg-primary/20 text-[10px] text-primary">
                             {tpl.category}
@@ -276,7 +312,9 @@ export function TemplatePicker({
                     </div>
                   </button>
                 );
-              })
+                  })}
+                </div>
+              ))
             )}
           </div>
         ) : (

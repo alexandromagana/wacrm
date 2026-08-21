@@ -43,7 +43,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   MessageBubble,
-  type TemplateHeaderMedia,
+  type TemplateInfo,
 } from "./message-bubble";
 import { MessageActions } from "./message-actions";
 import {
@@ -210,22 +210,22 @@ export function MessageThread({
   }, [isRefreshing, onRefresh]);
   const [replyTo, setReplyTo] = useState<ReplyDraft | null>(null);
 
-  // Header media for template messages sent before the send path began
-  // storing it on the message row. Keyed by template name, and only
-  // looked up for the templates this thread actually needs it for — a
-  // thread with no such message issues no query at all.
-  const [templateHeaders, setTemplateHeaders] = useState<
-    Record<string, TemplateHeaderMedia>
+  // What each template message in this thread was sent from, keyed by
+  // template name. Two things the message row doesn't carry: the group
+  // it's filed under (so the bubble can say "Seguimiento" next to the
+  // name), and the header media for sends that predate the send path
+  // storing it on the message itself.
+  //
+  // Only the templates this thread actually references are fetched — a
+  // thread with no template message issues no query at all.
+  const [templateInfo, setTemplateInfo] = useState<
+    Record<string, TemplateInfo>
   >({});
 
-  const legacyTemplateNames = useMemo(() => {
+  const templateNames = useMemo(() => {
     const names = new Set<string>();
     for (const msg of messages) {
-      if (
-        msg.content_type === "template" &&
-        !msg.media_url &&
-        msg.template_name
-      ) {
+      if (msg.content_type === "template" && msg.template_name) {
         names.add(msg.template_name);
       }
     }
@@ -234,38 +234,42 @@ export function MessageThread({
 
   // Joined into a string so the effect keys off the actual set of
   // names, not the array identity `messages` rebuilds on every
-  // realtime tick.
-  const legacyTemplateKey = legacyTemplateNames.join(" ");
+  // realtime tick. NUL separates because Meta's naming rules allow
+  // neither it nor anything else outside [a-z0-9_].
+  const templateNameKey = templateNames.join("\u0000");
 
   useEffect(() => {
-    if (!legacyTemplateKey) return;
-    const names = legacyTemplateKey.split(" ");
+    if (!templateNameKey) return;
+    const names = templateNameKey.split("\u0000");
     let cancelled = false;
 
     void (async () => {
       const supabase = createClient();
       const { data } = await supabase
         .from("message_templates")
-        .select("name, header_type, header_media_url")
+        .select("name, header_type, header_media_url, template_group")
         .in("name", names);
       if (cancelled || !data) return;
 
-      const map: Record<string, TemplateHeaderMedia> = {};
+      const map: Record<string, TemplateInfo> = {};
       for (const row of data as MessageTemplate[]) {
-        if (row.header_type && row.header_type !== "text") {
-          map[row.name] = {
-            type: row.header_type,
-            url: row.header_media_url ?? null,
-          };
-        }
+        map[row.name] = {
+          group: row.template_group ?? null,
+          // A text header is just the body's first line — nothing for
+          // the bubble to render as media.
+          header:
+            row.header_type && row.header_type !== "text"
+              ? { type: row.header_type, url: row.header_media_url ?? null }
+              : null,
+        };
       }
-      setTemplateHeaders(map);
+      setTemplateInfo(map);
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [legacyTemplateKey]);
+  }, [templateNameKey]);
 
   // Profiles are bounded by RLS to rows the current user is allowed to
   // see — today that's just the current user, but the dropdown keeps the
@@ -1187,9 +1191,9 @@ export function MessageThread({
                           reactions={msgReactions}
                           currentUserId={user?.id}
                           onToggleReaction={handlePillToggle}
-                          templateHeader={
+                          templateInfo={
                             msg.template_name
-                              ? templateHeaders[msg.template_name]
+                              ? templateInfo[msg.template_name]
                               : undefined
                           }
                         />

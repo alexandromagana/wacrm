@@ -21,6 +21,11 @@ import { MessageReactions } from "./message-reactions";
 import { MediaLightbox } from "./media-lightbox";
 import { InteractivePreview } from "@/components/interactive/interactive-preview";
 import { useTranslations } from "next-intl";
+import {
+  TEMPLATE_GROUP_CONFIG,
+  groupDisplay,
+  humanizeTemplateName,
+} from "@/lib/template-groups";
 
 interface MessageBubbleProps {
   message: Message;
@@ -29,10 +34,11 @@ interface MessageBubbleProps {
   reactions?: MessageReaction[];
   currentUserId?: string;
   onToggleReaction?: (emoji: string) => void;
-  /** Header media of the template this message was sent from, looked
-   *  up by `template_name`. Only needed for messages sent before the
-   *  send path started storing the URL on the message itself. */
-  templateHeader?: TemplateHeaderMedia | null;
+  /** The template this message was sent from, looked up by
+   *  `template_name` — its group, and its header media for sends that
+   *  predate the send path storing the URL on the message itself.
+   *  Only read when `content_type === 'template'`. */
+  templateInfo?: TemplateInfo | null;
 }
 
 function StatusIcon({ status }: { status: Message["status"] }) {
@@ -165,6 +171,22 @@ export interface TemplateHeaderMedia {
 }
 
 /**
+ * What the thread resolved about the template a message was sent from,
+ * looked up by `template_name`.
+ *
+ * The message row stores the name and the rendered body but nothing
+ * about the template itself, so anything the bubble wants to show
+ * beyond the raw name has to be joined in by the thread.
+ */
+export interface TemplateInfo {
+  /** `template_group` — our filing, shown beside the name. */
+  group?: string | null;
+  /** Only needed for messages sent before the send path stored the
+   *  header media on the message row. */
+  header?: TemplateHeaderMedia | null;
+}
+
+/**
  * Last resort for a stored `media_url` with no template row to say what
  * it is. Extension-based, so it's a guess — falls back to `image`,
  * which is what the overwhelming majority of media headers are.
@@ -179,11 +201,11 @@ function guessMediaType(url: string): TemplateHeaderMedia["type"] {
 function MessageContent({
   message,
   t,
-  templateHeader,
+  templateInfo,
 }: {
   message: Message;
   t: ReturnType<typeof useTranslations>;
-  templateHeader?: TemplateHeaderMedia | null;
+  templateInfo?: TemplateInfo | null;
 }) {
   switch (message.content_type) {
     case "text":
@@ -271,18 +293,44 @@ function MessageContent({
     case "template": {
       // A media-header template sends a picture (or video/document)
       // along with the body. `media_url` is set on the message from the
-      // send onward; `templateHeader` backfills it for messages sent
-      // before that, by looking the template up by name.
-      const headerUrl = message.media_url || templateHeader?.url || null;
+      // send onward; `templateInfo.header` backfills it for messages
+      // sent before that, by looking the template up by name.
+      const header = templateInfo?.header;
+      const headerUrl = message.media_url || header?.url || null;
       const headerType = message.media_url
-        ? templateHeader?.type ?? guessMediaType(message.media_url)
-        : templateHeader?.type;
+        ? header?.type ?? guessMediaType(message.media_url)
+        : header?.type;
+
+      // Which template this was. The badge used to read "Template" for
+      // every one of them, which told the agent a template had gone out
+      // but not whether it was the 48h nudge, the 5-day one, or the
+      // visit reminder — the three the customer is most likely to be
+      // replying to. The raw `template_name` stays in the tooltip: it's
+      // the name Meta and the automations key off, so it's what you
+      // need when cross-checking a send against a rule.
+      const group = templateInfo?.group?.trim();
 
       return (
         <div>
-          <span className="mb-1 inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-            <LayoutTemplate className="h-3 w-3" />
-            {t("template")}
+          <span className="mb-1 flex flex-wrap items-center gap-1">
+            <span
+              title={message.template_name || undefined}
+              className="inline-flex items-center gap-1 rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+            >
+              <LayoutTemplate className="h-3 w-3" />
+              {message.template_name
+                ? humanizeTemplateName(message.template_name)
+                : t("template")}
+            </span>
+            {group && (
+              <span
+                className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-medium ${
+                  groupDisplay(TEMPLATE_GROUP_CONFIG, group).classes
+                }`}
+              >
+                {group}
+              </span>
+            )}
           </span>
           {headerUrl && headerType === "image" && (
             <div className="mt-1">
@@ -394,7 +442,7 @@ export function MessageBubble({
   reactions,
   currentUserId,
   onToggleReaction,
-  templateHeader,
+  templateInfo,
 }: MessageBubbleProps) {
   const t = useTranslations("Inbox.bubble");
 
@@ -435,7 +483,7 @@ export function MessageBubble({
         <MessageContent
           message={message}
           t={t}
-          templateHeader={templateHeader}
+          templateInfo={templateInfo}
         />
         <div
           className={cn(
