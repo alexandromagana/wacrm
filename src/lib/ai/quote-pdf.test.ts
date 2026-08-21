@@ -105,6 +105,7 @@ function reading(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtraction 
     incluye_periodo_actual: true,
     periodos_promediados_kwh: [2944, 2177, 1487, 1447, 1966, 2788],
     tarifa: '1D',
+    numero_servicio: '782990401509',
     ciudad: 'CANCUN, Q.R.',
     importe_periodo_mxn: 9814.27,
     importe_dap_mxn: 423.03,

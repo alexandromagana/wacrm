@@ -23,6 +23,18 @@ const MEDIA_LOOKBACK_MS = 15 * 60_000
  *  a "gracias" text minutes after the receipt must not re-extract. */
 const FRESH_MEDIA_WINDOW_MS = 90_000
 
+/**
+ * How many media one burst carries forward. Three covered a single
+ * two-page bill with room to spare; a property split across meters
+ * sends one bill per meter, so the ceiling now matches what the reader
+ * will look at in a turn (MAX_MEDIA_PER_TURN in `receipt.ts`).
+ *
+ * Handing over more than were read is not waste: bills already
+ * extracted on an earlier turn are skipped by id, so the extra ids cost
+ * a set lookup rather than a vision call.
+ */
+const MAX_BURST_MEDIA = 6
+
 /** Debounce before the newest-message claim. Tunable via
  *  `AI_REPLY_DEBOUNCE_MS`; 0 disables the sleep (tests/local). */
 export function inboundDebounceMs(): number {
@@ -81,7 +93,7 @@ export async function resolveInboundBurst(
     .in('content_type', ['image', 'document'])
     .gte('created_at', new Date(Date.now() - MEDIA_LOOKBACK_MS).toISOString())
     .order('created_at', { ascending: false })
-    .limit(3)
+    .limit(MAX_BURST_MEDIA)
   if (mediaErr) {
     console.error('[inbound-buffer] media lookup failed:', mediaErr)
     return { superseded: false, receiptMediaIds: [] }

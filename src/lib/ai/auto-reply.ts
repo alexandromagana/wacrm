@@ -7,11 +7,20 @@ import { buildSystemPrompt, buildDateTimeNote } from './defaults'
 import { buildHandoffSummary } from './handoff'
 import { applyLeadStatusTag } from './lead-status'
 import {
-  extractReceipt,
+  extractReceipts,
   formatReceiptNote,
   saveReceiptData,
   type ReceiptExtraction,
 } from './receipt'
+import {
+  clearMeterState,
+  formatMeterGateNote,
+  mergeReadings,
+  parseMeterState,
+  resolveMeterGate,
+  saveMeterState,
+  type MeterState,
+} from './meters'
 import { sendQuoteProposal } from './quote-pdf'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
@@ -209,7 +218,9 @@ export async function dispatchInboundToAiReply(
 
     const { data: conv, error: convErr } = await db
       .from('conversations')
-      .select('assigned_agent_id, ai_autoreply_disabled, ai_reply_count')
+      .select(
+        'assigned_agent_id, ai_autoreply_disabled, ai_reply_count, ai_meter_state',
+      )
       .eq('id', conversationId)
       .maybeSingle()
     if (convErr || !conv) return
@@ -280,8 +291,19 @@ export async function dispatchInboundToAiReply(
     // rate limit bounds vision spend against photo spam.
 
     // Kept in scope past the send: the proposal PDF is built from this
-    // same reading, once the customer-facing reply is safely out.
+    // same reading, once the customer-facing reply is safely out. Null
+    // whenever the meter gate is still open — a property split across
+    // meters is only quotable once every bill is in.
     let receiptExtraction: ReceiptExtraction | null = null
+    // A batch that has run out of patience (asked twice, still no
+    // usable count) goes to a person instead of asking a third time.
+    let meterHandoff = false
+
+    // The conversation's open batch of meters, if any. An ordinary
+    // single-receipt customer parses to an empty batch and never writes
+    // the column back.
+    let meterState: MeterState = parseMeterState(conv.ai_meter_state)
+    const hadOpenBatch = meterState.readings.length > 0
 
     if (hasReceipt) {
       const receiptLimit = checkRateLimit(`ai-receipt:${conversationId}`, {
@@ -289,21 +311,26 @@ export async function dispatchInboundToAiReply(
         windowMs: 15 * 60_000,
       })
       if (receiptLimit.success) {
-        const extraction = await extractReceipt({
+        const readings = await extractReceipts({
           config,
           accessToken: accessToken!,
           mediaIds: receiptMediaIds!,
+          // Bills read on an earlier turn are already in the batch;
+          // re-reading one costs a vision call and invites two readings
+          // of the same bill to disagree.
+          skipMediaIds: meterState.readMediaIds,
         })
-        if (extraction) {
-          receiptExtraction = extraction
-          void saveReceiptData(db, {
-            accountId,
-            userId: configOwnerUserId,
-            contactId,
-            extraction,
-          })
-          messages.push({ role: 'user', content: formatReceiptNote(extraction) })
-        } else {
+        if (readings.length > 0) {
+          meterState = mergeReadings(
+            meterState,
+            readings.map((r) => r.extraction),
+            readings.flatMap((r) => r.mediaIds),
+          )
+        } else if (!hadOpenBatch) {
+          // Nothing readable and nothing held from before. (With a batch
+          // open this is just a burst re-reporting bills we already
+          // read, which is not a failure and must not make the bot ask
+          // for a resend of a receipt it is holding.)
           messages.push({
             role: 'user',
             content:
@@ -315,6 +342,83 @@ export async function dispatchInboundToAiReply(
         // than answering an image we never looked at.
         return
       }
+    }
+
+    // The gate. Everything the customer has sent so far, folded into one
+    // reading, and a verdict on whether that reading is the whole
+    // property yet. One bill with nothing said about meters resolves to
+    // `ready` immediately, so the ordinary customer's path is unchanged.
+    if (meterState.readings.length > 0) {
+      const gate = resolveMeterGate(meterState)
+      if (gate.kind === 'handoff') {
+        meterHandoff = true
+      } else if (gate.kind === 'ready') {
+        // Only when this turn actually brought a bill. A settled batch
+        // left over from an earlier turn — one whose proposal was held
+        // back for review, say — must not re-inject its reading into
+        // every "gracias" that follows and re-offer a quote nobody
+        // asked for again.
+        if (hasReceipt) {
+          receiptExtraction = gate.reading
+          void saveReceiptData(db, {
+            accountId,
+            userId: configOwnerUserId,
+            contactId,
+            extraction: gate.reading,
+          })
+          messages.push({
+            role: 'user',
+            content: formatReceiptNote(gate.reading, { count: gate.count }),
+          })
+        }
+      } else {
+        // Gate open: the reading is real but partial. The note forbids
+        // quoting, and `receiptExtraction` stays null so no PDF goes
+        // out — the two have to agree or the customer gets a document
+        // contradicting the message above it.
+        void saveReceiptData(db, {
+          accountId,
+          userId: configOwnerUserId,
+          contactId,
+          extraction: gate.reading,
+        })
+        const note = hasReceipt
+          ? formatReceiptNote(gate.reading, {
+              count: gate.count,
+              pending:
+                gate.kind === 'awaiting_more'
+                  ? { kind: 'awaiting_more', expected: gate.expected }
+                  : { kind: 'awaiting_confirmation' },
+            })
+          : // No new bill this turn: this is the customer answering the
+            // question, and the note's job is to carry the marker
+            // instruction so their answer can actually land.
+            formatMeterGateNote(meterState)
+        if (note) messages.push({ role: 'user', content: note })
+        meterState = { ...meterState, askedCount: meterState.askedCount + 1 }
+      }
+    }
+
+    // The batch asked its questions and never got a usable answer.
+    // Handing off beats asking a third time — and beats quoting a sum
+    // that covers only part of the property. Mirrors the cap-exhausted
+    // path above: the thread goes to a person, who has the bills the
+    // batch collected sitting in the conversation.
+    if (meterHandoff) {
+      await saveMeterState(db, conversationId, meterState)
+      await performHandoff(db, {
+        accountId,
+        conversationId,
+        contactId,
+        handoffAgentId: config.handoffAgentId,
+        alreadyAssigned: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+        }),
+      })
+      assistantHandled = true
+      return
     }
 
     // Ground the reply in the account's knowledge base (best-effort).
@@ -331,11 +435,38 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, leadStatus, usage } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    })
+    const { text, handoff, leadStatus, metersExpected, usage } =
+      await generateReply({
+        config,
+        systemPrompt,
+        messages,
+      })
+
+    // The customer just told us how many meters the property has. That
+    // answer can complete the batch on this very turn — the bot's reply
+    // above says "con esos dos te preparo la propuesta", and the
+    // proposal follows it seconds later rather than waiting for a
+    // message the customer has no reason to send.
+    if (metersExpected != null && meterState.readings.length > 0) {
+      meterState = { ...meterState, expected: metersExpected }
+      const settled = resolveMeterGate(meterState)
+      if (settled.kind === 'ready') {
+        receiptExtraction = settled.reading
+        void saveReceiptData(db, {
+          accountId,
+          userId: configOwnerUserId,
+          contactId,
+          extraction: settled.reading,
+        })
+      }
+    }
+
+    // Persist the batch before the send: if the proposal or the reply
+    // fails, the bills already read must survive so the next turn
+    // continues the conversation instead of restarting it.
+    if (meterState.readings.length > 0) {
+      await saveMeterState(db, conversationId, meterState)
+    }
 
     // Persist the model's lead qualification (the [ESTATUS]/[STATUS]
     // marker) as a contact tag. Fire-and-forget like usage logging —
@@ -487,6 +618,11 @@ export async function dispatchInboundToAiReply(
         console.log(
           `[ai auto-reply] proposal ${outcome.folio} sent (${outcome.panels} panels) on ${conversationId}`,
         )
+        // The batch has done its job. Clearing it means the customer's
+        // next receipt starts a fresh project instead of being summed
+        // onto a property that was already quoted — a second house, a
+        // neighbour's bill, or the same one a month later.
+        await clearMeterState(db, conversationId)
       } else if (outcome.kind === 'skipped') {
         console.log(
           `[ai auto-reply] proposal skipped (${outcome.reason}) on ${conversationId}`,

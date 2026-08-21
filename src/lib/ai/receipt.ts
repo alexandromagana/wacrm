@@ -40,6 +40,14 @@ export interface ReceiptExtraction {
    */
   periodos_promediados_kwh: number[]
   tarifa: string | null
+  /**
+   * CFE's "No. de servicio" (RPU) — the meter's identity on paper, and
+   * the only field that tells "the same bill sent twice" apart from "a
+   * second meter on the same property". Digits only, punctuation
+   * stripped, so two readings of one bill compare equal even when the
+   * OCR disagrees about the spaces.
+   */
+  numero_servicio: string | null
   /** City/municipality read off the service address, or null. */
   ciudad: string | null
   /** "Fac. del Periodo" — this bimester's charge, before DAP. */
@@ -86,9 +94,12 @@ se hace por fuera.
 - Página 1: el consumo en kWh del periodo facturado ACTUAL (un solo
   número — el bimestre que se está cobrando ahora), el periodo de
   facturación (fechas), la tarifa contratada si aparece (ej. 1, 1A,
-  DAC, PDBT, GDMTH), y la ciudad o municipio del domicilio del
-  servicio (busca la dirección impresa — extrae SOLO la ciudad o
-  municipio, nunca la calle ni el número).
+  DAC, PDBT, GDMTH), el NÚMERO DE SERVICIO (también llamado RPU o
+  "No. de servicio" — la cadena larga de dígitos que identifica el
+  medidor, normalmente arriba a la derecha o junto al nombre del
+  titular; cópiala completa, solo los dígitos), y la ciudad o
+  municipio del domicilio del servicio (busca la dirección impresa —
+  extrae SOLO la ciudad o municipio, nunca la calle ni el número).
 
   ⚠️ CUIDADO CON EL CONSUMO DE LA PÁGINA 1. En la tabla de conceptos
   aparecen tres números en la fila "Energía (kWh)":
@@ -148,7 +159,7 @@ CFE, parece una foto de un techo").
   los centavos tal cual (10237.85, no "$10,237.85" ni 10237).
 
 # COMPACTO (importante)
-Responde de la forma MÁS BREVE posible: solo los 10 campos del JSON de
+Responde de la forma MÁS BREVE posible: solo los 11 campos del JSON de
 abajo, nada más. NO agregues campos extra, NO transcribas la tabla
 completa, NO repitas valores, NO expliques tu razonamiento. Los dos
 historiales son arreglos simples de máximo 5 números (ej. [1002, 1170,
@@ -163,6 +174,7 @@ Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
   "periodo_actual": "<fecha inicio - fecha fin>" o null,
   "historial_bimestres_kwh": [<máximo 5 números, los más recientes>],
   "tarifa": "<tarifa>" o null,
+  "numero_servicio": "<No. de servicio / RPU, solo dígitos>" o null,
   "ciudad": "<ciudad o municipio del domicilio>" o null,
   "importe_periodo_mxn": <"Fac. del Periodo" o null>,
   "importe_dap_mxn": <DAP o null>,
@@ -178,6 +190,25 @@ Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
  *  siga la instrucción) nunca infle el promedio con datos de más de un
  *  año atrás. */
 const MAX_HISTORIAL_BIMESTRES = 5
+
+/**
+ * Reduce a read service number to comparable digits, or null when what
+ * came back can't be one.
+ *
+ * The length gate matters more than it looks: this string's whole job is
+ * deciding "same bill" vs "second meter", and a hallucinated or
+ * half-read value that passes through would split one bill into two
+ * meters and make the bot ask a customer with a single meter to confirm
+ * meters they don't have. CFE prints 12 digits; the band is wide enough
+ * to survive an OCR that drops or invents one, and narrow enough to
+ * reject a stray year or an account balance. Anything rejected falls
+ * back to comparing the reading's own contents (see `sameMeter`).
+ */
+export function normalizeServiceNumber(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const digits = String(value).replace(/\D/g, '')
+  return digits.length >= 8 && digits.length <= 20 ? digits : null
+}
 
 /**
  * Parse + validate the model's raw output into a ReceiptExtraction.
@@ -275,6 +306,7 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
     incluye_periodo_actual: consumoActual != null,
     periodos_promediados_kwh: values,
     tarifa: typeof r.tarifa === 'string' ? r.tarifa : null,
+    numero_servicio: normalizeServiceNumber(r.numero_servicio),
     ciudad:
       typeof r.ciudad === 'string' && r.ciudad.trim() ? r.ciudad.trim() : null,
     importe_periodo_mxn: importePeriodo,
@@ -315,15 +347,59 @@ export function inferPropertyType(tarifa: string | null): string | null {
 export { isPlausibleAverage }
 
 /**
+ * How the model is told to report a meter count back to us.
+ *
+ * Deliberately injected per-turn — inside the receipt note and the
+ * gate's own note — rather than added to `buildSystemPrompt`. That
+ * scaffold is shared by every tenant of this CRM, most of whom have
+ * nothing to do with CFE bills, and it must stay byte-identical across
+ * turns for provider prompt caching. Here the instruction costs nothing
+ * until a conversation actually has meters in play.
+ */
+export const METERS_MARKER_INSTRUCTION =
+  'Si el cliente dice (ahora o en cualquier mensaje posterior) cuántos medidores tiene en total, o confirma que ya no hay más, TERMINA tu mensaje con el marcador [MEDIDORES: N] donde N es el total de medidores de la propiedad (ej. "[MEDIDORES: 3]"; si confirma que solo es el que ya mandó, "[MEDIDORES: 1]"). El marcador se borra antes de enviar y el cliente nunca lo ve. Sin él la cotización se queda esperando recibos que ya no van a llegar.'
+
+/**
+ * What the meter gate knows about this turn, when the reading came from
+ * a property split across several CFE meters.
+ *
+ * Declared here rather than in `meters.ts` so this module keeps its
+ * one-way dependency: `meters.ts` imports the reading, never the other
+ * way round.
+ */
+export interface MeterNoteContext {
+  /** Bills behind this reading. Above 1, every number is already a sum. */
+  count: number
+  /**
+   * Set while the gate is still open — the reading is real but
+   * incomplete, so this turn asks and does not price. Mirrors how
+   * `needs_review` suppresses a quote below: the PDF is held on the
+   * same turn the note forbids the model to state a number, or the
+   * customer gets a firm price for part of their house.
+   */
+  pending?:
+    | { kind: 'awaiting_more'; expected: number }
+    | { kind: 'awaiting_confirmation' }
+}
+
+/**
  * Render the extraction as the bracketed system note the auto-reply
  * model receives as a user-role message. Mirrors the date/time
  * injection pattern: context reaches the model inside the turn, the
  * cached system prompt stays untouched.
  */
-export function formatReceiptNote(r: ReceiptExtraction): string {
+export function formatReceiptNote(
+  r: ReceiptExtraction,
+  meters?: MeterNoteContext,
+): string {
   const lines: string[] = [
     '[NOTA DEL SISTEMA — el cliente acaba de enviar imagen(es) de su recibo de CFE. Lectura automática:',
   ]
+  if (meters && meters.count > 1) {
+    lines.push(
+      `medidores_leidos: ${meters.count} (esta propiedad tiene el consumo repartido en varios medidores; TODAS las cifras de abajo ya son la SUMA de los ${meters.count} recibos, no las vuelvas a sumar)`,
+    )
+  }
   lines.push(
     `promedio_bimestral_kwh: ${r.promedio_bimestral_kwh ?? 'no legible'}`,
   )
@@ -351,12 +427,34 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
       periods: r.periodos_promediados_kwh,
     },
   )
+  // The meter gate outranks the pricing checks below: a reading that
+  // covers two of a customer's three meters prices perfectly cleanly and
+  // is still the wrong number. Quoting it sizes the system for part of
+  // the house — the one error the customer cannot spot on the PDF.
+  const pending = meters?.pending
+  if (pending) {
+    const missing =
+      pending.kind === 'awaiting_more'
+        ? Math.max(pending.expected - meters.count, 0)
+        : 0
+    lines.push(
+      pending.kind === 'awaiting_more'
+        ? `medidores_incompletos: el cliente dijo que tiene ${pending.expected} medidores y solo llevamos ${meters.count}. Falta(n) ${missing}.`
+        : `medidores_multiples: llegaron ${meters.count} recibos de medidores DISTINTOS y el cliente nunca dijo cuántos tiene en total.`,
+      'NO des precio, ni número de paneles, ni cotización en este mensaje, y NO se enviará PDF.',
+      pending.kind === 'awaiting_more'
+        ? `Tu única tarea en este turno es pedirle con amabilidad el/los ${missing} recibo(s) que faltan, completos y con sus dos páginas. En cuanto lleguen se suma todo y se cotiza de una vez.`
+        : 'Tu única tarea en este turno es preguntarle si esos son TODOS sus medidores o si tiene alguno más. No cotices hasta saberlo: sumar solo una parte de su consumo le vende un sistema que se queda corto.',
+      'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pregunta al final del mensaje.',
+      METERS_MARKER_INSTRUCTION,
+    )
+  }
   // A window that prices cleanly but is not trustworthy. No PDF goes out
   // on this turn (`sendQuoteProposal` skips the same resolution), so the
   // note has to stop the model from quoting the number in text either —
   // otherwise the customer gets a firm price the company has to walk
   // back once they answer.
-  if (quote.kind === 'needs_review') {
+  if (!pending && quote.kind === 'needs_review') {
     lines.push(
       quote.reason === 'missing_current_period'
         ? 'lectura_incompleta: no se leyó el consumo del bimestre actual. Antes de dar cualquier número, pídele con amabilidad una foto nítida de la PRIMERA página del recibo, donde viene el renglón "Energía (kWh)".'
@@ -370,7 +468,7 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
       'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pregunta al final del mensaje.',
     )
   }
-  if (quote.kind === 'ok') {
+  if (!pending && quote.kind === 'ok') {
     const financials = buildFinancials({
       costoBimestralMxn: projectionBaseCost({
         costoPeriodoMxn: r.costo_periodo_mxn,
@@ -399,7 +497,7 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
   }
   if (r.advertencias) lines.push(`advertencias: ${r.advertencias}`)
   lines.push(
-    quote.kind === 'needs_review'
+    pending || quote.kind === 'needs_review'
       ? 'Respeta la instrucción de arriba: en este turno se pregunta, no se cotiza. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]'
       : 'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
   )
@@ -409,11 +507,11 @@ export function formatReceiptNote(r: ReceiptExtraction): string {
 /**
  * Run the vision extraction on bytes already in hand.
  *
- * Split out of `extractReceipt` for the Cotizador, which uploads a
+ * Split out of `extractReceipts` for the Cotizador, which uploads a
  * receipt through a browser form and so has the file itself, not a Meta
  * media id to download.
  *
- * Unlike `extractReceipt` this does NOT swallow errors: a provider
+ * Unlike `extractReceipts` this does NOT swallow errors: a provider
  * timeout or a network failure propagates. The bot wants them
  * swallowed — a failed read just means "ask the customer again" — but a
  * person standing in front of the generator waiting for a document
@@ -435,19 +533,83 @@ export async function extractReceiptFromFiles(
   return parseReceiptJson(raw)
 }
 
+/** One extracted bill, tied back to the media it was read from. */
+export interface ReceiptReading {
+  extraction: ReceiptExtraction
+  /** Media ids this reading consumed, so the caller can record them as
+   *  read and never pay for the same vision call twice. */
+  mediaIds: string[]
+}
+
+/** How many media a single turn will look at. Six covers three meters
+ *  photographed two pages each — the practical ceiling before a
+ *  customer is better served by a human. */
+const MAX_MEDIA_PER_TURN = 6
+
+/** Vision calls one turn may spend. The per-conversation rate limit is
+ *  consumed once per turn, so this is what actually bounds the cost of
+ *  a customer dumping a folder into the chat. */
+const MAX_RECEIPTS_PER_TURN = 4
+
 /**
- * Download the customer's images from Meta and run the vision
- * extraction with the account's own key/model. Returns null on any
- * failure — the caller treats that as "no reading" and the bot follows
- * its prompt (ask again / ask for the number by text). Never throws.
+ * Split downloaded media into one group per bill.
+ *
+ * A PDF is a whole bill — CFE emails it that way — so each gets its own
+ * extraction call, which is what makes several meters readable without
+ * touching the single-bill prompt.
+ *
+ * Photos are pages, not bills, and nothing in the bytes says which bill
+ * a page belongs to. They stay in one group, which is exactly right for
+ * the common case (page 1 + page 2 of one bill) and is the known limit
+ * of this split: a customer who photographs three different meters gets
+ * one reading back, and the conversation falls back to the bot asking
+ * for the rest one at a time. Multi-meter customers overwhelmingly send
+ * the PDF, so the split buys the real case without risking the common
+ * one.
  */
-export async function extractReceipt(args: {
+function groupIntoReceipts(
+  files: { file: MediaFile; mediaId: string }[],
+): { files: MediaFile[]; mediaIds: string[] }[] {
+  const groups: { files: MediaFile[]; mediaIds: string[] }[] = []
+  let images: { files: MediaFile[]; mediaIds: string[] } | null = null
+
+  for (const { file, mediaId } of files) {
+    if (file.mimeType === 'application/pdf') {
+      groups.push({ files: [file], mediaIds: [mediaId] })
+      continue
+    }
+    if (!images) {
+      images = { files: [], mediaIds: [] }
+      groups.push(images)
+    }
+    images.files.push(file)
+    images.mediaIds.push(mediaId)
+  }
+  return groups.slice(0, MAX_RECEIPTS_PER_TURN)
+}
+
+/**
+ * Download the customer's media from Meta and read every bill in it.
+ *
+ * Returns one reading per bill — usually a single-element array, and
+ * more only when the customer sent several PDFs at once. Returns an
+ * empty array on any failure: the caller treats that as "no reading"
+ * and the bot follows its prompt (ask again / ask for a clearer photo).
+ * Never throws.
+ */
+export async function extractReceipts(args: {
   config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>
   accessToken: string
   mediaIds: string[]
-}): Promise<ReceiptExtraction | null> {
-  const { config, accessToken, mediaIds } = args
-  if (mediaIds.length === 0) return null
+  /** Media already read on an earlier turn. Skipped rather than
+   *  re-extracted — a second read of one bill costs tokens and is not
+   *  obliged to agree with the first. */
+  skipMediaIds?: readonly string[]
+}): Promise<ReceiptReading[]> {
+  const { config, accessToken, mediaIds, skipMediaIds } = args
+  const skip = new Set(skipMediaIds ?? [])
+  const pending = mediaIds.filter((id) => !skip.has(id))
+  if (pending.length === 0) return []
 
   try {
     // Receipts arrive as photos OR as the PDF CFE emails out — accept
@@ -460,8 +622,8 @@ export async function extractReceipt(args: {
     // stream` on a valid CFE bill — that the skip below was silently
     // discarding readable receipts and leaving the bot to ask for a
     // resend of a bill it never opened.
-    const files: MediaFile[] = []
-    for (const mediaId of mediaIds.slice(0, 3)) {
+    const downloaded: { file: MediaFile; mediaId: string }[] = []
+    for (const mediaId of pending.slice(0, MAX_MEDIA_PER_TURN)) {
       const info = await getMediaUrl({ mediaId, accessToken })
       const { buffer, contentType } = await downloadMedia({
         downloadUrl: info.url,
@@ -471,11 +633,25 @@ export async function extractReceipt(args: {
       if (!mimeType.startsWith('image/') && mimeType !== 'application/pdf') {
         continue
       }
-      files.push({ base64: buffer.toString('base64'), mimeType })
+      downloaded.push({
+        file: { base64: buffer.toString('base64'), mimeType },
+        mediaId,
+      })
     }
-    if (files.length === 0) return null
+    if (downloaded.length === 0) return []
 
-    return await extractReceiptFromFiles(config, files)
+    const readings: ReceiptReading[] = []
+    for (const group of groupIntoReceipts(downloaded)) {
+      // Per-group try/catch: one unreadable bill out of three must not
+      // discard the two that read fine.
+      try {
+        const extraction = await extractReceiptFromFiles(config, group.files)
+        if (extraction) readings.push({ extraction, mediaIds: group.mediaIds })
+      } catch (err) {
+        console.error('[ai receipt] one receipt failed to extract:', err)
+      }
+    }
+    return readings
   } catch (err) {
     // AbortSignal.timeout throws a TimeoutError — surface it distinctly
     // so "read failed" on a valid receipt is diagnosable as slowness vs.
@@ -485,7 +661,7 @@ export async function extractReceipt(args: {
       `[ai receipt] extraction failed${isTimeout ? ' (timeout)' : ''}:`,
       err,
     )
-    return null
+    return []
   }
 }
 

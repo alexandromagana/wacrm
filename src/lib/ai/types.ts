@@ -75,6 +75,11 @@ export interface GenerateResult {
    *  quote (the [COTIZACION_ENVIADA] marker) — drives the "Quote sent"
    *  tag + follow-up sequence. */
   quoteSent: boolean
+  /** How many CFE meters the customer said the property has (the
+   *  [MEDIDORES: N] marker), or null when they haven't said. Closes the
+   *  multi-meter gate in `src/lib/ai/meters.ts`: the bot waits for that
+   *  many bills, then quotes their sum. */
+  metersExpected: number | null
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null
 }

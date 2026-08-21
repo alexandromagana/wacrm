@@ -46,6 +46,7 @@ describe('parseGeneration', () => {
       handoff: false,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage: null,
     })
   })
@@ -56,6 +57,7 @@ describe('parseGeneration', () => {
       handoff: true,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
@@ -63,6 +65,7 @@ describe('parseGeneration', () => {
       handoff: true,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage: null,
     })
   })
@@ -74,6 +77,7 @@ describe('parseGeneration', () => {
       handoff: false,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage,
     })
   })
@@ -169,6 +173,7 @@ describe('generateReply — OpenAI', () => {
       handoff: false,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -286,6 +291,7 @@ describe('generateReply — Anthropic', () => {
       handoff: false,
       leadStatus: null,
       quoteSent: false,
+      metersExpected: null,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

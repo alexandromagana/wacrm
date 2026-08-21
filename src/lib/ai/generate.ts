@@ -80,6 +80,24 @@ const QUOTE_MARKER_RE =
   /\[\s*(?:COTIZACI[OÓ]N[\s_]?ENVIADA|QUOTE[\s_]?SENT)\s*\]/gi
 
 /**
+ * Meter-count marker the business prompt asks the model to append the
+ * moment the customer says how many CFE meters the property has
+ * ("[MEDIDORES: 3]"). Stripped from the outgoing text; closes the
+ * multi-meter gate so the bot waits for that many bills and quotes
+ * their sum instead of pricing each meter as if it were the house.
+ *
+ * Only a small count is accepted. The marker's whole purpose is to
+ * decide how long to hold a quote, and a hallucinated "[MEDIDORES: 40]"
+ * would park the conversation forever waiting for bills that don't
+ * exist — a silent bot is worse than a wrong quote, because nobody gets
+ * notified about a reply that never comes.
+ */
+const METERS_MARKER_RE = /\[\s*(?:MEDIDORES|METERS)\s*:\s*(\d{1,2})\s*\]/gi
+
+/** Above this a "count" is a misread, not a property. */
+const MAX_METERS_MARKER = 6
+
+/**
  * Split the raw model output into `{ text, handoff, leadStatus, usage }`.
  * The sentinel can appear alone or trailing a partial reply; either way
  * we treat the turn as a handoff and strip the marker from any remaining
@@ -94,6 +112,7 @@ export function parseGeneration(
   const handoff = raw.includes(HANDOFF_SENTINEL)
   let leadStatus: LeadStatus | null = null
   let quoteSent = false
+  let metersExpected: number | null = null
   const text = raw
     .split(HANDOFF_SENTINEL)
     .join('')
@@ -111,6 +130,11 @@ export function parseGeneration(
       quoteSent = true
       return ''
     })
+    .replace(METERS_MARKER_RE, (_marker, count: string) => {
+      const parsed = Number(count)
+      if (parsed >= 1 && parsed <= MAX_METERS_MARKER) metersExpected = parsed
+      return ''
+    })
     .trim()
-  return { text, handoff, leadStatus, quoteSent, usage }
+  return { text, handoff, leadStatus, quoteSent, metersExpected, usage }
 }

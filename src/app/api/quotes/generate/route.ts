@@ -234,7 +234,7 @@ export async function POST(request: Request) {
     // extractReceiptFromFiles throws on a provider/network failure and
     // returns null on an unreadable image — the two need different
     // answers, which is why this path calls it rather than the bot's
-    // swallow-everything extractReceipt.
+    // swallow-everything extractReceipts.
     let extraction;
     try {
       extraction = await extractReceiptFromFiles(aiConfig, files);

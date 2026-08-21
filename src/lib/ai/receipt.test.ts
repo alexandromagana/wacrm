@@ -83,6 +83,7 @@ function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtracti
     incluye_periodo_actual: false,
     periodos_promediados_kwh: [],
     tarifa: null,
+    numero_servicio: null,
     ciudad: null,
     importe_periodo_mxn: null,
     importe_dap_mxn: null,

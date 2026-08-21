@@ -10,7 +10,7 @@ const h = vi.hoisted(() => ({
   engineSendText: vi.fn(),
   applyLeadStatusTag: vi.fn(),
   applyQuoteSentTag: vi.fn(),
-  extractReceipt: vi.fn(),
+  extractReceipts: vi.fn(),
   saveReceiptData: vi.fn(),
   sendQuoteProposal: vi.fn(),
   state: {
@@ -32,10 +32,17 @@ vi.mock('./lead-status', () => ({
   applyQuoteSentTag: h.applyQuoteSentTag,
 }))
 vi.mock('./receipt', () => ({
-  extractReceipt: h.extractReceipt,
+  extractReceipts: h.extractReceipts,
   saveReceiptData: h.saveReceiptData,
-  formatReceiptNote: (r: { promedio_bimestral_kwh: number | null }) =>
-    `[NOTA: promedio ${r.promedio_bimestral_kwh}]`,
+  formatReceiptNote: (
+    r: { promedio_bimestral_kwh: number | null },
+    meters?: { count: number; pending?: { kind: string } },
+  ) =>
+    `[NOTA: promedio ${r.promedio_bimestral_kwh}` +
+    (meters && meters.count > 1 ? ` de ${meters.count} medidores` : '') +
+    (meters?.pending ? ` PENDIENTE:${meters.pending.kind}` : '') +
+    ']',
+  METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
@@ -87,12 +94,27 @@ vi.mock('./admin-client', () => ({
 }))
 
 import { dispatchInboundToAiReply } from './auto-reply'
+import { __resetRateLimitForTests } from '@/lib/rate-limit'
 
 const ARGS = {
   accountId: 'acct-1',
   conversationId: 'conv-1',
   contactId: 'contact-1',
   configOwnerUserId: 'user-1',
+}
+
+/**
+ * Stage the bills `extractReceipts` returns this turn, in arrival
+ * order. Each gets its own media id, which is what the meter batch
+ * records so an already-read bill is never extracted twice.
+ */
+function mockBills(...extractions: Record<string, unknown>[]) {
+  h.extractReceipts.mockResolvedValue(
+    extractions.map((extraction, i) => ({
+      extraction,
+      mediaIds: [`media-${i + 1}`],
+    })),
+  )
 }
 
 function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
@@ -112,6 +134,12 @@ function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
 }
 
 beforeEach(() => {
+  // The receipt-vision limiter allows 4 reads per conversation per 15
+  // minutes and its buckets are module-level, so without this every
+  // receipt test past the fourth silently skipped extraction — and
+  // still passed, because "no proposal was sent" is equally true of a
+  // throttled turn. Reset so each test exercises the path it names.
+  __resetRateLimitForTests()
   h.state.conv = {
     assigned_agent_id: null,
     ai_autoreply_disabled: false,
@@ -133,7 +161,7 @@ beforeEach(() => {
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
   h.applyLeadStatusTag.mockResolvedValue(undefined)
   h.applyQuoteSentTag.mockResolvedValue(undefined)
-  h.extractReceipt.mockResolvedValue(null)
+  h.extractReceipts.mockResolvedValue([])
   h.saveReceiptData.mockResolvedValue(undefined)
   h.sendQuoteProposal.mockResolvedValue({
     kind: 'skipped',
@@ -397,7 +425,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   }
 
   it('extracts, saves the field, and injects the reading into the turn', async () => {
-    h.extractReceipt.mockResolvedValue({
+    mockBills({
       consumo_periodo_actual_kwh: 1450,
       periodo_actual: null,
       historial_bimestres_kwh: [1380, 1420],
@@ -408,7 +436,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     })
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
-    expect(h.extractReceipt).toHaveBeenCalledWith(
+    expect(h.extractReceipts).toHaveBeenCalledWith(
       expect.objectContaining({
         accessToken: 'meta-token',
         mediaIds: ['media-1', 'media-2'],
@@ -435,7 +463,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
 
   it('replies even when the conversation has no prior text (image-only turn)', async () => {
     h.buildConversationContext.mockResolvedValue([])
-    h.extractReceipt.mockResolvedValue({
+    mockBills({
       consumo_periodo_actual_kwh: null,
       periodo_actual: null,
       historial_bimestres_kwh: [],
@@ -450,7 +478,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   })
 
   it('injects a receipt-only re-ask note on failure — never offers the kWh fallback', async () => {
-    h.extractReceipt.mockResolvedValue(null)
+    h.extractReceipts.mockResolvedValue([])
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.saveReceiptData).not.toHaveBeenCalled()
     const note = (
@@ -468,7 +496,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
 
   it('runs no extraction on a plain text turn', async () => {
     await dispatchInboundToAiReply(ARGS)
-    expect(h.extractReceipt).not.toHaveBeenCalled()
+    expect(h.extractReceipts).not.toHaveBeenCalled()
   })
 
   it('sends the proposal from the same reading, after the text reply', async () => {
@@ -482,7 +510,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
       costo_periodo_mxn: 10237.3,
       advertencias: '',
     }
-    h.extractReceipt.mockResolvedValue(reading)
+    mockBills(reading)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
     expect(h.sendQuoteProposal).toHaveBeenCalledWith(
@@ -499,19 +527,232 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     )
   })
 
+  // ----------------------------------------------------------------
+  // Properties split across several CFE meters. Each bill prices
+  // cleanly on its own, which is exactly why quoting one is wrong: the
+  // system gets sized for a fraction of the house.
+  // ----------------------------------------------------------------
+
+  /** Two bills that differ by service number — a real second meter. */
+  const METER_A = {
+    promedio_bimestral_kwh: 1000,
+    cantidad_periodos_usados: 6,
+    incluye_periodo_actual: true,
+    periodos_promediados_kwh: [1000, 1000, 1000, 1000, 1000, 1000],
+    historial_bimestres_kwh: [1000, 1000, 1000, 1000, 1000],
+    historial_bimestres_importe_mxn: [4000, 4000, 4000, 4000, 4000],
+    consumo_periodo_actual_kwh: 1000,
+    periodo_actual: '22 MAY 26 - 22 JUL 26',
+    tarifa: '1D',
+    numero_servicio: '782990401509',
+    costo_periodo_mxn: 4000,
+    advertencias: '',
+  }
+  const METER_B = {
+    ...METER_A,
+    numero_servicio: '782250505386',
+    promedio_bimestral_kwh: 700,
+    consumo_periodo_actual_kwh: 700,
+    periodos_promediados_kwh: [700, 700, 700, 700, 700, 700],
+    historial_bimestres_kwh: [700, 700, 700, 700, 700],
+    costo_periodo_mxn: 2800,
+  }
+
+  it('holds the proposal when a second meter arrives unannounced', async () => {
+    mockBills(METER_A, METER_B)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    // The document must wait: a sum of two meters the customer has not
+    // confirmed is not a quote, it is a guess about their house.
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toContain('PENDIENTE:awaiting_confirmation')
+    // The customer is still answered — the bot asks its question.
+    expect(h.engineSendText).toHaveBeenCalled()
+  })
+
+  it('quotes the sum on the turn the customer confirms the count', async () => {
+    mockBills(METER_A, METER_B)
+    h.generateReply.mockResolvedValue({
+      text: 'Perfecto, con esos dos te preparo la propuesta',
+      handoff: false,
+      leadStatus: null,
+      metersExpected: 2,
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    // 1,000 + 700 — one system for the whole property, not two for
+    // halves of it.
+    expect(h.sendQuoteProposal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        extraction: expect.objectContaining({
+          promedio_bimestral_kwh: 1700,
+          costo_periodo_mxn: 6800,
+        }),
+      }),
+    )
+  })
+
+  it('keeps waiting while a stated count is still short', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: 3,
+        readings: [METER_A],
+        readMediaIds: ['old-media'],
+        askedCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    mockBills(METER_B)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toContain('PENDIENTE:awaiting_more')
+  })
+
+  it('never pays to read the same bill twice', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: null,
+        readings: [METER_A],
+        readMediaIds: ['media-1'],
+        askedCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    mockBills(METER_B)
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.extractReceipts).toHaveBeenCalledWith(
+      expect.objectContaining({ skipMediaIds: ['media-1'] }),
+    )
+  })
+
+  it('asks for a resend only when it is holding nothing', async () => {
+    // A burst that re-reports bills already in the batch reads as "no
+    // new bills". That is not a failed read, and asking the customer to
+    // resend a receipt we are holding is how a working conversation
+    // starts going in circles.
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: null,
+        readings: [METER_A],
+        readMediaIds: ['media-1'],
+        askedCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    h.extractReceipts.mockResolvedValue([])
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).not.toMatch(/NUNCA le pidas.*kWh/i)
+    expect(h.sendQuoteProposal).toHaveBeenCalled()
+  })
+
+  it('hands off instead of asking a third time', async () => {
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: null,
+        readings: [METER_A, METER_B],
+        readMediaIds: ['media-1', 'media-2'],
+        askedCount: 2,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    h.extractReceipts.mockResolvedValue([])
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.generateReply).not.toHaveBeenCalled()
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  it('does not re-quote a settled batch on a later text turn', async () => {
+    // The batch survives a proposal that was held back for review. It
+    // must not then re-offer itself on every message that follows — the
+    // customer said "gracias", not "quote me again".
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: null,
+        readings: [METER_A],
+        readMediaIds: ['media-1'],
+        askedCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      content: string
+    }[]
+    expect(messages.some((m) => m.content.startsWith('[NOTA: promedio'))).toBe(
+      false,
+    )
+  })
+
+  it('carries the marker instruction on a text-only answer turn', async () => {
+    // The customer answers "sí, son esos dos" in words. No image, so
+    // without this note the count would never reach the model's output
+    // and the batch would wait forever.
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: null,
+        readings: [METER_A, METER_B],
+        readMediaIds: ['media-1', 'media-2'],
+        askedCount: 1,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    await dispatchInboundToAiReply(ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toContain('[marcador MEDIDORES]')
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
   it('sends no proposal on a plain text turn', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
   })
 
   it('sends no proposal when the reading failed', async () => {
-    h.extractReceipt.mockResolvedValue(null)
+    h.extractReceipts.mockResolvedValue([])
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
   })
 
   it('sends no proposal on handoff — the human owns the thread now', async () => {
-    h.extractReceipt.mockResolvedValue({
+    mockBills({
       promedio_bimestral_kwh: 2135,
       cantidad_periodos_usados: 6,
       historial_bimestres_kwh: [],
@@ -528,7 +769,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   it('still replies when the proposal blows up', async () => {
     // sendQuoteProposal owns its errors, but if one ever escapes it must
     // not retroactively break a reply the customer already received.
-    h.extractReceipt.mockResolvedValue({
+    mockBills({
       promedio_bimestral_kwh: 2135,
       cantidad_periodos_usados: 6,
       historial_bimestres_kwh: [],

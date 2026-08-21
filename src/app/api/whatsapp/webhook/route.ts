@@ -1,7 +1,7 @@
 import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -894,7 +894,7 @@ async function processMessage(
   // `application/octet-stream` for a perfectly good bill PDF often
   // enough that a strict equality here dropped those conversations
   // into the "please resend it" loop. Accept the filename as evidence
-  // too — `extractReceipt` sniffs the real bytes before spending a
+  // too — `extractReceipts` sniffs the real bytes before spending a
   // vision call, so a mislabelled non-PDF still costs nothing.
   const documentLooksPdf =
     message.document?.mime_type === 'application/pdf' ||
