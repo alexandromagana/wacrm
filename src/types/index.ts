@@ -327,6 +327,14 @@ export interface MessageTemplate {
   user_id: string;
   name: string;
   category: 'Marketing' | 'Utility' | 'Authentication';
+  /**
+   * Our own filing, free of Meta's vocabulary (migration 042).
+   * `category` above is Meta's billing bucket and only ever holds three
+   * values; this is the operator's — "Seguimiento", "Visitas" — and is
+   * what the manager and the inbox picker group by. NULL files under
+   * `UNGROUPED`. Vocabulary in src/lib/template-groups.ts.
+   */
+  template_group?: string | null;
   language?: string;
   header_type?: 'text' | 'image' | 'video' | 'document';
   header_content?: string;
@@ -635,6 +643,9 @@ export interface Automation {
   user_id: string;
   name: string;
   description?: string;
+  /** Filing for the automations list — see `MessageTemplate.template_group`
+   *  and src/lib/template-groups.ts. Migration 042. */
+  template_group?: string | null;
   trigger_type: AutomationTriggerType;
   trigger_config: AutomationTriggerConfig;
   is_active: boolean;

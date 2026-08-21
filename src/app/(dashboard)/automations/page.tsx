@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
@@ -16,6 +16,8 @@ import {
   Users,
   PhoneCall,
   Loader2,
+  FolderOpen,
+  Check,
 } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/client"
@@ -29,6 +31,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
@@ -40,6 +43,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from "@/components/ui/accordion"
+import {
+  AUTOMATION_GROUPS,
+  AUTOMATION_GROUP_CONFIG,
+  UNGROUPED,
+  groupByTemplateGroup,
+  groupDisplay,
+} from "@/lib/template-groups"
 import { AUTOMATION_TEMPLATES, type TemplateSlug } from "@/lib/automations/templates"
 import { triggerMeta, formatRelative } from "@/lib/automations/trigger-meta"
 import { cn } from "@/lib/utils"
@@ -105,6 +121,44 @@ export default function AutomationsPage() {
       return
     }
     toast.success(next ? t("toasts.activated") : t("toasts.paused"))
+  }
+
+  // Twelve automations in one flat list hides the shape of the system:
+  // five of them are button handlers that only make sense read as a
+  // set, and the two quote nudges are meaningless without the rule that
+  // cancels them. Grouping puts each of those next to its own kind.
+  const groups = useMemo(
+    () => groupByTemplateGroup(automations ?? [], AUTOMATION_GROUP_CONFIG),
+    [automations],
+  )
+
+  /** Re-file an automation. Metadata only — see the `onlyRefiling`
+   *  branch in PATCH /api/automations/[id], which keeps this off the
+   *  activation-validation path. */
+  async function changeGroup(a: Automation, next: string) {
+    const value = next === UNGROUPED ? null : next
+    const previous = a.template_group ?? null
+    if (value === previous) return
+
+    setAutomations((prev) =>
+      prev?.map((x) => (x.id === a.id ? { ...x, template_group: value } : x)) ?? prev,
+    )
+    const res = await fetch(`/api/automations/${a.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ template_group: value }),
+    })
+    if (!res.ok) {
+      setAutomations((prev) =>
+        prev?.map((x) =>
+          x.id === a.id ? { ...x, template_group: previous } : x,
+        ) ?? prev,
+      )
+      const body = await res.json().catch(() => ({}))
+      toast.error(body?.error ?? t("toasts.updateError"))
+      return
+    }
+    toast.success(t("toasts.grouped", { group: value ?? UNGROUPED }))
   }
 
   async function duplicate(a: Automation) {
@@ -214,20 +268,67 @@ export default function AutomationsPage() {
           </p>
         </div>
       ) : (
-        <ul className="space-y-3">
-          {automations.map((a) => (
-            <AutomationCard
-              key={a.id}
-              automation={a}
-              onToggle={(next) => toggleActive(a, next)}
-              onEdit={() => router.push(`/automations/${a.id}/edit`)}
-              onDuplicate={() => duplicate(a)}
-              onLogs={() => router.push(`/automations/${a.id}/logs`)}
-              onDelete={() => setPendingDelete(a)}
-              t={t}
-            />
-          ))}
-        </ul>
+        <Accordion
+          defaultValue={groups.map((g) => g.name)}
+          className="gap-2"
+        >
+          {groups.map((group) => {
+            const display = groupDisplay(AUTOMATION_GROUP_CONFIG, group.name)
+            const activeCount = group.items.filter((a) => a.is_active).length
+            return (
+              <AccordionItem
+                key={group.name}
+                value={group.name}
+                className="border-border"
+              >
+                <AccordionTrigger className="text-muted-foreground hover:text-foreground hover:no-underline">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <FolderOpen className="h-4 w-4 shrink-0" />
+                    <span className="font-medium text-foreground">
+                      {group.name}
+                    </span>
+                    <span
+                      className={cn(
+                        "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                        display.classes,
+                      )}
+                    >
+                      {/* Active count, not just total: the question this
+                          page gets opened with is which rules are
+                          firing right now. */}
+                      {t("groupCount", {
+                        active: activeCount,
+                        total: group.items.length,
+                      })}
+                    </span>
+                    {display.hint && (
+                      <span className="hidden text-xs font-normal text-muted-foreground sm:inline">
+                        {display.hint}
+                      </span>
+                    )}
+                  </span>
+                </AccordionTrigger>
+                <AccordionContent>
+                  <ul className="space-y-3">
+                    {group.items.map((a) => (
+                      <AutomationCard
+                        key={a.id}
+                        automation={a}
+                        onToggle={(next) => toggleActive(a, next)}
+                        onEdit={() => router.push(`/automations/${a.id}/edit`)}
+                        onDuplicate={() => duplicate(a)}
+                        onLogs={() => router.push(`/automations/${a.id}/logs`)}
+                        onDelete={() => setPendingDelete(a)}
+                        onChangeGroup={(name) => changeGroup(a, name)}
+                        t={t}
+                      />
+                    ))}
+                  </ul>
+                </AccordionContent>
+              </AccordionItem>
+            )
+          })}
+        </Accordion>
       )}
 
       <Dialog open={!!pendingDelete} onOpenChange={(v) => !v && setPendingDelete(null)}>
@@ -268,6 +369,7 @@ function AutomationCard({
   onDuplicate,
   onLogs,
   onDelete,
+  onChangeGroup,
   t,
 }: {
   automation: Automation
@@ -276,6 +378,7 @@ function AutomationCard({
   onDuplicate: () => void
   onLogs: () => void
   onDelete: () => void
+  onChangeGroup: (group: string) => void
   t: ReturnType<typeof useTranslations>
 }) {
   const meta = triggerMeta(automation.trigger_type)
@@ -354,6 +457,27 @@ function AutomationCard({
                 <FileText className="h-4 w-4" />
                 {t("viewLogs")}
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {/* Flat list rather than a submenu: five destinations is
+                  short enough to read at a glance, and the current one
+                  is marked instead of hidden so the menu also answers
+                  "which group is this in?". */}
+              <DropdownMenuLabel>{t("moveToGroup")}</DropdownMenuLabel>
+              {[...AUTOMATION_GROUPS, UNGROUPED].map((name) => {
+                const current =
+                  (automation.template_group || UNGROUPED) === name
+                return (
+                  <DropdownMenuItem
+                    key={name}
+                    disabled={current}
+                    onClick={() => onChangeGroup(name)}
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                    {name}
+                    {current && <Check className="ml-auto h-3.5 w-3.5" />}
+                  </DropdownMenuItem>
+                )
+              })}
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2 className="h-4 w-4" />

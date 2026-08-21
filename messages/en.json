@@ -831,8 +831,11 @@
         "deleted": "Automation deleted",
         "updateError": "Failed to update",
         "duplicateError": "Failed to duplicate",
-        "deleteError": "Failed to delete"
-      }
+        "deleteError": "Failed to delete",
+        "grouped": "Moved to {group}."
+      },
+      "groupCount": "{active} of {total} active",
+      "moveToGroup": "Move to group"
     },
     "edit": {
       "loading": "Loading...",
@@ -1455,7 +1458,9 @@
       "toastInvalidImage": "Header image must be a JPEG or PNG.",
       "toastImageTooLarge": "Image is {size} MB — Meta's limit is 5 MB.",
       "toastUploadSuccess": "Image uploaded.",
-      "toastUploadFailed": "Upload failed."
+      "toastUploadFailed": "Upload failed.",
+      "groupLabel": "Group",
+      "toastGroupFailed": "Couldn't change the group. Try again."
     },
     "roles": {
       "admin": "Admin",
