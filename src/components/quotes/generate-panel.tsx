@@ -20,6 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -51,6 +52,9 @@ interface Result {
 
 const MAX_RECEIPT_FILES = 3;
 
+/** Sentinel for "no contact", mirroring the flows form's own select. */
+const NO_CONTACT = '__none__';
+
 export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -63,6 +67,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const [projectTypeId, setProjectTypeId] = useState('');
   const [templateId, setTemplateId] = useState('');
   const [contactId, setContactId] = useState('');
+  const [clientName, setClientName] = useState('');
   const [files, setFiles] = useState<File[]>([]);
 
   const [generating, setGenerating] = useState(false);
@@ -94,9 +99,25 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     load();
   }, [load]);
 
+  /**
+   * Picking a contact fills the name in rather than locking it: most
+   * quotes go out under the contact's own name, but a WhatsApp profile
+   * is often a nickname, and the document should carry the real one.
+   */
+  function pickContact(id: string) {
+    setContactId(id);
+    const picked = contacts.find((c) => c.id === id);
+    // Only overwrite the name when the contact has one to offer —
+    // clearing the picker, or choosing a contact saved under just a
+    // phone number, leaves whatever was typed alone.
+    if (picked?.name) setClientName(picked.name);
+  }
+
   function addFiles(picked: FileList | null) {
     if (!picked) return;
-    setFiles((prev) => [...prev, ...Array.from(picked)].slice(0, MAX_RECEIPT_FILES));
+    setFiles((prev) =>
+      [...prev, ...Array.from(picked)].slice(0, MAX_RECEIPT_FILES)
+    );
   }
 
   async function handleGenerate() {
@@ -106,6 +127,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     try {
       const body = new FormData();
       body.append('contact_id', contactId);
+      body.append('client_name', clientName.trim());
       body.append('project_type_id', projectTypeId);
       body.append('template_id', templateId);
       for (const file of files) body.append('receipt_files', file);
@@ -129,12 +151,16 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   }
 
   const ready =
-    contactId && projectTypeId && templateId && files.length > 0 && !generating;
+    clientName.trim() &&
+    projectTypeId &&
+    templateId &&
+    files.length > 0 &&
+    !generating;
 
   if (loading) {
     return (
       <Card>
-        <CardContent className="flex items-center justify-center py-16 text-muted-foreground">
+        <CardContent className="text-muted-foreground flex items-center justify-center py-16">
           <Loader2 className="size-5 animate-spin" />
         </CardContent>
       </Card>
@@ -146,7 +172,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     return (
       <Card>
         <CardContent className="py-12 text-center">
-          <p className="text-sm text-muted-foreground">
+          <p className="text-muted-foreground text-sm">
             {templates.length === 0
               ? 'Primero sube una plantilla de propuesta.'
               : 'Primero crea un tipo de proyecto con sus rangos de precio.'}
@@ -155,7 +181,9 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
             className="mt-4"
             onClick={templates.length === 0 ? onGoToTemplates : onGoToRules}
           >
-            {templates.length === 0 ? 'Ir a Plantillas' : 'Ir a Reglas de cálculo'}
+            {templates.length === 0
+              ? 'Ir a Plantillas'
+              : 'Ir a Reglas de cálculo'}
           </Button>
         </CardContent>
       </Card>
@@ -167,23 +195,30 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       <CardHeader>
         <CardTitle className="text-foreground">Generar cotización</CardTitle>
         <CardDescription className="text-muted-foreground">
-          Elige el cliente y el tipo de proyecto, adjunta su recibo CFE, y el
-          sistema lee el consumo y llena la propuesta.
+          Escribe el nombre del cliente y elige el tipo de proyecto, adjunta su
+          recibo CFE, y el sistema lee el consumo y llena la propuesta. El
+          contacto es opcional — sirve para dejar la cotización ligada al CRM.
         </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-5">
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label className="text-muted-foreground">Cliente</Label>
+            <Label className="text-muted-foreground">
+              Contacto{' '}
+              <span className="text-muted-foreground/70">(opcional)</span>
+            </Label>
             <Select
-              value={contactId}
-              onValueChange={(v) => setContactId(v ?? '')}
+              value={contactId || NO_CONTACT}
+              onValueChange={(v) =>
+                pickContact(v === NO_CONTACT ? '' : (v ?? ''))
+              }
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="Elige un contacto" />
+                <SelectValue placeholder="Sin contacto" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem value={NO_CONTACT}>Sin contacto</SelectItem>
                 {contacts.map((contact) => (
                   <SelectItem key={contact.id} value={contact.id}>
                     {contact.name || contact.phone}
@@ -191,6 +226,23 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label
+              htmlFor="quote-client-name"
+              className="text-muted-foreground"
+            >
+              Nombre en la propuesta
+            </Label>
+            <Input
+              id="quote-client-name"
+              value={clientName}
+              onChange={(e) => setClientName(e.target.value)}
+              placeholder="Ej. Fernanda Díaz"
+              maxLength={120}
+              autoComplete="off"
+            />
           </div>
 
           <div className="space-y-2">
@@ -246,7 +298,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
               'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-5 transition-all',
               files.length > 0
                 ? 'border-primary/35 bg-primary/[0.04]'
-                : 'border-border/80 bg-background/40 hover:border-primary/40 hover:bg-background/70',
+                : 'border-border/80 bg-background/40 hover:border-primary/40 hover:bg-background/70'
             )}
           >
             <div
@@ -254,21 +306,21 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                 'flex size-10 items-center justify-center rounded-lg ring-1 transition-colors',
                 files.length > 0
                   ? 'bg-primary/15 ring-primary/25'
-                  : 'bg-muted/80 ring-border/80 group-hover:bg-muted',
+                  : 'bg-muted/80 ring-border/80 group-hover:bg-muted'
               )}
             >
               {files.length > 0 ? (
-                <FileText className="size-5 text-primary" />
+                <FileText className="text-primary size-5" />
               ) : (
-                <Upload className="size-5 text-muted-foreground group-hover:text-foreground" />
+                <Upload className="text-muted-foreground group-hover:text-foreground size-5" />
               )}
             </div>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-muted-foreground text-sm">
               {files.length > 0
                 ? `${files.length} de ${MAX_RECEIPT_FILES} archivos`
                 : 'Haz clic para adjuntar el recibo'}
             </p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-muted-foreground text-[11px]">
               Foto o PDF. Incluye la página del historial de consumo para un
               cálculo más preciso.
             </p>
@@ -291,7 +343,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
               {files.map((file, i) => (
                 <li
                   key={`${file.name}-${i}`}
-                  className="flex items-center gap-2 rounded-md bg-muted/50 px-2 py-1 text-xs text-muted-foreground"
+                  className="bg-muted/50 text-muted-foreground flex items-center gap-2 rounded-md px-2 py-1 text-xs"
                 >
                   <FileText className="size-3.5 shrink-0" />
                   <span className="min-w-0 flex-1 truncate">{file.name}</span>
@@ -300,7 +352,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                     onClick={() =>
                       setFiles((prev) => prev.filter((_, j) => j !== i))
                     }
-                    className="rounded p-0.5 hover:bg-muted"
+                    className="hover:bg-muted rounded p-0.5"
                     aria-label={`Quitar ${file.name}`}
                   >
                     <X className="size-3.5" />
@@ -330,16 +382,16 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
         </Button>
 
         {error && (
-          <div className="flex gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          <div className="border-destructive/30 bg-destructive/5 text-destructive flex gap-2 rounded-lg border p-3 text-sm">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <p>{error}</p>
           </div>
         )}
 
         {result && (
-          <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-              <CheckCircle2 className="size-4 text-primary" />
+          <div className="border-border bg-muted/30 space-y-3 rounded-lg border p-4">
+            <div className="text-foreground flex items-center gap-2 text-sm font-medium">
+              <CheckCircle2 className="text-primary size-4" />
               Cotización {result.folio} lista
             </div>
             {result.warning && (

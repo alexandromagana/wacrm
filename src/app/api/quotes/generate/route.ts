@@ -35,6 +35,9 @@ import type {
   QuoteTemplateFileType,
 } from '@/types';
 
+/** Long enough for a full legal name, short enough to fit the layout. */
+const CLIENT_NAME_MAX = 120;
+
 /** A CFE bill is commonly two pages, photographed separately. */
 const MAX_RECEIPT_FILES = 3;
 const RECEIPT_MAX_BYTES = 16 * 1024 * 1024;
@@ -93,16 +96,27 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    const contactId = form.get('contact_id');
+    const contactIdRaw = form.get('contact_id');
+    const clientNameRaw = form.get('client_name');
     const projectTypeId = form.get('project_type_id');
     const templateId = form.get('template_id');
-    if (
-      typeof contactId !== 'string' ||
-      typeof projectTypeId !== 'string' ||
-      typeof templateId !== 'string'
-    ) {
+    if (typeof projectTypeId !== 'string' || typeof templateId !== 'string') {
       return NextResponse.json(
-        { error: 'Elige un contacto, un tipo de proyecto y una plantilla.' },
+        { error: 'Elige un tipo de proyecto y una plantilla.' },
+        { status: 400 }
+      );
+    }
+    // The contact is optional: leads that arrive off-channel are quoted
+    // by name alone, without being invented as CRM rows first.
+    const contactId =
+      typeof contactIdRaw === 'string' && contactIdRaw ? contactIdRaw : null;
+    const typedName =
+      typeof clientNameRaw === 'string'
+        ? clientNameRaw.trim().slice(0, CLIENT_NAME_MAX)
+        : '';
+    if (!contactId && !typedName) {
+      return NextResponse.json(
+        { error: 'Elige un contacto o escribe el nombre del cliente.' },
         { status: 400 }
       );
     }
@@ -127,11 +141,13 @@ export async function POST(request: Request) {
     // RLS scopes all three to the account, so a foreign id reads as
     // missing rather than leaking that it exists.
     const [contactRes, projectTypeRes, templateRes] = await Promise.all([
-      supabase
-        .from('contacts')
-        .select('id, name')
-        .eq('id', contactId)
-        .maybeSingle(),
+      contactId
+        ? supabase
+            .from('contacts')
+            .select('id, name')
+            .eq('id', contactId)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
       supabase
         .from('quote_project_types')
         .select(PROJECT_TYPE_SELECT)
@@ -152,10 +168,24 @@ export async function POST(request: Request) {
       (QuoteProjectType & { quote_rate_tiers: QuoteRateTier[] }) | null;
     const template = templateRes.data as QuoteTemplate | null;
 
-    if (!contact) {
+    if (contactId && !contact) {
       return NextResponse.json(
         { error: 'Contacto no encontrado.' },
         { status: 404 }
+      );
+    }
+
+    // What actually gets printed: a name typed for this quote wins over
+    // the contact's own, so a WhatsApp nickname never reaches a document
+    // — without renaming the contact behind the user's back.
+    const clientName = typedName || contact?.name || null;
+    if (!clientName) {
+      return NextResponse.json(
+        {
+          error:
+            'Ese contacto no tiene nombre. Escribe el nombre del cliente para la propuesta.',
+        },
+        { status: 400 }
       );
     }
     if (!projectType) {
@@ -280,13 +310,17 @@ export async function POST(request: Request) {
     // the same panel count, and two documents that differ on price must
     // not share a folio.
     const now = new Date();
+    // Seeded by contact when there is one, else by the name typed — so a
+    // re-quote for the same person and system reproduces the folio they
+    // already wrote down, either way.
+    const folioSeed = contact?.id ?? `name:${clientName.toLowerCase()}`;
     const folio = buildFolio(
       now,
-      `${contact.id}:${quote.tier.panels}:${projectTypeId}`
+      `${folioSeed}:${quote.tier.panels}:${projectTypeId}`
     );
 
     const values = buildQuoteMergeFields({
-      nombre: contact.name,
+      nombre: clientName,
       tier: quote.tier,
       folio,
       now,
@@ -341,10 +375,7 @@ export async function POST(request: Request) {
     }
 
     const mimeType = templateMimeType(extension);
-    const safeName = (contact.name ?? 'cliente').replace(
-      /[^\p{L}\p{N} .-]/gu,
-      ''
-    );
+    const safeName = clientName.replace(/[^\p{L}\p{N} .-]/gu, '');
     const { publicUrl, path } = await uploadServerMedia({
       db: supabase,
       bucket: QUOTE_ASSETS_BUCKET,
@@ -372,21 +403,25 @@ export async function POST(request: Request) {
       console.error('[quotes/generate] receipt archive failed:', err);
     }
 
-    // Keeps the contact card in step with the bot's own reads.
-    void saveReceiptData(supabase, {
-      accountId,
-      userId,
-      contactId: contact.id,
-      extraction,
-    }).catch((err) =>
-      console.error('[quotes/generate] saveReceiptData failed:', err)
-    );
+    // Keeps the contact card in step with the bot's own reads. Skipped
+    // for an off-channel quote: there is no card to update.
+    if (contact) {
+      void saveReceiptData(supabase, {
+        accountId,
+        userId,
+        contactId: contact.id,
+        extraction,
+      }).catch((err) =>
+        console.error('[quotes/generate] saveReceiptData failed:', err)
+      );
+    }
 
     const { data: created, error: insertError } = await supabase
       .from('quotes')
       .insert({
         account_id: accountId,
-        contact_id: contact.id,
+        contact_id: contact?.id ?? null,
+        client_name: clientName,
         project_type_id: projectTypeId,
         template_id: templateId,
         created_by: userId,

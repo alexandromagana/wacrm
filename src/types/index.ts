@@ -759,7 +759,10 @@ export type QuoteStatus =
 export interface Quote {
   id: string;
   account_id: string;
+  /** Null for a lead quoted off-channel, with no CRM row of its own. */
   contact_id?: string | null;
+  /** The name actually printed on the document (043). */
+  client_name?: string | null;
   /** Traceability only — the numbers below are snapshots, not lookups. */
   project_type_id?: string | null;
   tier_id?: string | null;
