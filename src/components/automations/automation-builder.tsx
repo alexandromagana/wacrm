@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react"
@@ -731,12 +732,24 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         >
           <ArrowLeft className="h-4 w-4" />
         </button>
-        <input
-          value={state.name}
-          onChange={(e) => patchTop("name", e.target.value)}
-          placeholder={t("untitled")}
-          className="min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
-        />
+        {/* Name over description, both plain inputs that only reveal a
+            field on focus: the description is the line the automations
+            list shows under the name, so it is edited in the same place
+            and at the same weight it is read. */}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <input
+            value={state.name}
+            onChange={(e) => patchTop("name", e.target.value)}
+            placeholder={t("untitled")}
+            className="min-w-0 rounded-md bg-transparent px-2 py-1 text-sm font-semibold text-foreground placeholder:text-muted-foreground focus:bg-muted focus:outline-none sm:text-base"
+          />
+          <AutoGrowTextarea
+            value={state.description}
+            onChange={(v) => patchTop("description", v)}
+            placeholder={t("descriptionPlaceholder")}
+            aria-label={t("description")}
+          />
+        </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span className="hidden sm:inline">{t("active")}</span>
           <Switch
@@ -781,6 +794,48 @@ export function AutomationBuilder({ initial }: { initial: BuilderInitial }) {
         </div>
       </div>
     </div>
+  )
+}
+
+/** The description field in the top bar. A plain input was wrong here:
+ *  these descriptions run to several sentences (they explain when a rule
+ *  fires and what cancels it), and a one-line box hides all but the first
+ *  few words of exactly the text you came to amend. Grows with its
+ *  content instead, capped so the canvas keeps most of the screen.
+ *
+ *  Sized in JS rather than with `field-sizing: content`, which Safari and
+ *  Firefox still don't implement. */
+function AutoGrowTextarea({
+  value,
+  onChange,
+  placeholder,
+  "aria-label": ariaLabel,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  "aria-label": string
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = "auto"
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
+
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      className="min-w-0 resize-none overflow-y-auto rounded-md bg-transparent px-2 py-0.5 text-xs leading-relaxed text-muted-foreground placeholder:text-muted-foreground/60 focus:bg-muted focus:text-foreground focus:outline-none"
+      style={{ maxHeight: "6rem" }}
+    />
   )
 }
 

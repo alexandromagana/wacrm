@@ -936,6 +936,8 @@
       "save": "Save",
       "saveDraft": "Save Draft",
       "untitled": "Untitled automation",
+      "description": "Description",
+      "descriptionPlaceholder": "Add a description",
       "backToAutomations": "Back to automations",
       "toasts": {
         "saved": "Automation saved",

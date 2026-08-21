@@ -30,6 +30,7 @@ import { Switch } from "@/components/ui/switch"
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -444,7 +445,10 @@ function AutomationCard({
             >
               <MoreVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            {/* w-auto overrides the shared default of `w-(--anchor-width)`:
+                the anchor here is a 32px icon button, which otherwise
+                wrapped every group name onto three lines. */}
+            <DropdownMenuContent align="end" className="w-auto min-w-52">
               <DropdownMenuItem onClick={onEdit}>
                 <Pencil className="h-4 w-4" />
                 {t("edit")}
@@ -461,23 +465,30 @@ function AutomationCard({
               {/* Flat list rather than a submenu: five destinations is
                   short enough to read at a glance, and the current one
                   is marked instead of hidden so the menu also answers
-                  "which group is this in?". */}
-              <DropdownMenuLabel>{t("moveToGroup")}</DropdownMenuLabel>
-              {[...AUTOMATION_GROUPS, UNGROUPED].map((name) => {
-                const current =
-                  (automation.template_group || UNGROUPED) === name
-                return (
-                  <DropdownMenuItem
-                    key={name}
-                    disabled={current}
-                    onClick={() => onChangeGroup(name)}
-                  >
-                    <FolderOpen className="h-4 w-4" />
-                    {name}
-                    {current && <Check className="ml-auto h-3.5 w-3.5" />}
-                  </DropdownMenuItem>
-                )
-              })}
+                  "which group is this in?".
+                  The DropdownMenuGroup wrapper is REQUIRED, not cosmetic:
+                  DropdownMenuLabel is base-ui's Menu.GroupLabel, which
+                  reads a context only Menu.Group provides and throws
+                  without it — which took the whole page down the moment
+                  this menu opened. */}
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{t("moveToGroup")}</DropdownMenuLabel>
+                {[...AUTOMATION_GROUPS, UNGROUPED].map((name) => {
+                  const current =
+                    (automation.template_group || UNGROUPED) === name
+                  return (
+                    <DropdownMenuItem
+                      key={name}
+                      disabled={current}
+                      onClick={() => onChangeGroup(name)}
+                    >
+                      <FolderOpen className="h-4 w-4" />
+                      {name}
+                      {current && <Check className="ml-auto h-3.5 w-3.5" />}
+                    </DropdownMenuItem>
+                  )
+                })}
+              </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onClick={onDelete}>
                 <Trash2 className="h-4 w-4" />
