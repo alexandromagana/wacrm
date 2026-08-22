@@ -408,7 +408,13 @@ export function ContactDetailView({
         side="right"
         className="bg-popover border-border text-popover-foreground sm:max-w-lg w-full p-0"
       >
-        {loading || !contact ? (
+        {/* `contact` is state left over from whoever was open last, so
+            it must not be rendered against a different `contactId` —
+            the header (and the "View conversation" button under it)
+            would describe one person while every action fired against
+            another. Hold the loader until the fetched row is the row
+            that was asked for. */}
+        {loading || !contact || contact.id !== contactId ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="size-6 animate-spin text-primary" />
           </div>

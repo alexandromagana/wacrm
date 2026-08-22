@@ -113,6 +113,16 @@ export default function InboxPage() {
     knownConvIdsRef.current = next;
   }, [conversations]);
 
+  /**
+   * Mirror of `activeConversation?.id` for the async deep-link resolver
+   * below, which is created once (empty deps) and so can't read the
+   * state directly. Same trick as `knownConvIdsRef` above.
+   */
+  const activeConvIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeConvIdRef.current = activeConversation?.id ?? null;
+  }, [activeConversation?.id]);
+
   // Pull the conversation row with its `contact` joined and merge it
   // into state. Needed because Supabase Realtime payloads only carry the
   // row's own columns — a brand-new conversation arrives without a
@@ -415,6 +425,61 @@ export default function InboxPage() {
     setResyncToken((n) => n + 1);
   }, []);
 
+  /**
+   * Open a `?c=<id>` the conversation list didn't hand us. The row can
+   * be missing from a given snapshot — the list fetch raced the URL, or
+   * the conversation is newer than the rows it returned — and silently
+   * dropping the link left the user on the wrong thread (or none) with
+   * no hint that the jump had failed. Fetch it by id instead, so a link
+   * from Contacts / the dashboard / a notification always lands.
+   */
+  const deepLinkFetchRef = useRef<string | null>(null);
+  const selectDeepLinkedConversation = useCallback(async (convId: string) => {
+    if (deepLinkFetchRef.current === convId) return;
+    deepLinkFetchRef.current = convId;
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("conversations")
+      .select(CONVERSATION_SELECT)
+      .eq("id", convId)
+      .maybeSingle();
+    if (error) {
+      // Supabase errors have non-enumerable properties — log fields
+      // explicitly so the console message isn't just `{}`.
+      console.error("Failed to open deep-linked conversation:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+      });
+      // Leave both guards clear so the next list refresh can retry.
+      deepLinkFetchRef.current = null;
+      return;
+    }
+    // Resolved either way now: a row we can open, or one that's gone
+    // (deleted, or not visible to this account). Consume the link so
+    // later list refreshes don't refetch it on a loop.
+    autoSelectedForDeepLinkRef.current = convId;
+    if (!data) {
+      // Nothing to open — say so in the console rather than leaving a
+      // dead link looking like a mis-routed one.
+      console.warn("Deep-linked conversation not found:", convId);
+      return;
+    }
+    // Already the open thread: leave it strictly alone. Re-applying
+    // would setMessages([]) on messages MessageThread has already
+    // fetched, and since conversationId wouldn't change it never
+    // refetches — the thread would read "No messages yet".
+    if (activeConvIdRef.current === convId) return;
+    const conv = normalizeConversation(data);
+    setConversations((prev) =>
+      prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev],
+    );
+    setActiveConversation(conv);
+    setActiveContact(conv.contact ?? null);
+    setMessages([]);
+  }, []);
+
   const handleConversationsLoaded = useCallback(
     (loaded: Conversation[]) => {
       setConversations(loaded);
@@ -423,12 +488,12 @@ export default function InboxPage() {
       // react-hooks/set-state-in-effect. Runs once per ?c=<id> URL value
       // via the ref, so realtime refreshes of the list can't snap the
       // user back to the deep-linked thread after they've navigated.
+      // No `loaded.length` guard: an empty snapshot is exactly the case
+      // that used to eat the link, and the by-id fallback below covers it.
       if (
         deepLinkConvId &&
-        autoSelectedForDeepLinkRef.current !== deepLinkConvId &&
-        loaded.length > 0
+        autoSelectedForDeepLinkRef.current !== deepLinkConvId
       ) {
-        autoSelectedForDeepLinkRef.current = deepLinkConvId;
         // If the deep-linked conversation is already the active one
         // (e.g. because the user clicked it in the list and we
         // router.replace()'d the URL, which made the ConversationList
@@ -438,28 +503,58 @@ export default function InboxPage() {
         // conversationId didn't change, MessageThread wouldn't
         // refetch. The thread would read "No messages yet" until a
         // full page reload rehydrated state from scratch.
-        if (activeConversation?.id === deepLinkConvId) return;
+        if (activeConversation?.id === deepLinkConvId) {
+          autoSelectedForDeepLinkRef.current = deepLinkConvId;
+          return;
+        }
         const match = loaded.find((c) => c.id === deepLinkConvId);
-        if (match) {
-          setActiveConversation(match);
-          setActiveContact(match.contact ?? null);
-          setMessages([]);
-          // Mirror the optimistic unread reset that handleSelectConversation
-          // does — the user just deep-linked into this conv, treat that the
-          // same as a click. Leaves activeConversation.unread_count alone so
-          // the MessageThread reset effect still fires the server UPDATE.
-          if (match.unread_count > 0) {
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === match.id ? { ...c, unread_count: 0 } : c,
-              ),
-            );
-          }
+        if (!match) {
+          // This snapshot doesn't have the row. Go get it by id —
+          // marking the link consumed here (as this block used to do
+          // before looking) threw the navigation away for good.
+          selectDeepLinkedConversation(deepLinkConvId);
+          return;
+        }
+        // Only now is the link genuinely resolved.
+        autoSelectedForDeepLinkRef.current = deepLinkConvId;
+        setActiveConversation(match);
+        setActiveContact(match.contact ?? null);
+        setMessages([]);
+        // Mirror the optimistic unread reset that handleSelectConversation
+        // does — the user just deep-linked into this conv, treat that the
+        // same as a click. Leaves activeConversation.unread_count alone so
+        // the MessageThread reset effect still fires the server UPDATE.
+        if (match.unread_count > 0) {
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === match.id ? { ...c, unread_count: 0 } : c,
+            ),
+          );
         }
       }
     },
-    [deepLinkConvId, activeConversation?.id]
+    [deepLinkConvId, activeConversation?.id, selectDeepLinkedConversation]
   );
+
+  /**
+   * The list hands us its rows exactly once per mount (ConversationList
+   * refetches only on `resyncToken`), so a `?c=<id>` that isn't readable
+   * at that instant — or that changes afterwards — had nothing left to
+   * carry it: the URL named one thread while the pane kept showing the
+   * previous one. Resolve it here too. The work happens inside the async
+   * helper, so no setState runs synchronously in this effect, and the
+   * shared ref keeps it to once per URL value — a thread the user has
+   * since navigated away from can't be snapped back.
+   */
+  useEffect(() => {
+    if (!deepLinkConvId) return;
+    if (autoSelectedForDeepLinkRef.current === deepLinkConvId) return;
+    if (activeConvIdRef.current === deepLinkConvId) {
+      autoSelectedForDeepLinkRef.current = deepLinkConvId;
+      return;
+    }
+    selectDeepLinkedConversation(deepLinkConvId);
+  }, [deepLinkConvId, selectDeepLinkedConversation]);
 
   const handleSelectConversation = useCallback(
     (conv: Conversation) => {
