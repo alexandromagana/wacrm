@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
+import { addFilesToMeter } from './meter-files';
 import type { QuoteProjectType, QuoteTemplate } from '@/types';
 
 interface Props {
@@ -130,14 +131,10 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   }
 
   function addFiles(meterIndex: number, picked: FileList | null) {
-    if (!picked) return;
-    setMeters((prev) =>
-      prev.map((group, i) =>
-        i === meterIndex
-          ? [...group, ...Array.from(picked)].slice(0, MAX_RECEIPT_FILES)
-          : group
-      )
-    );
+    if (!picked || picked.length === 0) return;
+    // The updater is built now, with the files already copied out of
+    // the input's live FileList — see `addFilesToMeter`.
+    setMeters(addFilesToMeter(meterIndex, picked, MAX_RECEIPT_FILES));
   }
 
   function removeFile(meterIndex: number, fileIndex: number) {
