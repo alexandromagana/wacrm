@@ -107,16 +107,17 @@ export function NodeKeySelect({
 }) {
   const t = useTranslations("Flows.builder.form");
   const options = nodes.filter((n) => n.node_key !== excludeKey);
+  // `null` is "no node", rather than a sentinel string: Base UI prints the
+  // raw value in the trigger — the node key, which is the label we want —
+  // and only falls back to the placeholder when nothing is selected. A
+  // sentinel would print itself.
   return (
-    <Select
-      value={value ?? "__none__"}
-      onValueChange={(v) => onChange(v === "__none__" ? null : v)}
-    >
+    <Select value={value} onValueChange={(v) => onChange(v)}>
       <SelectTrigger className={cn("bg-muted", className)}>
         <SelectValue placeholder={placeholder ?? "—"} />
       </SelectTrigger>
       <SelectContent>
-        <SelectItem value="__none__">{t("none")}</SelectItem>
+        <SelectItem value={null}>{t("none")}</SelectItem>
         {options.map((n) => {
           const Icon = NODE_META[n.node_type].icon;
           return (

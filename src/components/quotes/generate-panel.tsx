@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -59,9 +59,6 @@ const MAX_RECEIPT_FILES = 3;
 /** Meters one quote may cover. Mirrors the route's own ceiling. */
 const MAX_METERS = 4;
 
-/** Sentinel for "no contact", mirroring the flows form's own select. */
-const NO_CONTACT = '__none__';
-
 export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const supabase = createClient();
   // One picker per meter, so a click lands in the group it belongs to.
@@ -115,6 +112,37 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     load();
   }, [load]);
+
+  /**
+   * Base UI reads the trigger's label off the root's `items`, not off the
+   * rendered options — without it the trigger prints the raw value, which
+   * here is a UUID. The empty value stands for "no contact": it leaves the
+   * trigger showing its placeholder.
+   */
+  const contactItems = useMemo(
+    () => [
+      { value: '', label: 'Sin contacto' },
+      ...contacts.map((contact) => ({
+        value: contact.id,
+        label: contact.name || contact.phone,
+      })),
+    ],
+    [contacts]
+  );
+
+  const projectTypeItems = useMemo(
+    () => projectTypes.map((type) => ({ value: type.id, label: type.name })),
+    [projectTypes]
+  );
+
+  const templateItems = useMemo(
+    () =>
+      templates.map((template) => ({
+        value: template.id,
+        label: template.name,
+      })),
+    [templates]
+  );
 
   /**
    * Picking a contact fills the name in rather than locking it: most
@@ -251,19 +279,17 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
               <span className="text-muted-foreground/70">(opcional)</span>
             </Label>
             <Select
-              value={contactId || NO_CONTACT}
-              onValueChange={(v) =>
-                pickContact(v === NO_CONTACT ? '' : (v ?? ''))
-              }
+              items={contactItems}
+              value={contactId}
+              onValueChange={(v) => pickContact(v ?? '')}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Sin contacto" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={NO_CONTACT}>Sin contacto</SelectItem>
-                {contacts.map((contact) => (
-                  <SelectItem key={contact.id} value={contact.id}>
-                    {contact.name || contact.phone}
+                {contactItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -290,6 +316,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           <div className="space-y-2">
             <Label className="text-muted-foreground">Tipo de proyecto</Label>
             <Select
+              items={projectTypeItems}
               value={projectTypeId}
               onValueChange={(v) => setProjectTypeId(v ?? '')}
             >
@@ -297,9 +324,9 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                 <SelectValue placeholder="Elige un tipo" />
               </SelectTrigger>
               <SelectContent>
-                {projectTypes.map((type) => (
-                  <SelectItem key={type.id} value={type.id}>
-                    {type.name}
+                {projectTypeItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -309,6 +336,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           <div className="space-y-2">
             <Label className="text-muted-foreground">Plantilla</Label>
             <Select
+              items={templateItems}
               value={templateId}
               onValueChange={(v) => setTemplateId(v ?? '')}
             >
@@ -316,9 +344,9 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                 <SelectValue placeholder="Elige una plantilla" />
               </SelectTrigger>
               <SelectContent>
-                {templates.map((template) => (
-                  <SelectItem key={template.id} value={template.id}>
-                    {template.name}
+                {templateItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
