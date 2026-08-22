@@ -24,7 +24,7 @@
  * renders the advanced rows.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Loader2,
   Paperclip,
@@ -45,6 +45,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { uploadAccountMedia, MEDIA_MAX_BYTES } from "@/lib/storage/upload-media";
 import { slugify, type BuilderNode } from "../shared";
@@ -603,6 +604,16 @@ interface UserTag {
   color?: string;
 }
 
+interface TagOptions {
+  tags: UserTag[];
+  /**
+   * Base UI resolves the trigger's label from the root's `items`, not
+   * from the rendered <SelectItem> children. Without this list the
+   * trigger would print the tag's UUID instead of its name.
+   */
+  items: { value: string; label: string }[];
+}
+
 function ConditionForm({
   cfg,
   allNodes,
@@ -616,7 +627,7 @@ function ConditionForm({
   onUpdateConfig: (patch: Record<string, unknown>) => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  const tags = useUserTags();
+  const { tags, items: tagItems } = useUserTags();
 
   const subject = cfg.subject ?? "var";
   const operator = cfg.operator ?? "equals";
@@ -653,16 +664,17 @@ function ConditionForm({
           </label>
           {subject === "tag" && tags.length > 0 ? (
             <Select
+              items={tagItems}
               value={cfg.subject_key ?? ""}
-              onValueChange={(v) => onUpdateConfig({ subject_key: v })}
+              onValueChange={(v) => onUpdateConfig({ subject_key: v ?? "" })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue placeholder="Pick a tag…" />
+                <SelectValue placeholder={t("pickTag")} />
               </SelectTrigger>
               <SelectContent>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
+                {tagItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -775,7 +787,7 @@ function SetTagForm({
   onUpdateConfig: (patch: Record<string, unknown>) => void;
   t: ReturnType<typeof useTranslations>;
 }) {
-  const tags = useUserTags();
+  const { tags, items: tagItems } = useUserTags();
 
   return (
     <>
@@ -801,16 +813,17 @@ function SetTagForm({
           <label className="mb-1 block text-xs text-muted-foreground">{t("tagLabel")}</label>
           {tags.length > 0 ? (
             <Select
+              items={tagItems}
               value={cfg.tag_id ?? ""}
-              onValueChange={(v) => onUpdateConfig({ tag_id: v })}
+              onValueChange={(v) => onUpdateConfig({ tag_id: v ?? "" })}
             >
               <SelectTrigger className="bg-muted">
-                <SelectValue placeholder="Pick a tag…" />
+                <SelectValue placeholder={t("pickTag")} />
               </SelectTrigger>
               <SelectContent>
-                {tags.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
+                {tagItems.map((item) => (
+                  <SelectItem key={item.value} value={item.value}>
+                    {item.label}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -838,28 +851,37 @@ function SetTagForm({
 
 /**
  * Shared loader for both `condition` (subject=tag) and `set_tag`.
- * Falls back to raw UUID input if the endpoint is absent on older
- * deployments — the form remains authorable in that case.
+ *
+ * Reads the `tags` table straight from the browser client the way the
+ * automation builder does — RLS scopes the rows to the caller's
+ * account, so there is no endpoint to keep in sync. An account with no
+ * tags yet leaves both forms on their raw UUID input, which keeps them
+ * authorable.
  */
-function useUserTags(): UserTag[] {
+function useUserTags(): TagOptions {
   const [tags, setTags] = useState<UserTag[]>([]);
+
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/tags").catch(() => null);
-        if (!res || !res.ok) return;
-        const json = (await res.json()) as { tags?: UserTag[] };
-        if (!cancelled) setTags(json.tags ?? []);
-      } catch {
-        // Tags endpoint absent — caller falls back to raw input.
-      }
+    const supabase = createClient();
+    void (async () => {
+      const { data } = await supabase
+        .from("tags")
+        .select("id, name, color")
+        .order("name");
+      if (!cancelled) setTags((data as UserTag[] | null) ?? []);
     })();
     return () => {
       cancelled = true;
     };
   }, []);
-  return tags;
+
+  const items = useMemo(
+    () => tags.map((tag) => ({ value: tag.id, label: tag.name })),
+    [tags],
+  );
+
+  return { tags, items };
 }
 
 // ============================================================
