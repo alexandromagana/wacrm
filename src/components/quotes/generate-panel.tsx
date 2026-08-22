@@ -7,7 +7,9 @@ import {
   Download,
   FileText,
   Loader2,
+  Plus,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react';
@@ -50,14 +52,19 @@ interface Result {
   warning: string | null;
 }
 
+/** Files per meter — a CFE bill is commonly two pages. */
 const MAX_RECEIPT_FILES = 3;
+
+/** Meters one quote may cover. Mirrors the route's own ceiling. */
+const MAX_METERS = 4;
 
 /** Sentinel for "no contact", mirroring the flows form's own select. */
 const NO_CONTACT = '__none__';
 
 export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const supabase = createClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // One picker per meter, so a click lands in the group it belongs to.
+  const fileInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const [projectTypes, setProjectTypes] = useState<QuoteProjectType[]>([]);
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
@@ -68,7 +75,16 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const [templateId, setTemplateId] = useState('');
   const [contactId, setContactId] = useState('');
   const [clientName, setClientName] = useState('');
-  const [files, setFiles] = useState<File[]>([]);
+  /**
+   * Bills grouped by meter. Starts as one empty group, so a customer
+   * with a single meter sees the form exactly as it always was and
+   * never learns this dimension exists.
+   *
+   * Grouped here rather than inferred server-side because the person
+   * uploading can see the bills: nothing in two JPEGs says whether they
+   * are two pages of one meter or one page each of two.
+   */
+  const [meters, setMeters] = useState<File[][]>([[]]);
 
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -113,10 +129,30 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     if (picked?.name) setClientName(picked.name);
   }
 
-  function addFiles(picked: FileList | null) {
+  function addFiles(meterIndex: number, picked: FileList | null) {
     if (!picked) return;
-    setFiles((prev) =>
-      [...prev, ...Array.from(picked)].slice(0, MAX_RECEIPT_FILES)
+    setMeters((prev) =>
+      prev.map((group, i) =>
+        i === meterIndex
+          ? [...group, ...Array.from(picked)].slice(0, MAX_RECEIPT_FILES)
+          : group
+      )
+    );
+  }
+
+  function removeFile(meterIndex: number, fileIndex: number) {
+    setMeters((prev) =>
+      prev.map((group, i) =>
+        i === meterIndex ? group.filter((_, j) => j !== fileIndex) : group
+      )
+    );
+  }
+
+  function removeMeter(meterIndex: number) {
+    // Never below one group: the form always needs somewhere to drop a
+    // bill, and an empty first group is the resting state, not an error.
+    setMeters((prev) =>
+      prev.length <= 1 ? [[]] : prev.filter((_, i) => i !== meterIndex)
     );
   }
 
@@ -130,7 +166,11 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       body.append('client_name', clientName.trim());
       body.append('project_type_id', projectTypeId);
       body.append('template_id', templateId);
-      for (const file of files) body.append('receipt_files', file);
+      // Indexed by meter — the route reads `receipt_files_<n>` as one
+      // bill each and sums them. Empty groups are simply not sent.
+      meters.forEach((group, i) => {
+        for (const file of group) body.append(`receipt_files_${i}`, file);
+      });
 
       const res = await fetch('/api/quotes/generate', { method: 'POST', body });
       const data = await res.json().catch(() => ({}));
@@ -150,11 +190,16 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     }
   }
 
+  // Every group that exists must carry a bill. A meter added and left
+  // empty is a mistake worth blocking, not an extra to ignore: the
+  // quote it produces is short by one meter and looks perfectly normal.
+  const filledMeters = meters.filter((g) => g.length > 0);
   const ready =
     clientName.trim() &&
     projectTypeId &&
     templateId &&
-    files.length > 0 &&
+    filledMeters.length === meters.length &&
+    filledMeters.length > 0 &&
     !generating;
 
   if (loading) {
@@ -284,82 +329,127 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           </div>
         </div>
 
-        <div className="space-y-2">
-          <Label className="text-muted-foreground">Recibo CFE</Label>
-          <div
-            role="button"
-            tabIndex={0}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ')
-                fileInputRef.current?.click();
-            }}
-            className={cn(
-              'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-5 transition-all',
-              files.length > 0
-                ? 'border-primary/35 bg-primary/[0.04]'
-                : 'border-border/80 bg-background/40 hover:border-primary/40 hover:bg-background/70'
-            )}
-          >
-            <div
-              className={cn(
-                'flex size-10 items-center justify-center rounded-lg ring-1 transition-colors',
-                files.length > 0
-                  ? 'bg-primary/15 ring-primary/25'
-                  : 'bg-muted/80 ring-border/80 group-hover:bg-muted'
-              )}
-            >
-              {files.length > 0 ? (
-                <FileText className="text-primary size-5" />
-              ) : (
-                <Upload className="text-muted-foreground group-hover:text-foreground size-5" />
-              )}
-            </div>
-            <p className="text-muted-foreground text-sm">
-              {files.length > 0
-                ? `${files.length} de ${MAX_RECEIPT_FILES} archivos`
-                : 'Haz clic para adjuntar el recibo'}
-            </p>
-            <p className="text-muted-foreground text-[11px]">
-              Foto o PDF. Incluye la página del historial de consumo para un
-              cálculo más preciso.
-            </p>
-          </div>
+        <div className="space-y-3">
+          <Label className="text-muted-foreground">
+            {meters.length > 1 ? 'Recibos CFE' : 'Recibo CFE'}
+          </Label>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp,application/pdf"
-            multiple
-            onChange={(e) => {
-              addFiles(e.target.files);
-              e.target.value = '';
-            }}
-            className="hidden"
-          />
-
-          {files.length > 0 && (
-            <ul className="space-y-1">
-              {files.map((file, i) => (
-                <li
-                  key={`${file.name}-${i}`}
-                  className="bg-muted/50 text-muted-foreground flex items-center gap-2 rounded-md px-2 py-1 text-xs"
-                >
-                  <FileText className="size-3.5 shrink-0" />
-                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
+          {meters.map((group, meterIndex) => (
+            <div key={meterIndex} className="space-y-2">
+              {/* The per-meter heading only appears once there is more
+                  than one, so the single-meter form stays as it was. */}
+              {meters.length > 1 && (
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground text-xs font-medium">
+                    Medidor {meterIndex + 1}
+                  </span>
                   <button
                     type="button"
-                    onClick={() =>
-                      setFiles((prev) => prev.filter((_, j) => j !== i))
-                    }
-                    className="hover:bg-muted rounded p-0.5"
-                    aria-label={`Quitar ${file.name}`}
+                    onClick={() => removeMeter(meterIndex)}
+                    className="text-muted-foreground hover:text-destructive rounded p-0.5 transition-colors"
+                    aria-label={`Quitar medidor ${meterIndex + 1}`}
                   >
-                    <X className="size-3.5" />
+                    <Trash2 className="size-3.5" />
                   </button>
-                </li>
-              ))}
-            </ul>
+                </div>
+              )}
+
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => fileInputRefs.current[meterIndex]?.click()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ')
+                    fileInputRefs.current[meterIndex]?.click();
+                }}
+                className={cn(
+                  'group flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed p-5 transition-all',
+                  group.length > 0
+                    ? 'border-primary/35 bg-primary/[0.04]'
+                    : 'border-border/80 bg-background/40 hover:border-primary/40 hover:bg-background/70'
+                )}
+              >
+                <div
+                  className={cn(
+                    'flex size-10 items-center justify-center rounded-lg ring-1 transition-colors',
+                    group.length > 0
+                      ? 'bg-primary/15 ring-primary/25'
+                      : 'bg-muted/80 ring-border/80 group-hover:bg-muted'
+                  )}
+                >
+                  {group.length > 0 ? (
+                    <FileText className="text-primary size-5" />
+                  ) : (
+                    <Upload className="text-muted-foreground group-hover:text-foreground size-5" />
+                  )}
+                </div>
+                <p className="text-muted-foreground text-sm">
+                  {group.length > 0
+                    ? `${group.length} de ${MAX_RECEIPT_FILES} archivos`
+                    : 'Haz clic para adjuntar el recibo'}
+                </p>
+                <p className="text-muted-foreground text-[11px]">
+                  Foto o PDF. Incluye la página del historial de consumo para un
+                  cálculo más preciso.
+                </p>
+              </div>
+
+              <input
+                ref={(el) => {
+                  fileInputRefs.current[meterIndex] = el;
+                }}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,application/pdf"
+                multiple
+                onChange={(e) => {
+                  addFiles(meterIndex, e.target.files);
+                  e.target.value = '';
+                }}
+                className="hidden"
+              />
+
+              {group.length > 0 && (
+                <ul className="space-y-1">
+                  {group.map((file, fileIndex) => (
+                    <li
+                      key={`${file.name}-${fileIndex}`}
+                      className="bg-muted/50 text-muted-foreground flex items-center gap-2 rounded-md px-2 py-1 text-xs"
+                    >
+                      <FileText className="size-3.5 shrink-0" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {file.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeFile(meterIndex, fileIndex)}
+                        className="hover:bg-muted rounded p-0.5"
+                        aria-label={`Quitar ${file.name}`}
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+
+          {meters.length < MAX_METERS && (
+            <button
+              type="button"
+              onClick={() => setMeters((prev) => [...prev, []])}
+              className="text-muted-foreground hover:text-foreground flex items-center gap-1.5 text-xs transition-colors"
+            >
+              <Plus className="size-3.5" />
+              Agregar otro medidor
+            </button>
+          )}
+
+          {meters.length > 1 && (
+            <p className="text-muted-foreground text-[11px]">
+              El consumo de los {meters.length} medidores se suma para cotizar
+              un solo sistema.
+            </p>
           )}
         </div>
 

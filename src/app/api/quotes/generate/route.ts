@@ -11,7 +11,9 @@ import {
   inferPropertyType,
   saveReceiptData,
   type MediaFile,
+  type ReceiptExtraction,
 } from '@/lib/ai/receipt';
+import { combineReadings, sameMeter } from '@/lib/ai/meters';
 import { resolveQuote } from '@/lib/quotes/pricing';
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance';
 import { buildFolio } from '@/lib/quotes/fields';
@@ -41,6 +43,48 @@ const CLIENT_NAME_MAX = 120;
 /** A CFE bill is commonly two pages, photographed separately. */
 const MAX_RECEIPT_FILES = 3;
 const RECEIPT_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Meters one quote may cover. Matches the bot's own ceiling in
+ * `@/lib/ai/meters`; past it the project is commercial enough to
+ * deserve a design rather than a table lookup.
+ */
+const MAX_METERS = 4;
+
+/**
+ * Pull the uploaded bills out of the form, grouped by meter.
+ *
+ * The grouping is stated by the person filling the form — `receipt_files_0`
+ * is the first meter, `receipt_files_1` the second — rather than guessed
+ * from the files. The bot has to infer it (see `groupIntoReceipts`),
+ * because a customer on WhatsApp just sends what they have; here someone
+ * who can see the bills is doing the uploading, so asking them is both
+ * cheaper and exact. It is also the only way to get photographed bills
+ * right: nothing in two JPEGs says whether they are two pages of one
+ * meter or one page each of two.
+ *
+ * Falls back to the flat `receipt_files` field as a single meter, which
+ * is what the form posted before meters existed.
+ */
+export function readMeterGroups(form: FormData): File[][] {
+  const groups: File[][] = [];
+  for (let i = 0; i < MAX_METERS; i++) {
+    const files = form
+      .getAll(`receipt_files_${i}`)
+      .filter((f): f is File => f instanceof File)
+      .slice(0, MAX_RECEIPT_FILES);
+    // Indices can arrive with holes when a middle group was removed in
+    // the UI, so gaps are skipped rather than ending the scan.
+    if (files.length > 0) groups.push(files);
+  }
+  if (groups.length > 0) return groups;
+
+  const flat = form
+    .getAll('receipt_files')
+    .filter((f): f is File => f instanceof File)
+    .slice(0, MAX_RECEIPT_FILES);
+  return flat.length > 0 ? [flat] : [];
+}
 
 /**
  * Why a reading can be priced in chat but must not become a document.
@@ -121,17 +165,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const receiptFiles = form
-      .getAll('receipt_files')
-      .filter((f): f is File => f instanceof File)
-      .slice(0, MAX_RECEIPT_FILES);
-    if (receiptFiles.length === 0) {
+    const meterGroups = readMeterGroups(form);
+    if (meterGroups.length === 0) {
       return NextResponse.json(
         { error: 'Adjunta al menos una foto o PDF del recibo CFE.' },
         { status: 400 }
       );
     }
-    if (receiptFiles.some((f) => f.size > RECEIPT_MAX_BYTES)) {
+    if (meterGroups.some((g) => g.some((f) => f.size > RECEIPT_MAX_BYTES))) {
       return NextResponse.json(
         { error: 'Cada archivo del recibo debe pesar menos de 16 MB.' },
         { status: 400 }
@@ -224,36 +265,64 @@ export async function POST(request: Request) {
       );
     }
 
-    const files: MediaFile[] = await Promise.all(
-      receiptFiles.map(async (f) => ({
-        base64: Buffer.from(await f.arrayBuffer()).toString('base64'),
-        mimeType: f.type || 'image/jpeg',
-      }))
-    );
+    // One vision call per meter. Each group is read on its own with the
+    // single-bill prompt, exactly as a one-meter quote always was, and
+    // the sum happens afterwards in code.
+    const readings: ReceiptExtraction[] = [];
+    for (const [index, group] of meterGroups.entries()) {
+      const files: MediaFile[] = await Promise.all(
+        group.map(async (f) => ({
+          base64: Buffer.from(await f.arrayBuffer()).toString('base64'),
+          mimeType: f.type || 'image/jpeg',
+        }))
+      );
 
-    // extractReceiptFromFiles throws on a provider/network failure and
-    // returns null on an unreadable image — the two need different
-    // answers, which is why this path calls it rather than the bot's
-    // swallow-everything extractReceipts.
-    let extraction;
-    try {
-      extraction = await extractReceiptFromFiles(aiConfig, files);
-    } catch (err) {
-      console.error('[quotes/generate] vision call failed:', err);
-      return NextResponse.json(
-        {
-          error:
-            'El proveedor de IA no respondió. Vuelve a intentarlo en un momento.',
-        },
-        { status: 502 }
-      );
+      // extractReceiptFromFiles throws on a provider/network failure and
+      // returns null on an unreadable image — the two need different
+      // answers, which is why this path calls it rather than the bot's
+      // swallow-everything extractReceipts.
+      let extracted;
+      try {
+        extracted = await extractReceiptFromFiles(aiConfig, files);
+      } catch (err) {
+        console.error('[quotes/generate] vision call failed:', err);
+        return NextResponse.json(
+          {
+            error:
+              'El proveedor de IA no respondió. Vuelve a intentarlo en un momento.',
+          },
+          { status: 502 }
+        );
+      }
+      // One unreadable meter fails the whole quote, and says which. The
+      // bot can afford to ask the customer for a better photo; here the
+      // only alternative would be pricing the meters that did read,
+      // which silently sizes the system for part of the property.
+      if (!extracted) {
+        return NextResponse.json(
+          {
+            error:
+              meterGroups.length > 1
+                ? `No se pudo leer el recibo del medidor ${index + 1}. ${explainRefusal('unreadable')}`
+                : explainRefusal('unreadable'),
+          },
+          { status: 422 }
+        );
+      }
+      readings.push(extracted);
     }
-    if (!extraction) {
-      return NextResponse.json(
-        { error: explainRefusal('unreadable') },
-        { status: 422 }
-      );
+
+    // Two groups can turn out to be one meter — the same bill uploaded
+    // twice. Counting it twice would double a real customer's
+    // consumption and sell them a system twice the size they need, so
+    // the duplicate is dropped and called out rather than trusted.
+    const meters: ReceiptExtraction[] = [];
+    let duplicateMeters = 0;
+    for (const reading of readings) {
+      if (meters.some((m) => sameMeter(m, reading))) duplicateMeters += 1;
+      else meters.push(reading);
     }
+    const extraction = combineReadings(meters);
 
     const quote = resolveQuote(
       extraction.promedio_bimestral_kwh,
@@ -302,6 +371,21 @@ export async function POST(request: Request) {
     if (!financials) {
       warnings.push(
         'El recibo no traía un importe legible, así que la propuesta va sin la proyección de ahorro.'
+      );
+    }
+    // Stated back so the figure on the document can be checked against
+    // the bills on the desk: a sum is not something the reader can
+    // verify by looking at any single receipt.
+    if (meters.length > 1) {
+      warnings.push(
+        `Se sumaron ${meters.length} medidores: ${quote.kwh} kWh bimestrales en total.`
+      );
+    }
+    if (duplicateMeters > 0) {
+      warnings.push(
+        duplicateMeters === 1
+          ? 'Dos de los recibos que subiste son del mismo medidor, así que se contó una sola vez.'
+          : `${duplicateMeters + 1} de los recibos que subiste son del mismo medidor, así que se contó una sola vez.`
       );
     }
     if (extraction.advertencias) warnings.push(extraction.advertencias);
@@ -389,7 +473,7 @@ export async function POST(request: Request) {
     // cost the user the document they just waited for.
     let receiptPath: string | null = null;
     try {
-      const first = receiptFiles[0];
+      const first = meterGroups[0][0];
       const uploaded = await uploadServerMedia({
         db: supabase,
         bucket: QUOTE_ASSETS_BUCKET,
