@@ -21,10 +21,14 @@ import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 // `buildFinancials`, `sendQuoteProposal` — keeps working on one reading
 // and never learns there were several meters.
 //
-// Two independent signals close the gate, and they cover each other:
+// Three independent signals close the gate, and they cover each other:
 //   - the customer states a count ("tengo tres medidores"), which the
-//     model reports as a `[MEDIDORES: N]` marker; or
-//   - the bot detects a second distinct bill and asks outright.
+//     model reports as a `[MEDIDORES: N]` marker;
+//   - the bot detects a second distinct bill and asks outright; or
+//   - the customer answers that ask in plain words and
+//     `applyMeterConfirmation` reads it without the model's help, so a
+//     turn where the marker went missing is not a turn where the
+//     customer's answer did.
 // ============================================================
 
 /** Conversation-scoped accumulation of one customer's meters. */
@@ -243,6 +247,163 @@ export function mergeReadings(
     askedCount: incoming.length > 0 ? 0 : state.askedCount,
     updatedAt: new Date().toISOString(),
   }
+}
+
+// ============================================================
+// The customer's own answer, read without the model's help.
+//
+// The gate's only other way to close is `[MEDIDORES: N]`, a marker the
+// model has to remember to append while also writing a warm reply. When
+// it forgets, "sí, son todos" lands as an ordinary message: the batch
+// stays open, `askedCount` climbs, and two turns later a customer who
+// answered plainly is handed to a human for it.
+//
+// So the gate reads the reply itself — under conditions narrow enough
+// that a match can only mean one thing:
+//
+//   - the batch is in the exact shape the question was asked about
+//     (several bills, no count stated), and
+//   - the question has actually gone out at least once, so a bare "sí"
+//     is answering *this* question and not "¿te interesa?".
+//
+// Matching is whitelist-only: every word of the reply must come from a
+// closed confirmation vocabulary. That is deliberately the strict
+// direction — "sí, mándame el precio" and "sí, tengo tres" both fall
+// out, and so do perfectly good answers like "sí, nada más". A missed
+// confirmation costs one repeated question, which is what happens today
+// anyway. A false one quotes a house on half its consumption and sends
+// the customer a PDF saying so.
+// ============================================================
+
+/**
+ * Words that, on their own, answer "¿son todos sus medidores?" with a
+ * yes. At least one of these must be present — otherwise a reply built
+ * entirely of filler ("los que tengo, gracias") would qualify.
+ */
+const AFFIRMATIVE_WORDS = new Set([
+  'si',
+  'sip',
+  'sipi',
+  'simon',
+  'claro',
+  'correcto',
+  'correcta',
+  'exacto',
+  'exacta',
+  'exactamente',
+  'afirmativo',
+  'efectivamente',
+  'confirmo',
+  'confirmado',
+  'todo',
+  'todos',
+  'toda',
+  'todas',
+  'asi',
+  'solo',
+  'solamente',
+  'unicamente',
+])
+
+/**
+ * Words allowed to keep an affirmative company without making it
+ * ambiguous. Anything outside this set plus the one above — a verb, a
+ * number, a negation, a new request — leaves the reply unresolved.
+ *
+ * Numbers are absent on purpose. "sí, tengo tres" is a stated count,
+ * not a confirmation of the two bills in hand, and the marker path is
+ * what turns a count into `expected`.
+ */
+const CONFIRMATION_FILLER = new Set([
+  'es',
+  'son',
+  'esta',
+  'estan',
+  'eso',
+  'esa',
+  'esos',
+  'esas',
+  'ese',
+  'el',
+  'la',
+  'los',
+  'las',
+  'que',
+  'ya',
+  'tengo',
+  'tenemos',
+  'mi',
+  'mis',
+  'nuestro',
+  'nuestros',
+  'mismos',
+  'medidor',
+  'medidores',
+  'recibo',
+  'recibos',
+  'gracias',
+])
+
+/** Beyond this a reply is a sentence, not an answer — even one built
+ *  entirely of words the vocabulary happens to allow. */
+const MAX_CONFIRMATION_WORDS = 8
+
+/**
+ * Whether a customer message is an unambiguous "yes, that's all of
+ * them". Case, accents, punctuation and emoji are irrelevant; unknown
+ * words are not.
+ */
+export function isMeterConfirmation(
+  message: string | null | undefined,
+): boolean {
+  if (!message) return false
+  const words = message
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+
+  if (words.length === 0 || words.length > MAX_CONFIRMATION_WORDS) return false
+  if (!words.some((w) => AFFIRMATIVE_WORDS.has(w))) return false
+  return words.every(
+    (w) => AFFIRMATIVE_WORDS.has(w) || CONFIRMATION_FILLER.has(w),
+  )
+}
+
+/**
+ * Close the gate on the customer's plain-language confirmation, the way
+ * `[MEDIDORES: N]` would have.
+ *
+ * Records the answer as `expected` rather than special-casing the gate,
+ * so the confirmation survives the turn: it is persisted with the batch
+ * and every later `resolveMeterGate` sees a settled count, not a lucky
+ * match that has to fire again.
+ *
+ * Returns the state unchanged — by identity, so callers can tell —
+ * whenever any condition is short of certain:
+ *
+ *   - a count is already stated: the customer is owed bills, and "sí"
+ *     says nothing about whether they sent them;
+ *   - one bill or none: there is no gate to close, and `resolveMeterGate`
+ *     already treats that as ready;
+ *   - nothing asked yet: with no question outstanding a "sí" belongs to
+ *     some other exchange. This is also what keeps a confirmation that
+ *     rides along with a new bill from counting — `mergeReadings` zeroes
+ *     `askedCount` the moment a receipt lands, so the turn that brings a
+ *     meter can never be the turn that declares them all in.
+ */
+export function applyMeterConfirmation(
+  state: MeterState,
+  message: string | null | undefined,
+): MeterState {
+  if (state.expected != null) return state
+  if (state.readings.length <= 1) return state
+  if (state.askedCount < 1) return state
+  if (!isMeterConfirmation(message)) return state
+  return { ...state, expected: state.readings.length }
 }
 
 /** What this turn may do with the bills gathered so far. */

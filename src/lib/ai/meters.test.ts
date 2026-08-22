@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import {
+  applyMeterConfirmation,
   combineReadings,
   emptyMeterState,
+  isMeterConfirmation,
   formatMeterGateNote,
   mergeReadings,
   parseMeterState,
@@ -277,6 +279,159 @@ describe('resolveMeterGate', () => {
       stateWith([bill()], { expected: 3, askedCount: 2 }),
     )
     expect(gate.kind).toBe('handoff')
+  })
+})
+
+describe('isMeterConfirmation', () => {
+  it.each([
+    'sí',
+    'Sí',
+    'si',
+    'Sí, son todos',
+    'sí son todos mis medidores',
+    'Así es',
+    'asi es, esos son todos',
+    'correcto',
+    'Correcto ✅',
+    'exacto',
+    'exactamente',
+    'efectivamente',
+    'confirmo',
+    'Son todos',
+    'esos son todos los que tengo',
+    'es todo',
+    'ya están todos',
+    'solo esos',
+    'únicamente esos',
+    'sí, son todos. gracias',
+  ])('reads %j as a confirmation', (message) => {
+    expect(isMeterConfirmation(message)).toBe(true)
+  })
+
+  it.each([
+    // Plain refusals and corrections.
+    'no',
+    'no, tengo otro',
+    'no son todos',
+    'falta uno',
+    'me falta un recibo',
+    // A stated count is the marker's job, not this one — "tres" against
+    // two bills in hand must never read as "those two are all of them".
+    'sí, tengo tres',
+    'si son 3 medidores',
+    // "sí" attached to a request. The gate's question is not what this
+    // answers, and closing on it would fire a PDF for half a house.
+    'sí, mándame la cotización',
+    'si me puedes dar el precio',
+    'sí quiero',
+    'si, cuánto sale?',
+    // Deferrals — the customer is going to send more.
+    'ahorita te mando el otro',
+    'sí, espérame tantito',
+    'sí, déjame buscar el segundo',
+    // Hedges.
+    'creo que sí',
+    'no estoy seguro',
+    // Not an answer at all.
+    'gracias',
+    'buenos días',
+    '[Imagen adjunta]',
+    '',
+    '   ',
+  ])('leaves %j unresolved', (message) => {
+    expect(isMeterConfirmation(message)).toBe(false)
+  })
+
+  it('treats a null or absent message as no answer', () => {
+    expect(isMeterConfirmation(null)).toBe(false)
+    expect(isMeterConfirmation(undefined)).toBe(false)
+  })
+
+  it('stops at a sentence, however agreeable its words', () => {
+    // Every word is in the vocabulary; the length is not an answer.
+    expect(
+      isMeterConfirmation(
+        'si es que son todos los medidores recibos que tengo ya',
+      ),
+    ).toBe(false)
+  })
+})
+
+describe('applyMeterConfirmation', () => {
+  const two = () => [bill(), bill({ numero_servicio: '782250505386' })]
+
+  it('closes the gate on a plain "sí" once the question has been asked', () => {
+    const state = applyMeterConfirmation(
+      stateWith(two(), { askedCount: 1 }),
+      'sí, son todos',
+    )
+    expect(state.expected).toBe(2)
+    expect(resolveMeterGate(state).kind).toBe('ready')
+  })
+
+  it('rescues the customer the ask bound was about to escalate', () => {
+    // The exact bug: the model dropped the marker twice, `askedCount`
+    // reached its bound, and the answer sitting in front of the gate
+    // was never read.
+    const stalled = stateWith(two(), { askedCount: 2 })
+    expect(resolveMeterGate(stalled).kind).toBe('handoff')
+    expect(
+      resolveMeterGate(applyMeterConfirmation(stalled, 'así es')).kind,
+    ).toBe('ready')
+  })
+
+  it('quotes the sum of the confirmed meters, not one of them', () => {
+    const gate = resolveMeterGate(
+      applyMeterConfirmation(stateWith(two(), { askedCount: 1 }), 'correcto'),
+    )
+    expect(gate).toMatchObject({ kind: 'ready', count: 2 })
+    if (gate.kind !== 'ready') throw new Error('unreachable')
+    expect(gate.reading.promedio_bimestral_kwh).toBe(2000)
+  })
+
+  it('ignores a "sí" when nothing has been asked yet', () => {
+    // Two bills just landed in one burst; the gate has not put its
+    // question yet, so this "sí" belongs to some other exchange.
+    const state = stateWith(two(), { askedCount: 0 })
+    expect(applyMeterConfirmation(state, 'sí')).toBe(state)
+    expect(resolveMeterGate(applyMeterConfirmation(state, 'sí')).kind).toBe(
+      'awaiting_confirmation',
+    )
+  })
+
+  it('never closes a batch that still owes bills against a stated count', () => {
+    // "sí" here answers something else entirely — the customer said
+    // three meters and has sent two. Only the third bill settles this.
+    const state = stateWith(two(), { expected: 3, askedCount: 2 })
+    expect(applyMeterConfirmation(state, 'sí, son todos')).toBe(state)
+    expect(resolveMeterGate(state).kind).toBe('handoff')
+  })
+
+  it('leaves a single-bill batch alone', () => {
+    // Nothing is gated, so there is nothing for a "sí" to close — and
+    // inventing an `expected` here would be a count nobody stated.
+    const state = stateWith([bill()], { askedCount: 1 })
+    expect(applyMeterConfirmation(state, 'sí')).toBe(state)
+  })
+
+  it('leaves an ambiguous reply unresolved rather than guessing', () => {
+    const state = stateWith(two(), { askedCount: 1 })
+    expect(applyMeterConfirmation(state, 'sí, mándame la cotización')).toBe(
+      state,
+    )
+    expect(
+      resolveMeterGate(applyMeterConfirmation(state, 'no, falta uno')).kind,
+    ).toBe('awaiting_confirmation')
+  })
+
+  it('does not let a confirmation ride in on the turn a bill arrives', () => {
+    // `mergeReadings` zeroes the ask bound when a receipt lands, so the
+    // turn that brings a new meter can never also declare them all in —
+    // there may well be a fourth bill behind the third.
+    const merged = mergeReadings(stateWith(two(), { askedCount: 2 }), [
+      bill({ numero_servicio: '782250505999' }),
+    ])
+    expect(applyMeterConfirmation(merged, 'sí, son todos')).toBe(merged)
   })
 })
 

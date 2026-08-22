@@ -13,6 +13,7 @@ import {
   type ReceiptExtraction,
 } from './receipt'
 import {
+  applyMeterConfirmation,
   clearMeterState,
   formatMeterGateNote,
   mergeReadings,
@@ -255,6 +256,12 @@ export async function dispatchInboundToAiReply(
     }
 
     const messages = await buildConversationContext(db, conversationId)
+    // The customer's own last words, read before the system notes below
+    // join `messages` as user turns. The meter gate consults this to
+    // recognise a spoken confirmation, and it can only do that against
+    // something the customer actually typed.
+    const last = messages[messages.length - 1]
+    const inboundText = last?.role === 'user' ? last.content : ''
     // Image-only turns have no text rows yet — the receipt note below
     // becomes the turn. Without either, there's nothing to reply to.
     const hasReceipt = Boolean(
@@ -345,6 +352,16 @@ export async function dispatchInboundToAiReply(
       }
     }
 
+    // The customer answering "sí, son todos" in plain text closes the
+    // gate exactly as the `[MEDIDORES: N]` marker would — before the
+    // model gets a turn, so a marker it forgets to emit costs nothing.
+    // Deliberately after the extraction above: a turn that brought a
+    // bill has just had its ask count zeroed, and the confirmation
+    // needs an outstanding question before it reads a "sí" as one.
+    const confirmedState = applyMeterConfirmation(meterState, inboundText)
+    const meterConfirmedNow = confirmedState !== meterState
+    meterState = confirmedState
+
     // The gate. Everything the customer has sent so far, folded into one
     // reading, and a verdict on whether that reading is the whole
     // property yet. One bill with nothing said about meters resolves to
@@ -354,12 +371,13 @@ export async function dispatchInboundToAiReply(
       if (gate.kind === 'handoff') {
         meterHandoff = true
       } else if (gate.kind === 'ready') {
-        // Only when this turn actually brought a bill. A settled batch
+        // Only when this turn actually brought a bill, or just closed
+        // the gate by confirming the ones already in. A settled batch
         // left over from an earlier turn — one whose proposal was held
         // back for review, say — must not re-inject its reading into
         // every "gracias" that follows and re-offer a quote nobody
         // asked for again.
-        if (hasReceipt) {
+        if (hasReceipt || meterConfirmedNow) {
           receiptExtraction = gate.reading
           void saveReceiptData(db, {
             accountId,
