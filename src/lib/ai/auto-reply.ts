@@ -247,6 +247,7 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
+          reason: 'cap_reached',
         }),
       })
       assistantHandled = true
@@ -415,6 +416,7 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
+          reason: 'meter_gate',
         }),
       })
       assistantHandled = true
@@ -504,7 +506,15 @@ export async function dispatchInboundToAiReply(
       usage,
     })
 
-    if (handoff || !text) {
+    // The batch closed on this very turn — the customer's "sí, son esos"
+    // completed the property and the proposal is already computed. That
+    // outranks a handoff: escalating here would throw away a quote the
+    // customer is waiting for and has fully earned. The handoff still
+    // happens, after the send, so an explicit request for a person is
+    // honoured rather than swallowed.
+    const quoteReady = receiptExtraction != null
+
+    if ((handoff || !text) && !quoteReady) {
       // The model can't (or shouldn't) answer — stop auto-replying on
       // this thread and hand it to a human. We (a) pause the bot here
       // (sticky until re-enabled), (b) route the conversation to the
@@ -521,6 +531,7 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
+          reason: handoff ? 'model_requested' : 'no_reply',
         }),
       })
       // If the model wrote a farewell alongside the sentinel ("a teammate
@@ -581,27 +592,36 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
+          reason: 'cap_reached',
         }),
       })
       assistantHandled = true
       return
     }
 
+    // Only reachable with a quote ready: every other empty-text turn was
+    // caught by the handoff branch above. The proposal PDF ships without
+    // a caption — it counts on the message before it to state the
+    // numbers — so a turn where the model emitted only the marker still
+    // needs a line, or the customer gets a bare document.
+    const outgoingText =
+      text || 'Perfecto, con esa información ya puedo prepararte tu propuesta 🙌'
+
     await engineSendText({
       accountId,
       userId: configOwnerUserId,
       conversationId,
       contactId,
-      text,
+      text: outgoingText,
       aiGenerated: true,
     })
     assistantHandled = true
 
     // The branded proposal, after the reply rather than before it: the
     // text states the numbers and gives the document context, and if
-    // the PDF fails the customer has still been answered. Deliberately
-    // NOT reached on a handoff — once a human owns the thread, they
-    // decide what the customer receives.
+    // the PDF fails the customer has still been answered. A handoff
+    // requested on this same turn is deferred until after the send
+    // below, so the document the customer earned still reaches them.
     //
     // `sendQuoteProposal` never throws and decides for itself whether
     // this reading deserves a document (quotable, has a peso amount,
@@ -628,6 +648,25 @@ export async function dispatchInboundToAiReply(
           `[ai auto-reply] proposal skipped (${outcome.reason}) on ${conversationId}`,
         )
       }
+    }
+
+    // The handoff the model asked for on the same turn the quote landed.
+    // Deferred to here rather than skipped: the customer has their reply
+    // and their proposal, and the reason the model wanted a person —
+    // an unrelated question, a complaint — is still real.
+    if (handoff) {
+      await performHandoff(db, {
+        accountId,
+        conversationId,
+        contactId,
+        handoffAgentId: config.handoffAgentId,
+        alreadyAssigned: conv.assigned_agent_id,
+        summary: buildHandoffSummary({
+          messages,
+          replyCount: conv.ai_reply_count ?? 0,
+          reason: 'model_requested',
+        }),
+      })
     }
   } catch (err) {
     console.error('[ai auto-reply] dispatch failed:', err)

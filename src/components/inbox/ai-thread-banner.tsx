@@ -87,6 +87,12 @@ export function AiThreadBanner({
   // state via realtime) changes.
   const [paused, setPaused] = useState(disabled);
   useEffect(() => setPaused(disabled), [conversationId, disabled]);
+  // The handoff note is the agent's only account of why the bot stopped,
+  // and it runs longer than one line. Collapsed by default so the banner
+  // stays a banner. Held as the thread it was opened for, so switching
+  // conversations collapses it without an effect.
+  const [expandedFor, setExpandedFor] = useState<string | null>(null);
+  const summaryOpen = expandedFor === conversationId;
 
   useEffect(() => {
     if (!accountId) return;
@@ -144,9 +150,17 @@ export function AiThreadBanner({
         <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">{t("pausedTitle")}</p>
           {handoffSummary && (
-            <p className="truncate text-muted-foreground" title={handoffSummary}>
+            <button
+              type="button"
+              onClick={() => setExpandedFor(summaryOpen ? null : conversationId)}
+              aria-expanded={summaryOpen}
+              className={cn(
+                "block w-full cursor-pointer text-left text-muted-foreground hover:text-foreground",
+                summaryOpen ? "whitespace-pre-wrap" : "truncate",
+              )}
+            >
               {handoffSummary}
-            </p>
+            </button>
           )}
         </div>
         <BannerButton onClick={() => toggle(false)} busy={busy} icon={Undo2}>

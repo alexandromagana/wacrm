@@ -1,5 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { METERS_MARKER_INSTRUCTION, type ReceiptExtraction } from './receipt'
+import { resolveQuote } from '@/lib/quotes/pricing'
+import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
+import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 
 // ============================================================
 // Properties split across several CFE meters.
@@ -321,12 +324,52 @@ export function formatMeterGateNote(state: MeterState): string | null {
     lines.push(
       'El cliente aún no ha dicho cuántos medidores tiene en total. Pregúntaselo si no lo ha respondido. NO des precio ni cotización hasta saberlo.',
     )
+    // The figures the proposal will carry the moment the customer says
+    // "sí, son esos". Without them this note is an instruction and
+    // nothing else, and the model — told never to state a price it
+    // can't source — has reason to escalate instead of closing the
+    // gate on the very turn the answer arrives.
+    lines.push(...projectedFigures(gate.reading))
   }
   lines.push(
     METERS_MARKER_INSTRUCTION,
     'Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
   )
   return lines.join('\n')
+}
+
+/**
+ * The 25-year projection the PDF will print for the bills already in
+ * hand, so the model has the real numbers in context on the turn the
+ * customer confirms. Same helpers `formatReceiptNote` uses — quoting a
+ * figure the document then contradicts is the one error the customer
+ * always catches. Empty when the combined reading doesn't price
+ * cleanly yet.
+ */
+function projectedFigures(reading: ReceiptExtraction): string[] {
+  const quote = resolveQuote(
+    reading.promedio_bimestral_kwh,
+    reading.cantidad_periodos_usados,
+    {
+      includesCurrentPeriod: reading.incluye_periodo_actual,
+      periods: reading.periodos_promediados_kwh,
+    },
+  )
+  if (quote.kind !== 'ok') return []
+
+  const financials = buildFinancials({
+    costoBimestralMxn: projectionBaseCost({
+      costoPeriodoMxn: reading.costo_periodo_mxn,
+      historialImporteMxn: reading.historial_bimestres_importe_mxn,
+    }),
+    tier: quote.tier,
+  })
+  if (!financials) return []
+
+  return [
+    `proyeccion_si_confirma_que_son_todos: sin paneles ${formatMxn(financials.sinPaneles25Anios)}, con paneles ${formatMxn(financials.conPaneles25Anios)}, ahorro ${formatMxn(financials.ahorro25Anios)}, se paga solo en ${formatPaybackDuration(financials.paybackAnios, financials.paybackMeses)}`,
+    'Esas cifras cubren SOLO los recibos que ya tienes y aún no son cotización: no las digas mientras el cliente no confirme. En cuanto confirme, la propuesta sale con exactamente esos números — nunca los recalcules.',
+  ]
 }
 
 /**

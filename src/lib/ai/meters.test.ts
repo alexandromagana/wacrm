@@ -328,4 +328,22 @@ describe('formatMeterGateNote', () => {
     )
     expect(note).toContain('faltan 2')
   })
+
+  it('carries the figures the proposal will print once the count is confirmed', () => {
+    // The confirmation turn brings no bill, so without these the model
+    // is asked to unlock a quote while holding no number it may state —
+    // and a model told never to invent prices escalates instead.
+    const note = formatMeterGateNote(
+      stateWith([bill(), bill({ numero_servicio: '2' })]),
+    )
+    expect(note).toContain('proyeccion_si_confirma_que_son_todos')
+    expect(note).toMatch(/no las digas mientras el cliente no confirme/i)
+  })
+
+  it('withholds figures while bills are still missing', () => {
+    // A stated count with bills outstanding prices only part of the
+    // property; those numbers are wrong, not merely early.
+    const note = formatMeterGateNote(stateWith([bill()], { expected: 3 }))
+    expect(note).not.toContain('proyeccion_si_confirma_que_son_todos')
+  })
 })

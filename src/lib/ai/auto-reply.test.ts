@@ -751,7 +751,11 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
   })
 
-  it('sends no proposal on handoff — the human owns the thread now', async () => {
+  it('still sends the proposal when the model hands off on the same turn', async () => {
+    // The quote is computed and the customer is waiting for it. A
+    // handoff on this turn is about something else — escalating must not
+    // swallow a document the customer already earned. The bot still
+    // pauses, after the send.
     mockBills({
       promedio_bimestral_kwh: 2135,
       cantidad_periodos_usados: 6,
@@ -763,7 +767,29 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     })
     h.generateReply.mockResolvedValue({ text: 'Te paso con alguien', handoff: true })
     await dispatchInboundToAiReply(RECEIPT_ARGS)
-    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.sendQuoteProposal).toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  it('sends the proposal when the model returns only the meters marker', async () => {
+    // Marker-only output strips to empty text. The proposal PDF ships
+    // without a caption, so the customer would get a bare document —
+    // the fallback line carries it.
+    mockBills({
+      promedio_bimestral_kwh: 2135,
+      cantidad_periodos_usados: 6,
+      historial_bimestres_kwh: [],
+      consumo_periodo_actual_kwh: 2944,
+      periodo_actual: null,
+      tarifa: null,
+      advertencias: '',
+    })
+    h.generateReply.mockResolvedValue({ text: '', handoff: false })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.sendQuoteProposal).toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('propuesta') }),
+    )
   })
 
   it('still replies when the proposal blows up', async () => {
