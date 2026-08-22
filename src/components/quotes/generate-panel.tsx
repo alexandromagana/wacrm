@@ -34,6 +34,12 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import { addFilesToMeter } from './meter-files';
+import { ManualReadingCard } from './manual-reading-card';
+import {
+  emptyManualReading,
+  hasConsumption,
+  type ManualMeterReading,
+} from '@/lib/quotes/reading';
 import type { QuoteProjectType, QuoteTemplate } from '@/types';
 
 interface Props {
@@ -83,6 +89,18 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
    * are two pages of one meter or one page each of two.
    */
   const [meters, setMeters] = useState<File[][]>([[]]);
+
+  /**
+   * Whether the consumption is being typed instead of read. Set two
+   * ways: by the "Sin recibo" toggle, and automatically when a read
+   * comes back refused — at which point `manual` below is pre-filled
+   * with whatever the model DID manage to get, so the user corrects a
+   * draft rather than starting from a blank form.
+   */
+  const [manualMode, setManualMode] = useState(false);
+  const [manual, setManual] = useState<ManualMeterReading[]>([
+    emptyManualReading(),
+  ]);
 
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,14 +211,25 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       body.append('template_id', templateId);
       // Indexed by meter — the route reads `receipt_files_<n>` as one
       // bill each and sums them. Empty groups are simply not sent.
+      // Still sent alongside a hand-capture: the photo is archived with
+      // the quote even when the numbers came from the keyboard.
       meters.forEach((group, i) => {
         for (const file of group) body.append(`receipt_files_${i}`, file);
       });
+      // Its presence is what tells the route to skip the vision call.
+      if (manualMode) body.append('manual_reading', JSON.stringify(manual));
 
       const res = await fetch('/api/quotes/generate', { method: 'POST', body });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setError(data?.error ?? 'No se pudo generar la cotización.');
+        // A refusal now carries what the model read. Opening the card on
+        // it turns a dead end into a correction: the numbers are right
+        // there on the bill the user is holding.
+        if (Array.isArray(data?.readings) && data.readings.length > 0) {
+          setManual(data.readings as ManualMeterReading[]);
+          setManualMode(true);
+        }
         return;
       }
       setResult({
@@ -215,16 +244,26 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
     }
   }
 
+  /** Switch between reading a bill and typing its numbers. */
+  function setMode(manualNext: boolean) {
+    setManualMode(manualNext);
+    setError(null);
+    setResult(null);
+  }
+
   // Every group that exists must carry a bill. A meter added and left
   // empty is a mistake worth blocking, not an extra to ignore: the
   // quote it produces is short by one meter and looks perfectly normal.
+  // The same rule holds for a hand-captured meter with no kWh in it.
   const filledMeters = meters.filter((g) => g.length > 0);
+  const consumptionReady = manualMode
+    ? manual.length > 0 && manual.every(hasConsumption)
+    : filledMeters.length === meters.length && filledMeters.length > 0;
   const ready =
     clientName.trim() &&
     projectTypeId &&
     templateId &&
-    filledMeters.length === meters.length &&
-    filledMeters.length > 0 &&
+    consumptionReady &&
     !generating;
 
   if (loading) {
@@ -265,13 +304,37 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       <CardHeader>
         <CardTitle className="text-foreground">Generar cotización</CardTitle>
         <CardDescription className="text-muted-foreground">
-          Escribe el nombre del cliente y elige el tipo de proyecto, adjunta su
-          recibo CFE, y el sistema lee el consumo y llena la propuesta. El
-          contacto es opcional — sirve para dejar la cotización ligada al CRM.
+          {manualMode
+            ? 'Escribe el consumo del recibo tú mismo y el sistema llena la propuesta. Útil cuando la foto no se deja leer, o cuando el cliente solo te pasó los números.'
+            : 'Escribe el nombre del cliente y elige el tipo de proyecto, adjunta su recibo CFE, y el sistema lee el consumo y llena la propuesta. El contacto es opcional — sirve para dejar la cotización ligada al CRM.'}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="space-y-5">
+        {/* Two ways in, one form. "Sin recibo" is for the customer who
+            reads their consumption over the phone, or the bill that no
+            camera is going to render legible. */}
+        <div className="border-border/80 bg-muted/40 inline-flex gap-1 rounded-lg border p-1">
+          {[
+            { manual: false, label: 'Con recibo' },
+            { manual: true, label: 'Sin recibo' },
+          ].map((option) => (
+            <button
+              key={option.label}
+              type="button"
+              onClick={() => setMode(option.manual)}
+              className={cn(
+                'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                manualMode === option.manual
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label className="text-muted-foreground">
@@ -354,7 +417,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           </div>
         </div>
 
-        <div className="space-y-3">
+        <div className={cn('space-y-3', manualMode && 'hidden')}>
           <Label className="text-muted-foreground">
             {meters.length > 1 ? 'Recibos CFE' : 'Recibo CFE'}
           </Label>
@@ -478,6 +541,24 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           )}
         </div>
 
+        {/* The error goes ABOVE the card it refers to: the card is what
+            the user does about it, so the reason has to be read first. */}
+        {error && (
+          <div className="border-destructive/30 bg-destructive/5 text-destructive flex gap-2 rounded-lg border p-3 text-sm">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <p>{error}</p>
+          </div>
+        )}
+
+        {manualMode && (
+          <ManualReadingCard
+            readings={manual}
+            onChange={setManual}
+            maxMeters={MAX_METERS}
+            busy={generating}
+          />
+        )}
+
         <Button
           onClick={handleGenerate}
           disabled={!ready}
@@ -486,22 +567,15 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           {generating ? (
             <>
               <Loader2 className="mr-1.5 size-4 animate-spin" />
-              Leyendo el recibo…
+              {manualMode ? 'Generando…' : 'Leyendo el recibo…'}
             </>
           ) : (
             <>
               <Sparkles className="mr-1.5 size-4" />
-              Generar cotización
+              {manualMode ? 'Cotizar con estos datos' : 'Generar cotización'}
             </>
           )}
         </Button>
-
-        {error && (
-          <div className="border-destructive/30 bg-destructive/5 text-destructive flex gap-2 rounded-lg border p-3 text-sm">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            <p>{error}</p>
-          </div>
-        )}
 
         {result && (
           <div className="border-border bg-muted/30 space-y-3 rounded-lg border p-4">

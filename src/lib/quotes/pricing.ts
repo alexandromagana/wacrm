@@ -77,13 +77,26 @@ export function isPlausibleAverage(kwh: number): boolean {
 }
 
 /**
- * A bimester below this fraction of the window's own average is not
+ * A bimester below this fraction of the window's own MEDIAN is not
  * "a mild winter" — it is the house standing empty, under construction,
- * or on a different meter. Cancún's AC swing is roughly 2:1 between a
- * winter and a summer bimester, which lands near 0.6 of the average;
- * 0.4 sits well below that so an ordinary seasonal dip never trips it.
+ * or on a different meter.
+ *
+ * Both halves of that sentence were wrong before and cost a real quote.
+ * The comparison used to be against the mean at 0.4, on the assumption
+ * that Cancún swings about 2:1 between a winter and a summer bimester.
+ * A low-baseline house swings far harder — one real bill runs
+ * [1611, 1220, 683, 328, 655, 1060], a 4.9:1 spread, because the AC is
+ * nearly the whole load and there is little else underneath it. Its
+ * January reads as an empty house, and the previous January (312 kWh)
+ * proves it is simply January.
+ *
+ * The median fixes the axis: summer peaks drag a mean upward and raise
+ * the bar winter has to clear, while the median sits on the middle of
+ * the year regardless. Against the median that same winter lands at
+ * 0.38 and a genuinely vacant bimester at 0.20, so 0.30 separates them
+ * with room on both sides.
  */
-export const ANOMALY_FLOOR_RATIO = 0.4
+export const ANOMALY_FLOOR_RATIO = 0.3
 
 /** Why a reading is priced but not safe to put on a PDF unattended. */
 export type ReviewReason =
@@ -106,21 +119,36 @@ export interface QuoteEvidence {
   periods?: readonly number[]
 }
 
+/** The middle value of a window, averaging the two middles when even. */
+function median(values: readonly number[]): number {
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = sorted.length >> 1
+  return sorted.length % 2 === 1
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
 /**
- * The lowest reading in the window when it is far enough below the
- * window's own average to mean the periods are not comparable, else
- * null. Two periods is enough to ask the question: at n=2 the rule
- * needs a 4:1 spread, which no thermostat produces.
+ * The lowest reading in the window when it sits far enough below the
+ * window's own median to mean the periods are not comparable, else
+ * null. Two periods is enough to ask the question: at n=2 the median is
+ * the mean, so the rule needs better than a 5.7:1 spread — which no
+ * thermostat produces.
+ *
+ * Deliberately keyed to the single lowest value rather than to a gap
+ * between the two lowest: a house left empty for two bimesters running
+ * shows two near-identical lows, and a "how far is the floor from the
+ * next one up" test would wave it straight through.
  */
 export function findAnomalousPeriod(
   periods: readonly number[],
 ): number | null {
   const values = periods.filter((v) => Number.isFinite(v) && v >= 0)
   if (values.length < 2) return null
-  const mean = values.reduce((sum, v) => sum + v, 0) / values.length
-  if (mean <= 0) return null
+  const middle = median(values)
+  if (middle <= 0) return null
   const lowest = Math.min(...values)
-  return lowest < mean * ANOMALY_FLOOR_RATIO ? lowest : null
+  return lowest < middle * ANOMALY_FLOOR_RATIO ? lowest : null
 }
 
 /**

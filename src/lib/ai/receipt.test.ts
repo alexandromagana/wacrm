@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  buildExtraction,
   parseReceiptJson,
   isPlausibleAverage,
   formatReceiptNote,
@@ -633,5 +634,66 @@ describe('saveReceiptData', () => {
       extraction: extraction({ promedio_bimestral_kwh: 3, tarifa: 'XYZ' }),
     })
     expect(values).toHaveLength(0)
+  })
+})
+
+describe('buildExtraction', () => {
+  /**
+   * The bill that started all of this: two cropped WhatsApp photos of a
+   * Cancún house whose winter bimester reads 328 kWh. Nothing here is
+   * irregular — the previous winter on the same bill read 312 — and the
+   * whole year prices cleanly at 926.
+   */
+  const SAEZ = {
+    consumo_periodo_actual_kwh: 1611,
+    historial_bimestres_kwh: [1220, 683, 328, 655, 1060],
+    importe_periodo_mxn: 3634.31,
+    importe_dap_mxn: 156.65,
+    importe_total_a_pagar_mxn: 3791.2,
+    tarifa: '1D',
+    ciudad: 'Cancún',
+  }
+
+  it('averages the year the same way whoever supplied the numbers', () => {
+    const fromModel = parseReceiptJson(JSON.stringify(SAEZ))!
+    const byHand = buildExtraction(SAEZ)
+    expect(byHand).toEqual(fromModel)
+    expect(byHand.promedio_bimestral_kwh).toBe(926)
+    expect(byHand.cantidad_periodos_usados).toBe(6)
+    expect(byHand.incluye_periodo_actual).toBe(true)
+    expect(byHand.periodos_promediados_kwh).toEqual([
+      1611, 1220, 683, 328, 655, 1060,
+    ])
+  })
+
+  it('derives the period cost from its parts, never the headline total', () => {
+    // 3,791.20 is what the customer owes, debt included; 3,790.96 is
+    // what this bimester of electricity cost. The 25-year projection
+    // multiplies whichever one it is given.
+    expect(buildExtraction(SAEZ).costo_periodo_mxn).toBeCloseTo(3790.96, 2)
+  })
+
+  it('says so out loud when the current period never made it in', () => {
+    const r = buildExtraction({
+      historial_bimestres_kwh: [1220, 683, 328],
+    })
+    expect(r.incluye_periodo_actual).toBe(false)
+    expect(r.advertencias).toContain('no se pudo leer el consumo del periodo')
+  })
+
+  it('caps the history at a year however many values arrive', () => {
+    const r = buildExtraction({
+      consumo_periodo_actual_kwh: 900,
+      historial_bimestres_kwh: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    })
+    expect(r.historial_bimestres_kwh).toHaveLength(5)
+    expect(r.cantidad_periodos_usados).toBe(6)
+  })
+
+  it('yields an unpriceable reading from nothing at all', () => {
+    const r = buildExtraction({})
+    expect(r.promedio_bimestral_kwh).toBeNull()
+    expect(r.cantidad_periodos_usados).toBe(0)
+    expect(r.costo_periodo_mxn).toBeNull()
   })
 })

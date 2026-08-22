@@ -7,6 +7,7 @@ import {
 } from '@/lib/rate-limit';
 import { loadAiConfig } from '@/lib/ai/config';
 import {
+  buildExtraction,
   extractReceiptFromFiles,
   inferPropertyType,
   saveReceiptData,
@@ -14,7 +15,17 @@ import {
   type ReceiptExtraction,
 } from '@/lib/ai/receipt';
 import { combineReadings, sameMeter } from '@/lib/ai/meters';
-import { resolveQuote } from '@/lib/quotes/pricing';
+import {
+  resolveQuote,
+  type ReviewReason,
+  type SolarTier,
+} from '@/lib/quotes/pricing';
+import {
+  emptyManualReading,
+  hasConsumption,
+  parseManualReadings,
+  type ManualMeterReading,
+} from '@/lib/quotes/reading';
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance';
 import { buildFolio } from '@/lib/quotes/fields';
 import { buildQuoteMergeFields } from '@/lib/quotes/merge-fields';
@@ -90,22 +101,55 @@ export function readMeterGroups(form: FormData): File[][] {
  * Why a reading can be priced in chat but must not become a document.
  * The bot skips these silently and asks the customer a question; here a
  * person is waiting, so each one is said out loud.
+ *
+ * `needs_review` names WHICH of its two causes fired. The single
+ * sentence that used to cover both ("falta el bimestre actual, o el
+ * historial trae un periodo muy por debajo") left the user unable to
+ * tell an OCR miss from a judgement call about the customer's house —
+ * and every message here ends at a review card showing the numbers, so
+ * it has to say which one to go look at.
  */
-function explainRefusal(kind: string, kwh?: number): string {
+function explainRefusal(
+  kind: string,
+  kwh?: number,
+  reason?: ReviewReason,
+  outlierKwh?: number
+): string {
   switch (kind) {
     case 'unreadable':
-      return 'No se pudo leer el consumo del recibo. Sube una foto más nítida de la primera página, donde viene el renglón "Energía (kWh)".';
+      return 'No se pudo leer el consumo del recibo. Sube una foto más nítida, o captura los datos a mano abajo.';
     case 'implausible':
-      return `El consumo leído (${kwh} kWh bimestrales) no parece el de un recibo real. Revisa que la foto sea del recibo completo y no de la lectura del medidor.`;
+      return `El consumo (${kwh} kWh bimestrales) no parece el de un recibo real. Revisa que sea el consumo del bimestre y no la lectura acumulada del medidor.`;
     case 'above_table':
       return `El consumo (${kwh} kWh bimestrales) está por encima del último rango de este tipo de proyecto. Agrega un rango que lo cubra, o cotiza este proyecto a la medida.`;
     case 'low_confidence':
-      return 'El recibo solo dejó leer un periodo. Un promedio bimestral necesita al menos dos para no sobre o subdimensionar el sistema — sube también la página del historial de consumo.';
+      return 'Solo se pudo leer un periodo. Un promedio bimestral necesita al menos dos para no sobre o subdimensionar el sistema — sube la página del historial de consumo, o captúralo a mano abajo.';
     case 'needs_review':
-      return 'La lectura salió irregular: falta el bimestre actual, o el historial trae un periodo muy por debajo del promedio (casa desocupada o en obra). Confírmalo con el cliente antes de cotizar.';
+      return reason === 'missing_current_period'
+        ? 'No se leyó el consumo del bimestre actual, así que el promedio salió solo del historial. Revísalo abajo y complétalo antes de cotizar.'
+        : `El historial trae un bimestre de ${outlierKwh} kWh, muy por debajo del resto (casa desocupada o en obra). Confírmalo con el cliente, o cotiza con estos datos si así es su consumo.`;
     default:
       return 'No se pudo cotizar con este recibo.';
   }
+}
+
+/**
+ * The reading, as the review card needs it back. Only the fields the
+ * user can see and correct — the derived ones (promedio, costo del
+ * periodo) are recomputed from these on the next round trip, so
+ * shipping them would just be a second copy to disagree with.
+ */
+function toManualReading(r: ReceiptExtraction): ManualMeterReading {
+  return {
+    consumo_periodo_actual_kwh: r.consumo_periodo_actual_kwh,
+    historial_bimestres_kwh: r.historial_bimestres_kwh,
+    importe_periodo_mxn: r.importe_periodo_mxn,
+    importe_dap_mxn: r.importe_dap_mxn,
+    historial_bimestres_importe_mxn: r.historial_bimestres_importe_mxn,
+    tarifa: r.tarifa,
+    ciudad: r.ciudad,
+    numero_servicio: r.numero_servicio,
+  };
 }
 
 /**
@@ -165,10 +209,37 @@ export async function POST(request: Request) {
       );
     }
 
-    const meterGroups = readMeterGroups(form);
-    if (meterGroups.length === 0) {
+    // Numbers typed by hand: either corrections to a read that came back
+    // wrong, or a quote for a customer who never sent a bill at all.
+    // Their presence replaces the vision call entirely.
+    const manualRaw = form.get('manual_reading');
+    const manualReadings =
+      typeof manualRaw === 'string' && manualRaw
+        ? parseManualReadings(manualRaw)
+        : null;
+    if (typeof manualRaw === 'string' && manualRaw && !manualReadings) {
       return NextResponse.json(
-        { error: 'Adjunta al menos una foto o PDF del recibo CFE.' },
+        { error: 'Los datos capturados no son válidos. Revísalos.' },
+        { status: 400 }
+      );
+    }
+    if (manualReadings && !manualReadings.every(hasConsumption)) {
+      return NextResponse.json(
+        {
+          error:
+            'Cada medidor necesita al menos el consumo del bimestre actual o un valor del historial.',
+        },
+        { status: 400 }
+      );
+    }
+
+    const meterGroups = readMeterGroups(form);
+    if (meterGroups.length === 0 && !manualReadings) {
+      return NextResponse.json(
+        {
+          error:
+            'Adjunta al menos una foto o PDF del recibo CFE, o captura el consumo a mano.',
+        },
         { status: 400 }
       );
     }
@@ -252,64 +323,76 @@ export async function POST(request: Request) {
       );
     }
 
-    const aiConfig = await loadAiConfig(supabase, accountId, {
-      requireActive: false,
-    });
-    if (!aiConfig) {
-      return NextResponse.json(
-        {
-          error:
-            'La lectura de recibos usa el agente de IA, que aún no está configurado. Añade tu API key en Ajustes.',
-        },
-        { status: 400 }
-      );
-    }
-
-    // One vision call per meter. Each group is read on its own with the
-    // single-bill prompt, exactly as a one-meter quote always was, and
-    // the sum happens afterwards in code.
+    // Both producers of a reading converge on this array, in the same
+    // shape: `buildExtraction` is the derivation the model's own JSON
+    // goes through, so nothing downstream can tell them apart.
     const readings: ReceiptExtraction[] = [];
-    for (const [index, group] of meterGroups.entries()) {
-      const files: MediaFile[] = await Promise.all(
-        group.map(async (f) => ({
-          base64: Buffer.from(await f.arrayBuffer()).toString('base64'),
-          mimeType: f.type || 'image/jpeg',
-        }))
-      );
 
-      // extractReceiptFromFiles throws on a provider/network failure and
-      // returns null on an unreadable image — the two need different
-      // answers, which is why this path calls it rather than the bot's
-      // swallow-everything extractReceipts.
-      let extracted;
-      try {
-        extracted = await extractReceiptFromFiles(aiConfig, files);
-      } catch (err) {
-        console.error('[quotes/generate] vision call failed:', err);
+    if (manualReadings) {
+      // Hand-captured numbers must quote even on an account with no AI
+      // key at all — no vision call, so no config needed.
+      readings.push(...manualReadings.map(buildExtraction));
+    } else {
+      const aiConfig = await loadAiConfig(supabase, accountId, {
+        requireActive: false,
+      });
+      if (!aiConfig) {
         return NextResponse.json(
           {
             error:
-              'El proveedor de IA no respondió. Vuelve a intentarlo en un momento.',
+              'La lectura de recibos usa el agente de IA, que aún no está configurado. Añade tu API key en Ajustes, o captura el consumo a mano.',
           },
-          { status: 502 }
+          { status: 400 }
         );
       }
-      // One unreadable meter fails the whole quote, and says which. The
-      // bot can afford to ask the customer for a better photo; here the
-      // only alternative would be pricing the meters that did read,
-      // which silently sizes the system for part of the property.
-      if (!extracted) {
-        return NextResponse.json(
-          {
-            error:
-              meterGroups.length > 1
-                ? `No se pudo leer el recibo del medidor ${index + 1}. ${explainRefusal('unreadable')}`
-                : explainRefusal('unreadable'),
-          },
-          { status: 422 }
+
+      // One vision call per meter. Each group is read on its own with
+      // the single-bill prompt, exactly as a one-meter quote always
+      // was, and the sum happens afterwards in code.
+      for (const [index, group] of meterGroups.entries()) {
+        const files: MediaFile[] = await Promise.all(
+          group.map(async (f) => ({
+            base64: Buffer.from(await f.arrayBuffer()).toString('base64'),
+            mimeType: f.type || 'image/jpeg',
+          }))
         );
+
+        // extractReceiptFromFiles throws on a provider/network failure
+        // and returns null on an unreadable image — the two need
+        // different answers, which is why this path calls it rather
+        // than the bot's swallow-everything extractReceipts.
+        let extracted;
+        try {
+          extracted = await extractReceiptFromFiles(aiConfig, files);
+        } catch (err) {
+          console.error('[quotes/generate] vision call failed:', err);
+          return NextResponse.json(
+            {
+              error:
+                'El proveedor de IA no respondió. Vuelve a intentarlo en un momento.',
+            },
+            { status: 502 }
+          );
+        }
+        // An unreadable meter no longer ends the road: the response
+        // carries an empty block per meter so the review card can open
+        // on it and the user can type the numbers off the bill in front
+        // of them. Pricing the meters that DID read is still refused —
+        // that silently sizes the system for part of the property.
+        if (!extracted) {
+          return NextResponse.json(
+            {
+              error:
+                meterGroups.length > 1
+                  ? `No se pudo leer el recibo del medidor ${index + 1}. ${explainRefusal('unreadable')}`
+                  : explainRefusal('unreadable'),
+              readings: meterGroups.map(() => emptyManualReading()),
+            },
+            { status: 422 }
+          );
+        }
+        readings.push(extracted);
       }
-      readings.push(extracted);
     }
 
     // Two groups can turn out to be one meter — the same bill uploaded
@@ -324,7 +407,7 @@ export async function POST(request: Request) {
     }
     const extraction = combineReadings(meters);
 
-    const quote = resolveQuote(
+    const resolution = resolveQuote(
       extraction.promedio_bimestral_kwh,
       extraction.cantidad_periodos_usados,
       {
@@ -333,16 +416,55 @@ export async function POST(request: Request) {
       },
       tiers
     );
-    if (quote.kind !== 'ok') {
+
+    // Warnings the document carries; the refusal path below never gets
+    // here, so anything pushed after this point ends up on the quote.
+    const warnings: string[] = [];
+
+    // A resolution that carries a tier, once the review gate has had
+    // its say. `needs_review` asks a question ("is this really how they
+    // live?") that hand-capture has already answered: someone had the
+    // bill in front of them and typed these numbers. Blocking again
+    // would leave the same dead end the review card exists to open. The
+    // other refusals are not questions — an implausible average, or one
+    // past the table, is wrong however it was entered — so they stand.
+    let quote: { kwh: number; tier: SolarTier } | null = null;
+    if (resolution.kind === 'ok') {
+      quote = resolution;
+    } else if (resolution.kind === 'needs_review' && manualReadings) {
+      warnings.push(
+        resolution.reason === 'missing_current_period'
+          ? 'Se cotizó sin el consumo del bimestre actual: el promedio salió solo del historial.'
+          : `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por debajo del resto.`
+      );
+      quote = resolution;
+    }
+
+    if (!quote) {
       return NextResponse.json(
         {
           error: explainRefusal(
-            quote.kind,
-            'kwh' in quote ? quote.kwh : undefined
+            resolution.kind,
+            'kwh' in resolution ? resolution.kwh : undefined,
+            resolution.kind === 'needs_review' ? resolution.reason : undefined,
+            resolution.kind === 'needs_review'
+              ? resolution.outlierKwh
+              : undefined
           ),
+          // What the model actually read, so the review card opens on
+          // it instead of leaving the user with a sentence and no way
+          // forward. Per meter, in the order they were uploaded.
+          readings: readings.map(toManualReading),
         },
         { status: 422 }
       );
+    }
+
+    // Said out loud on the document's own warnings, not just in the
+    // banner: months later, "where did this number come from?" is
+    // answered by the quote record itself.
+    if (manualReadings) {
+      warnings.push('Consumo capturado a mano, no leído del recibo.');
     }
 
     const constants = toFinanceConstants(projectType);
@@ -358,7 +480,6 @@ export async function POST(request: Request) {
     // Non-blocking: the tariff on the bill is evidence, not authority —
     // a business can genuinely sit on a residential meter.
     const receiptHint = inferPropertyType(extraction.tarifa);
-    const warnings: string[] = [];
     if (
       receiptHint &&
       projectType.cfe_property_type_hint &&
@@ -470,21 +591,26 @@ export async function POST(request: Request) {
     });
 
     // Audit copy of what was read. Best effort — a failure here must not
-    // cost the user the document they just waited for.
+    // cost the user the document they just waited for. There is nothing
+    // to archive when the numbers were typed with no bill attached; a
+    // hand-corrected read still archives its photo, so the evidence
+    // behind the quote does not go missing.
     let receiptPath: string | null = null;
-    try {
-      const first = meterGroups[0][0];
-      const uploaded = await uploadServerMedia({
-        db: supabase,
-        bucket: QUOTE_ASSETS_BUCKET,
-        accountId,
-        bytes: Buffer.from(await first.arrayBuffer()),
-        fileName: `${folio} recibo-${first.name}`,
-        contentType: first.type || 'image/jpeg',
-      });
-      receiptPath = uploaded.path;
-    } catch (err) {
-      console.error('[quotes/generate] receipt archive failed:', err);
+    if (meterGroups.length > 0) {
+      try {
+        const first = meterGroups[0][0];
+        const uploaded = await uploadServerMedia({
+          db: supabase,
+          bucket: QUOTE_ASSETS_BUCKET,
+          accountId,
+          bytes: Buffer.from(await first.arrayBuffer()),
+          fileName: `${folio} recibo-${first.name}`,
+          contentType: first.type || 'image/jpeg',
+        });
+        receiptPath = uploaded.path;
+      } catch (err) {
+        console.error('[quotes/generate] receipt archive failed:', err);
+      }
     }
 
     // Keeps the contact card in step with the bot's own reads. Skipped

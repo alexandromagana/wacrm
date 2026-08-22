@@ -171,6 +171,19 @@ describe('resolveQuote', () => {
     expect(res.reason).toBe('missing_current_period')
   })
 
+  it('lets a low-baseline house through its own 5:1 winter dip', () => {
+    // The bill that exposed the old rule. 328 kWh is the DIC-FEB
+    // bimester of a house whose load is nearly all air conditioning —
+    // the previous January on the same bill read 312, so it is the
+    // season, not a vacancy. Against the mean it looked like an empty
+    // house and the quote was refused; against the median it prices.
+    const res = resolveQuote(926, 6, {
+      includesCurrentPeriod: true,
+      periods: [1611, 1220, 683, 328, 655, 1060],
+    })
+    expect(res.kind).toBe('ok')
+  })
+
   it('lets an ordinary Cancún summer/winter swing through', () => {
     // 2:1 between the hottest and coldest bimester is normal here and
     // must not be mistaken for a vacancy, or every quote needs a human.
@@ -191,11 +204,25 @@ describe('findAnomalousPeriod', () => {
     expect(findAnomalousPeriod([2944, 2177, 1487, 1447, 1966, 2788])).toBeNull()
   })
 
-  it('needs a 4:1 spread before calling it on two periods', () => {
-    // At n=2 the outlier drags the mean it is compared against, so the
-    // rule is deliberately hard to trip.
+  it('needs a 5.7:1 spread before calling it on two periods', () => {
+    // At n=2 the median IS the mean, so the outlier drags the very
+    // number it is compared against and the rule is hard to trip by
+    // design.
     expect(findAnomalousPeriod([2545, 216])).toBe(216)
     expect(findAnomalousPeriod([1000, 500])).toBeNull()
+  })
+
+  it('still catches a house left empty for two bimesters running', () => {
+    // The reason the rule stays keyed to the single lowest value: two
+    // adjacent lows are what a real vacancy looks like, and a
+    // lowest-vs-next-lowest test would read them as a stable baseline.
+    expect(findAnomalousPeriod([1200, 1100, 80, 90, 1300, 1250])).toBe(80)
+  })
+
+  it('ignores the winter of a low-baseline house', () => {
+    expect(
+      findAnomalousPeriod([1611, 1220, 683, 328, 655, 1060]),
+    ).toBeNull()
   })
 
   it('says nothing about a single period, or about zeroes', () => {

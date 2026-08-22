@@ -7,6 +7,10 @@ import {
   PROPIEDAD_FIELD_NAME,
 } from '@/lib/contacts/lead-form'
 import { isPlausibleAverage, resolveQuote } from '@/lib/quotes/pricing'
+// The history cap lives with the manual-capture form's own limits so
+// both producers of a reading average the same window. See
+// `src/lib/quotes/reading.ts`.
+import { MAX_HISTORIAL_BIMESTRES } from '@/lib/quotes/reading'
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
 import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 
@@ -90,32 +94,62 @@ electricidad, México). Tu único trabajo es EXTRAER los valores de
 consumo tal como aparecen — no calcules promedios ni sumes nada, eso
 se hace por fuera.
 
+# CÓMO VIENEN LAS IMÁGENES
+Casi nunca son escaneos limpios. Espera fotos RECORTADAS que muestran
+solo un pedazo de la hoja, torcidas, giradas, con un dedo encima, en
+cualquier orden, y a veces repetidas. Los dos bloques que te importan
+(el del periodo actual y el del historial) pueden venir en imágenes
+distintas, o uno de los dos puede no venir.
+
+Trabaja con lo que haya: junta la información de TODAS las imágenes
+como si fueran un solo recibo, reporta cada campo que alcances a ver, y
+deja en null únicamente los que de plano no aparecen en ninguna imagen.
+NUNCA descartes la lectura porque el recorte no se parezca al recibo
+completo o porque falte el encabezado — un fragmento con los números
+correctos vale igual que la hoja entera.
+
 # QUÉ BUSCAR
-- Página 1: el consumo en kWh del periodo facturado ACTUAL (un solo
-  número — el bimestre que se está cobrando ahora), el periodo de
-  facturación (fechas), la tarifa contratada si aparece (ej. 1, 1A,
-  DAC, PDBT, GDMTH), el NÚMERO DE SERVICIO (también llamado RPU o
-  "No. de servicio" — la cadena larga de dígitos que identifica el
+- El bloque del PERIODO ACTUAL: el consumo en kWh del periodo facturado
+  ACTUAL (un solo número — el bimestre que se está cobrando ahora), el
+  periodo de facturación (fechas), la tarifa contratada si aparece
+  (ej. 1, 1A, DAC, PDBT, GDMTH), el NÚMERO DE SERVICIO (también llamado
+  RPU o "No. de servicio" — la cadena larga de dígitos que identifica el
   medidor, normalmente arriba a la derecha o junto al nombre del
   titular; cópiala completa, solo los dígitos), y la ciudad o
   municipio del domicilio del servicio (busca la dirección impresa —
   extrae SOLO la ciudad o municipio, nunca la calle ni el número).
 
-  ⚠️ CUIDADO CON EL CONSUMO DE LA PÁGINA 1. En la tabla de conceptos
-  aparecen tres números en la fila "Energía (kWh)":
-      Lectura actual | Lectura anterior | Total del periodo
-  Ejemplo real:  1,922  |  1,194  |  728
-  El consumo que necesitas es el TOTAL DEL PERIODO (728 en el
-  ejemplo) — es decir, la DIFERENCIA entre las dos lecturas.
-  NUNCA reportes la "Lectura actual" (1,922): esa es la lectura
-  acumulada del medidor, no el consumo del bimestre, y usarla infla
-  el promedio y arruina la cotización. Si la columna "Total del
-  periodo" no se lee con claridad, calcula tú la resta
-  (lectura actual − lectura anterior). Cifra de referencia: el
-  consumo de un bimestre normalmente se parece a los valores del
-  historial de la página 2; si tu número es mucho mayor que todos
-  ellos, seguramente tomaste la lectura del medidor por error.
-- Página 1, importes en pesos. En el bloque "Desglose del importe a
+  ⚠️ DÓNDE SALE EL CONSUMO DEL PERIODO. Hay dos formatos, según el
+  recibo. Toma el que veas:
+
+  (a) En la fila "Energía (kWh)" de la tabla de conceptos aparecen tres
+      números:
+          Lectura actual | Lectura anterior | Total del periodo
+      Ejemplo real:  1,922  |  1,194  |  728
+      El consumo que necesitas es el TOTAL DEL PERIODO (728 en el
+      ejemplo) — es decir, la DIFERENCIA entre las dos lecturas.
+      NUNCA reportes la "Lectura actual" (1,922): esa es la lectura
+      acumulada del medidor, no el consumo del bimestre, y usarla infla
+      el promedio y arruina la cotización. Si la columna "Total del
+      periodo" no se lee con claridad, calcula tú la resta
+      (lectura actual − lectura anterior).
+
+  (b) En la tabla de PRECIOS ESCALONADOS, con encabezados
+      "Total periodo | Precio (MXN) | Subtotal (MXN)", el consumo es el
+      número que va SOLO en el primer renglón, bajo "Total periodo",
+      antes de los escalones. Ejemplo real: aparece 1611 arriba, luego
+      los escalones 350, 450, 400 y 411 con su precio y subtotal, y al
+      final otra vez 1,611. Verifica que los escalones sumen ese mismo
+      número (350+450+400+411 = 1,611) y repórtalo.
+
+  ⚠️ Cómo saber si tomaste la lectura del medidor por error: ese error
+  es de ORDEN DE MAGNITUD. La lectura acumulada suele traer 5 o 6
+  dígitos y ser varias veces mayor que cualquier bimestre. Sospecha
+  solo si tu número es 3 VECES O MÁS que el mayor del historial. Que un
+  bimestre de verano supere a todos los del historial es perfectamente
+  normal — un verano caluroso es récord de consumo y NO es motivo para
+  descartar el número.
+- Importes en pesos. En el bloque "Desglose del importe a
   pagar" (o equivalente) reporta por separado, cada uno tal como está
   impreso:
     · "Fac. del Periodo" — lo facturado de ESTE bimestre, con IVA.
@@ -128,14 +162,18 @@ se hace por fuera.
   periodos anteriores — así que en un cliente atrasado no se parece en
   nada a lo que costó este bimestre. Solo repórtalos por separado; la
   cuenta se hace por fuera.
-- Página 2: la tabla o gráfica de "Historial de consumo". Extrae
+- El bloque del HISTORIAL: la tabla o gráfica de "Consumo histórico" /
+  "Historial de consumo". Extrae
   ÚNICAMENTE los 5 bimestres MÁS RECIENTES anteriores al periodo
-  actual — si la gráfica muestra más de 5 (algunos recibos muestran
-  hasta 12), IGNORA los más antiguos y toma solo los 5 más próximos al
-  presente. Nunca reportes más de 5 valores en el historial: el
-  consumo actual (página 1) más estos 5 bimestres (página 2) forman
-  exactamente 6 periodos = 1 año de consumo, que es todo lo que se
-  necesita.
+  actual — si la tabla o gráfica muestra más de 5 (algunos recibos
+  muestran hasta 12), IGNORA los más antiguos y toma solo los 5 más
+  próximos al presente, de más reciente a más antiguo. Nunca reportes
+  más de 5 valores en el historial: el consumo actual más estos 5
+  bimestres forman exactamente 6 periodos = 1 año de consumo, que es
+  todo lo que se necesita.
+  El periodo actual normalmente NO aparece en esta tabla — el renglón
+  más reciente del historial es el bimestre ANTERIOR al que se está
+  cobrando. Eso es lo normal y no es un error.
   Si esa tabla trae una columna "Importe", reporta también el importe
   de esos MISMOS 5 bimestres, en el MISMO ORDEN, uno por uno. Los dos
   arreglos se leen por posición: si un importe no se alcanza a leer,
@@ -149,8 +187,13 @@ Deja todos los campos numéricos en null / lista vacía y explica en
 CFE, parece una foto de un techo").
 
 # REGLAS
-- Nunca inventes un número que no puedas leer con claridad — si algo
-  no es legible, déjalo fuera y repórtalo en "advertencias".
+- Nunca inventes un número que no esté impreso en alguna imagen.
+- Pero tampoco tires un número que SÍ está ahí: null es para lo que no
+  aparece, no para lo que aparece y te deja con dudas. Si alcanzas a
+  leer un valor y no estás del todo seguro, REPÓRTALO y dilo en
+  "advertencias" (ej. "el consumo del periodo se ve borroso, podría ser
+  1611 o 1811"). Un campo en null cuesta la cotización entera; un campo
+  reportado con su duda se revisa en dos segundos.
 - Nunca calcules un promedio ni una suma — solo reporta los valores
   crudos que leas. El promedio se calcula por fuera con exactitud a
   partir de lo que reportes. Esto aplica igual a los pesos: reporta
@@ -183,14 +226,6 @@ Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
   "advertencias": "<texto breve, o cadena vacía si todo se leyó bien>"
 }`
 
-/** Máximo de bimestres históricos considerados (página 2). Junto con el
- *  periodo actual (página 1) da 6 periodos = 1 año de consumo — el
- *  tope es un límite duro en código, no solo una instrucción de prompt,
- *  para que un recibo con más barras en la gráfica (o un modelo que no
- *  siga la instrucción) nunca infle el promedio con datos de más de un
- *  año atrás. */
-const MAX_HISTORIAL_BIMESTRES = 5
-
 /**
  * Reduce a read service number to comparable digits, or null when what
  * came back can't be one.
@@ -211,30 +246,43 @@ export function normalizeServiceNumber(value: unknown): string | null {
 }
 
 /**
- * Parse + validate the model's raw output into a ReceiptExtraction.
- * Tolerates code fences and stray prose around the JSON object.
- * Returns null when nothing parseable/valid came back.
+ * The values a reading is built from, before any of them are trusted.
+ * Deliberately `unknown`-typed: both producers hand over data that
+ * came off the wire — a vision model's JSON, or a form someone filled
+ * in — and neither may skip the coercion below.
+ */
+export interface RawReceiptValues {
+  consumo_periodo_actual_kwh?: unknown
+  periodo_actual?: unknown
+  historial_bimestres_kwh?: unknown
+  tarifa?: unknown
+  numero_servicio?: unknown
+  ciudad?: unknown
+  importe_periodo_mxn?: unknown
+  importe_dap_mxn?: unknown
+  importe_total_a_pagar_mxn?: unknown
+  historial_bimestres_importe_mxn?: unknown
+  advertencias?: unknown
+}
+
+/**
+ * Turn raw receipt values into a `ReceiptExtraction`: coerce, cap the
+ * history, derive the average and the period cost, and raise the two
+ * warnings that fall out of the numbers themselves.
  *
  * The average is never taken from the model's own arithmetic — it's
- * computed here, deterministically, from the raw values the model
- * reports (consumo actual + hasta 5 bimestres del historial). A model
+ * computed here, deterministically, from the raw values reported
+ * (consumo actual + hasta 5 bimestres del historial). A model
  * summing/averaging 6 numbers by hand is exactly the kind of task LLMs
  * get subtly wrong; code doesn't.
+ *
+ * Split out of `parseReceiptJson` so a reading typed by hand in the
+ * Cotizador is byte-for-byte the same shape as one the vision model
+ * produced. Everything downstream — `combineReadings`, `resolveQuote`,
+ * `buildFinancials`, `saveReceiptData` — then runs on one code path,
+ * with no branch that only the manual reading exercises.
  */
-export function parseReceiptJson(raw: string): ReceiptExtraction | null {
-  const start = raw.indexOf('{')
-  const end = raw.lastIndexOf('}')
-  if (start === -1 || end <= start) return null
-
-  let obj: unknown
-  try {
-    obj = JSON.parse(raw.slice(start, end + 1))
-  } catch {
-    return null
-  }
-  if (!obj || typeof obj !== 'object') return null
-  const r = obj as Record<string, unknown>
-
+export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
   const num = (v: unknown): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null
 
@@ -316,6 +364,31 @@ export function parseReceiptJson(raw: string): ReceiptExtraction | null {
     costo_periodo_mxn: costoPeriodo,
     advertencias: advertencias.join('; '),
   }
+}
+
+/**
+ * Parse + validate the model's raw output into a ReceiptExtraction.
+ * Tolerates code fences and stray prose around the JSON object.
+ * Returns null when nothing parseable/valid came back.
+ *
+ * Only concerned with getting a JSON object out of the response; every
+ * decision about what the values MEAN lives in `buildExtraction`, which
+ * the Cotizador's manual capture calls directly.
+ */
+export function parseReceiptJson(raw: string): ReceiptExtraction | null {
+  const start = raw.indexOf('{')
+  const end = raw.lastIndexOf('}')
+  if (start === -1 || end <= start) return null
+
+  let obj: unknown
+  try {
+    obj = JSON.parse(raw.slice(start, end + 1))
+  } catch {
+    return null
+  }
+  if (!obj || typeof obj !== 'object') return null
+
+  return buildExtraction(obj as RawReceiptValues)
 }
 
 /**
