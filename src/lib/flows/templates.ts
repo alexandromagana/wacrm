@@ -109,14 +109,14 @@ const WELCOME_MENU: FlowTemplate = {
       node_key: "existing_handoff",
       node_type: "handoff",
       config: {
-        note: "Existing customer needs assistance — please check account history before replying.",
+        note: "Existing customer needs assistance. Please check account history before replying.",
       } as HandoffNodeConfig,
     },
     {
       node_key: "new_handoff",
       node_type: "handoff",
       config: {
-        note: "New customer — share pricing + onboarding link.",
+        note: "New customer. Share pricing + onboarding link.",
       } as HandoffNodeConfig,
     },
   ],
@@ -270,7 +270,7 @@ const LEAD_CAPTURE: FlowTemplate = {
       node_key: "ask_company",
       node_type: "collect_input",
       config: {
-        prompt_text: "Almost done — what's your company name?",
+        prompt_text: "Almost done. What's your company name?",
         var_key: "company",
         next_node_key: "handoff",
       } as CollectInputNodeConfig,
@@ -279,7 +279,7 @@ const LEAD_CAPTURE: FlowTemplate = {
       node_key: "handoff",
       node_type: "handoff",
       config: {
-        note: "New lead — name={{vars.name}}, email={{vars.email}}, company={{vars.company}}.",
+        note: "New lead: name={{vars.name}}, email={{vars.email}}, company={{vars.company}}.",
       } as HandoffNodeConfig,
     },
   ],

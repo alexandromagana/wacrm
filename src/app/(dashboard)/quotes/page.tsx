@@ -42,9 +42,9 @@ export default function QuotesPage() {
           Cotizador
         </h1>
       </div>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         Genera una cotización a partir del recibo CFE del cliente, para
-        cualquier tipo de proyecto — no solo los que cotiza el bot.
+        cualquier tipo de proyecto, no solo los que cotiza el bot.
       </p>
 
       {decided && (

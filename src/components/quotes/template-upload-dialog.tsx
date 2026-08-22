@@ -60,7 +60,7 @@ export function TemplateUploadDialog({ open, onOpenChange, onUploaded }: Props) 
           `Plantilla subida. ${unknown.length} marcador(es) quedarán en blanco porque el cotizador no tiene ese dato: ${unknown.join(', ')}`,
         );
       } else {
-        toast.success(`Plantilla subida — ${tags.length} marcadores listos.`);
+        toast.success(`Plantilla subida: ${tags.length} marcadores listos.`);
       }
       onUploaded();
     } catch (err) {

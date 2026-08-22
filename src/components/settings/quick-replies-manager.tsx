@@ -127,7 +127,7 @@ export function QuickRepliesManager() {
     <div>
       <SettingsPanelHead
         title="Quick replies"
-        description="Reusable snippets — plain text or a saved interactive message — that agents can insert from the inbox composer."
+        description="Reusable snippets, plain text or a saved interactive message, that agents can insert from the inbox composer."
         action={
           <Button onClick={openCreate}>
             <Plus className="mr-1 h-4 w-4" />

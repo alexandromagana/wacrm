@@ -79,7 +79,7 @@ function assertContiguous(indices: number[], where: string): void {
   for (let i = 0; i < indices.length; i++) {
     if (indices[i] !== i + 1) {
       throw new Error(
-        `${where} variables must be contiguous starting at {{1}} — found ${indices
+        `${where} variables must be contiguous starting at {{1}}. Found ${indices
           .map((n) => `{{${n}}}`)
           .join(', ')}.`,
       );
@@ -137,7 +137,7 @@ export function validateHeader(
     const indices = extractVariableIndices(header_content);
     if (indices.length > 1) {
       throw new Error(
-        `Text header supports at most one variable — found ${indices.length} (Meta rule).`,
+        `Text header supports at most one variable. Found ${indices.length} (Meta rule).`,
       );
     }
     if (indices.length === 1 && indices[0] !== 1) {
@@ -212,7 +212,7 @@ export function validateButtons(buttons: TemplateButton[] | undefined): void {
     if (b.type === 'QUICK_REPLY') {
       if (sawNonQR) {
         throw new Error(
-          'QUICK_REPLY buttons cannot be interleaved with URL / PHONE_NUMBER / COPY_CODE buttons — group them at the start.',
+          'QUICK_REPLY buttons cannot be interleaved with URL / PHONE_NUMBER / COPY_CODE buttons. Group them at the start.',
         );
       }
     } else {
@@ -254,7 +254,7 @@ export function validateButtons(buttons: TemplateButton[] | undefined): void {
           }
           if (!b.example?.trim()) {
             throw new Error(
-              `URL button #${i + 1} uses {{1}} — Meta requires an example value.`,
+              `URL button #${i + 1} uses {{1}}, and Meta requires an example value.`,
             );
           }
         }
@@ -293,12 +293,12 @@ export function validateSampleValues(
 
   if (body.length !== bodyVarCount) {
     throw new Error(
-      `Body has ${bodyVarCount} variable(s) — supply exactly ${bodyVarCount} sample value(s) (got ${body.length}).`,
+      `Body has ${bodyVarCount} variable(s). Supply exactly ${bodyVarCount} sample value(s) (got ${body.length}).`,
     );
   }
   if (header.length !== headerVarCount) {
     throw new Error(
-      `Header has ${headerVarCount} variable(s) — supply exactly ${headerVarCount} sample value(s) (got ${header.length}).`,
+      `Header has ${headerVarCount} variable(s). Supply exactly ${headerVarCount} sample value(s) (got ${header.length}).`,
     );
   }
   for (let i = 0; i < body.length; i++) {

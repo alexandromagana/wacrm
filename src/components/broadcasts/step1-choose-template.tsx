@@ -71,7 +71,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">{t('chooseTemplate.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {t('chooseTemplate.subtitle')}
         </p>
       </div>

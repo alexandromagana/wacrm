@@ -56,7 +56,7 @@ export async function POST(request: Request) {
         apiKeyPlain = decrypt(existing.api_key)
       } catch {
         return NextResponse.json(
-          { error: 'Stored API key could not be decrypted — re-enter your key.' },
+          { error: 'Stored API key could not be decrypted. Re-enter your key.' },
           { status: 400 },
         )
       }

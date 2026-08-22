@@ -163,7 +163,7 @@ export function ManualReadingCard({
 
             <div className="space-y-1.5">
               <Label className="text-muted-foreground text-xs">
-                Historial de consumo (kWh) — hasta{' '}
+                Historial de consumo (kWh) hasta{' '}
                 {MAX_HISTORIAL_BIMESTRES} bimestres, del más reciente al
                 más antiguo
               </Label>
@@ -261,7 +261,7 @@ export function ManualReadingCard({
                 multiply the error. Said here so nobody types it in. */}
             <p className="text-muted-foreground text-[11px]">
               Del bloque &ldquo;Desglose del importe a pagar&rdquo;. No uses el
-              TOTAL A PAGAR — ese trae adeudos de bimestres anteriores y
+              TOTAL A PAGAR, ese trae adeudos de bimestres anteriores y
               deforma la proyección de ahorro.
             </p>
 
@@ -312,7 +312,7 @@ export function ManualReadingCard({
                 {periods < 2 && (
                   <span className="text-amber-700 dark:text-amber-500">
                     {' '}
-                    — hacen falta al menos 2
+                    hacen falta al menos 2
                   </span>
                 )}
               </p>

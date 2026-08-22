@@ -209,7 +209,7 @@ export async function renderQuotePdf(
     }
   }
 
-  pdf.setTitle('Propuesta — Gama Energía');
+  pdf.setTitle('Propuesta | Gama Energía');
   pdf.setProducer('wacrm');
   pdf.setCreationDate(new Date());
 

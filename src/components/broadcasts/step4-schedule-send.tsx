@@ -96,7 +96,7 @@ export function Step4ScheduleSend({
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">{t('scheduleSend.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {t('scheduleSend.subtitle')}
         </p>
       </div>

@@ -30,7 +30,7 @@ export function SettingsPanelHead({
           {title}
         </h2>
         {description ? (
-          <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
+          <p className="mt-1 max-w-[62ch] text-xs leading-relaxed text-muted-foreground">
             {description}
           </p>
         ) : null}

@@ -80,7 +80,7 @@ export async function GET() {
         token_decryptable: false,
       },
       message:
-        'Stored access token can\'t be decrypted — likely ENCRYPTION_KEY changed. Re-enter the token to repair.',
+        'Stored access token can\'t be decrypted. ENCRYPTION_KEY likely changed. Re-enter the token to repair.',
     })
   }
 
@@ -136,7 +136,7 @@ export async function GET() {
     }
   } else {
     errors.push(
-      'No WABA ID on file — webhooks can\'t be wired without it. Add it in the form and re-save.',
+      'No WABA ID on file, so webhooks can\'t be wired. Add it in the form and re-save.',
     )
   }
 

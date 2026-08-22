@@ -269,7 +269,7 @@ export function MessageComposer({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === "ai_not_configured") {
-          toast.error("AI isn't set up yet — enable it in Settings → AI Assistant.");
+          toast.error("AI isn't set up yet. Enable it in Settings → AI Assistant.");
         } else {
           toast.error(data.error ?? "Couldn't draft a reply.");
         }
@@ -390,7 +390,7 @@ export function MessageComposer({
       const max = MEDIA_MAX_BYTES_BY_KIND[kind];
       if (file.size > max) {
         toast.error(
-          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — ${kind} limit is ${Math.round(
+          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB. The ${kind} limit is ${Math.round(
             max / 1024 / 1024,
           )} MB.`,
         );

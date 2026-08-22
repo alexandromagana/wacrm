@@ -85,7 +85,7 @@ export function EditorHeader() {
         {dirty && (
           <span
             className="inline-flex shrink-0 items-center gap-1.5 text-[10px] font-medium uppercase tracking-wide text-amber-300"
-            title="Unsaved changes — hit Save to persist"
+            title="Unsaved changes. Hit Save to persist"
             aria-live="polite"
           >
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
@@ -166,7 +166,7 @@ export function EditorHeader() {
         onChange={(e) =>
           setState((s) => ({ ...s, description: e.target.value }))
         }
-        placeholder="Add a short description (internal — customers don't see this)"
+        placeholder="Add a short description (internal, customers don't see this)"
         aria-label="Flow description"
         className="w-full max-w-[78ch] rounded-md border border-transparent bg-transparent px-2 py-1 text-[13px] text-muted-foreground outline-none transition-colors placeholder:text-muted-foreground/60 hover:bg-muted/50 focus:border-primary focus:bg-transparent focus:text-foreground"
       />

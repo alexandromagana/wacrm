@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { NextIntlClientProvider } from 'next-intl';
 import { getLocale, getMessages } from 'next-intl/server';
-import { Inter, Instrument_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import Script from "next/script";
 import "./globals.css";
 import { ThemeProvider } from "@/hooks/use-theme";
@@ -15,22 +15,44 @@ import {
   THEME_IDS,
 } from "@/lib/themes";
 
-const inter = Inter({
+// Satoshi carries body copy. Variable font, wght axis 300-900 (verified
+// against the shipped file), so one request covers every weight the UI
+// asks for.
+const satoshi = localFont({
+  src: [
+    {
+      path: "../fonts/satoshi/Satoshi-Variable.woff2",
+      style: "normal",
+      weight: "300 900",
+    },
+    {
+      path: "../fonts/satoshi/Satoshi-VariableItalic.woff2",
+      style: "italic",
+      weight: "300 900",
+    },
+  ],
   variable: "--font-sans",
-  subsets: ["latin"],
+  display: "swap",
 });
 
-const instrumentSans = Instrument_Sans({
-  variable: "--font-display",
-  subsets: ["latin"],
+// Eudoxus Sans carries headings only. Variable font, wght axis 200-800.
+// Its default instance is ExtraLight, so anything rendering it must
+// resolve an explicit font-weight. Every `font-heading` call site
+// already pairs with font-medium/semibold, so it never lands on 200.
+const eudoxusSans = localFont({
+  src: "../fonts/eudoxus-sans/EudoxusSansGX.woff2",
+  weight: "200 800",
+  style: "normal",
+  variable: "--font-heading",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: {
     default: "Gama Energía",
-    template: "%s — Gama Energía",
+    template: "%s | Gama Energía",
   },
-  description: "Gama Energía — CRM para WhatsApp.",
+  description: "Gama Energía, CRM para WhatsApp.",
   robots: {
     index: false,
     follow: false,
@@ -101,7 +123,7 @@ export default async function RootLayout({
       lang={locale}
       data-theme={DEFAULT_THEME}
       data-mode={DEFAULT_MODE}
-      className={`${inter.variable} ${instrumentSans.variable} h-full antialiased`}
+      className={`${satoshi.variable} ${eudoxusSans.variable} h-full antialiased`}
       // The `theme-boot` script below rewrites `data-theme` and
       // `data-mode` on <html> from localStorage before React hydrates,
       // so for any non-default choice the client DOM intentionally

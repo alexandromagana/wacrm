@@ -61,7 +61,7 @@ export async function ensureImageHeaderHandle(
   }
   if (bytes.byteLength > IMAGE_MAX_BYTES) {
     throw new Error(
-      `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB — Meta's limit is 5 MB.`,
+      `Header image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB. Meta's limit is 5 MB.`,
     )
   }
 

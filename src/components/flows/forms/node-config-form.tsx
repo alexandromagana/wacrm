@@ -935,7 +935,7 @@ function SendMediaForm({
     async (file: File) => {
       if (file.size > MEDIA_MAX_BYTES) {
         toast.error(
-          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB — limit is 16 MB.`,
+          `File is ${(file.size / 1024 / 1024).toFixed(1)} MB. The limit is 16 MB.`,
         );
         return;
       }

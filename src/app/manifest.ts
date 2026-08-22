@@ -16,7 +16,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: 'Gama Energía',
     short_name: 'Gama',
-    description: 'Gama Energía — CRM para WhatsApp.',
+    description: 'Gama Energía, CRM para WhatsApp.',
     start_url: '/inbox',
     display: 'standalone',
     background_color: '#0a0b0d',

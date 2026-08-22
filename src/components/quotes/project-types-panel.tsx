@@ -123,7 +123,7 @@ export function ProjectTypesPanel() {
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {tiers.length === 0
-                        ? 'Sin rangos de precio — no puede cotizar todavía'
+                        ? 'Sin rangos de precio, no puede cotizar todavía'
                         : `${tiers.length} ${tiers.length === 1 ? 'rango' : 'rangos'} · hasta ${ceiling.toLocaleString('es-MX')} kWh bimestrales`}
                     </p>
                   </div>

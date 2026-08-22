@@ -85,7 +85,7 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json(
         {
           error:
-            'No se pudieron guardar los rangos de precio. El tipo de proyecto quedó sin rangos — vuelve a guardarlos.',
+            'No se pudieron guardar los rangos de precio. El tipo de proyecto quedó sin rangos. Vuelve a guardarlos.',
         },
         { status: 500 },
       )

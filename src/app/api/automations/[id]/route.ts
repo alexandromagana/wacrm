@@ -138,6 +138,26 @@ export async function PATCH(
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 })
   }
 
+  // Turning an automation off has to drain what it already queued, not
+  // just stop new runs. Anything parked at a `wait` step lives in
+  // automation_pending_executions and would otherwise keep firing for as
+  // long as the longest wait — which is how a switched-off automation
+  // kept sending templates a full day later. The engine refuses to
+  // resume an inactive automation too; this is the eager half, so the
+  // queue reflects the toggle immediately instead of one row at a time.
+  if (update.is_active === false) {
+    const { error: drainErr } = await admin
+      .from('automation_pending_executions')
+      .update({ status: 'failed' })
+      .eq('automation_id', id)
+      .eq('status', 'pending')
+    // Non-fatal: the automation *is* off, and the engine-side guard
+    // still catches every one of these rows when the cron reaches them.
+    if (drainErr) {
+      console.error('[automations] failed to drain pending queue on deactivate:', drainErr)
+    }
+  }
+
   if (Array.isArray(body.steps)) {
     const err = await replaceSteps(id, body.steps as BuilderStepInput[])
     if (err) return NextResponse.json({ error: err }, { status: 500 })

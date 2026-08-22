@@ -109,7 +109,7 @@ export function AiUsageCard() {
             </CardTitle>
             <CardDescription>
               Tokens spent on your provider key by drafts and the auto-reply
-              bot. Counts only — no message content is stored here.
+              bot. Counts only. No message content is stored here.
             </CardDescription>
           </div>
           <Select
@@ -202,7 +202,7 @@ export function AiUsageCard() {
 
             {data.truncated && (
               <p className="text-xs text-muted-foreground">
-                Showing a partial window — usage is high enough that only the
+                Showing a partial window. Usage is high enough that only the
                 most recent records are summarized here.
               </p>
             )}

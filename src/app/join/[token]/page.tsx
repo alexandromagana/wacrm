@@ -82,7 +82,7 @@ const FAIL_COPY: Record<PeekFail['reason'], { title: string; body: string }> = {
   },
   expired: {
     title: 'Invite expired',
-    body: 'This invitation has expired. Ask the account admin to send a new one — they take a few seconds to generate.',
+    body: 'This invitation has expired. Ask the account admin to send a new one. They take a few seconds to generate.',
   },
   server_error: {
     title: 'Something went wrong',

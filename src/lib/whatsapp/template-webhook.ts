@@ -210,6 +210,6 @@ function handleComponentsUpdate(value: TemplateComponentsUpdateValue): void {
     '[template-webhook] components updated by Meta for template',
     value.message_template_id,
     value.message_template_name,
-    '— run "Sync from Meta" in Settings to pull the new components.',
+    'Run "Sync from Meta" in Settings to pull the new components.',
   )
 }

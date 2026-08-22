@@ -286,7 +286,7 @@ export async function convertPptxToPdf(pptxBytes: Buffer): Promise<Uint8Array> {
 
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
-  pdf.setTitle('Propuesta — Gama Energía');
+  pdf.setTitle('Propuesta | Gama Energía');
   pdf.setProducer('wacrm');
 
   const fontBytes = await loadFontBytes();

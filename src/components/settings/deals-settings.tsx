@@ -96,7 +96,7 @@ export function DealsSettings() {
             >
               {CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
-                  {c.code} — {c.label}
+                  {c.code} · {c.label}
                 </option>
               ))}
             </select>

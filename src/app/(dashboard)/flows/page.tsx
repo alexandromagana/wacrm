@@ -209,7 +209,7 @@ export default function FlowsPage() {
               {t("beta")}
             </span>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t("description")}
           </p>
         </div>

@@ -121,7 +121,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'Provide either `recipients` (preferred) or `phone_numbers` — must be a non-empty array',
+            'Provide either `recipients` (preferred) or `phone_numbers`. Must be a non-empty array',
         },
         { status: 400 }
       )
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'Template row is malformed locally — run "Sync from Meta" in Settings to repair it before broadcasting.',
+            'Template row is malformed locally. Run "Sync from Meta" in Settings to repair it before broadcasting.',
         },
         { status: 500 },
       )

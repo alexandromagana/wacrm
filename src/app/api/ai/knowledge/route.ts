@@ -100,7 +100,7 @@ export async function POST(request: Request) {
         success: true,
         id: doc.id,
         warning:
-          'Saved with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
+          'Saved with keyword search only. Your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
       })
     }
     return NextResponse.json({ success: true, id: doc.id })

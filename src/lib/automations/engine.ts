@@ -157,6 +157,34 @@ export async function resumePendingExecution(pending: {
     return
   }
 
+  // A parked run is not covered by the is_active filter in
+  // runAutomationsForTrigger — that one only gates *new* runs. Without
+  // this check, turning an automation off leaves its queue live and it
+  // keeps sending for as long as the longest wait step.
+  if (!(automation as Automation).is_active) {
+    console.warn('[automations] resume: automation inactive, cancelling', pending.automation_id)
+    await markPending(pending.id, 'failed')
+    return
+  }
+
+  // The state that triggered this run may have been undone during the
+  // wait — most often the customer replied and the tag was removed.
+  if (
+    !(await stillSatisfiesTrigger(
+      automation as Automation,
+      pending.contact_id,
+      pending.context ?? {},
+    ))
+  ) {
+    console.warn(
+      '[automations] resume: trigger no longer satisfied, cancelling',
+      pending.automation_id,
+      pending.contact_id,
+    )
+    await markPending(pending.id, 'failed')
+    return
+  }
+
   try {
     await executeStepsFrom({
       automation: automation as Automation,
@@ -436,7 +464,7 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const emptyAt = resolvedParams.findIndex((p) => !p.trim())
       if (emptyAt !== -1) {
         throw new Error(
-          `send_template: variable {{${emptyAt + 1}}} resolved empty — add a fallback, e.g. {{contact.first_name|cliente}}`,
+          `send_template: variable {{${emptyAt + 1}}} resolved empty. Add a fallback, e.g. {{contact.first_name|cliente}}`,
         )
       }
       const { whatsapp_message_id } = await engineSendTemplate({
@@ -762,20 +790,73 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
   return true
 }
 
+/**
+ * Does this contact currently carry this tag?
+ *
+ * contact_tags has no account_id column (its RLS keys off the parent
+ * contact), so tenant scoping here relies on the contact-ownership
+ * guard in runAutomationsForTrigger.
+ */
+async function contactHasTag(contactId: string, tagId: string): Promise<boolean> {
+  const { count } = await supabaseAdmin()
+    .from('contact_tags')
+    .select('id', { count: 'exact', head: true })
+    .eq('contact_id', contactId)
+    .eq('tag_id', tagId)
+  return (count ?? 0) > 0
+}
+
+/**
+ * Re-check a parked run's trigger before it resumes.
+ *
+ * `triggerMatches` answers "should this fire?" at dispatch time, reading
+ * the event context. A `wait` step poses a different question: the event
+ * happened a day ago — is the *state* it described still true? Dropping
+ * the tag is how the product cancels a queued nudge ("FB Pendiente WA →
+ * quitar al responder", "Clear follow-up tag on reply"), so a resume that
+ * skipped this check would send anyway and leave those escape hatches
+ * purely cosmetic.
+ *
+ * Only state-shaped triggers have something to re-read. Event-shaped ones
+ * (a message arrived, a keyword matched, a button was tapped) describe a
+ * moment that already passed and cannot be re-tested, so they pass.
+ */
+async function stillSatisfiesTrigger(
+  automation: Automation,
+  contactId: string | null,
+  context: AutomationContext,
+): Promise<boolean> {
+  if (automation.trigger_type === 'tag_added') {
+    const cfg = automation.trigger_config as TagTriggerConfig
+    // The catch-all (no tag configured) matched any tag on the way in, so
+    // there is no particular tag to still require on the way out.
+    if (!cfg?.tag_id) return true
+    if (!contactId) return false
+    return contactHasTag(contactId, cfg.tag_id)
+  }
+
+  if (automation.trigger_type === 'deal_stage_changed') {
+    const cfg = automation.trigger_config as DealStageChangedTriggerConfig
+    if (!cfg?.stage_id) return true
+    if (!context.deal_id) return false
+    const { data } = await supabaseAdmin()
+      .from('deals')
+      .select('stage_id')
+      .eq('id', context.deal_id)
+      .eq('account_id', automation.account_id)
+      .maybeSingle()
+    return data?.stage_id === cfg.stage_id
+  }
+
+  return true
+}
+
 async function evaluateCondition(cfg: ConditionStepConfig, args: ExecuteArgs): Promise<boolean> {
   const db = supabaseAdmin()
   switch (cfg.subject) {
     case 'tag_presence': {
       if (!args.contactId || !cfg.operand) return false
-      // contact_tags has no account_id column (its RLS keys off the parent
-      // contact), so tenant scoping here relies on the contact-ownership
-      // guard in runAutomationsForTrigger.
-      const { count } = await db
-        .from('contact_tags')
-        .select('id', { count: 'exact', head: true })
-        .eq('contact_id', args.contactId)
-        .eq('tag_id', cfg.operand)
-      return (count ?? 0) > 0
+      return contactHasTag(args.contactId, cfg.operand)
     }
     case 'contact_field': {
       if (!args.contactId || !cfg.operand) return false

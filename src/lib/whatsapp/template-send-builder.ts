@@ -103,7 +103,7 @@ function buildHeaderComponent(
     const value = params.headerText;
     if (!value || !value.trim()) {
       throw new TemplateSendError(
-        'Header text variable {{1}} requires a value — pass headerText.',
+        'Header text variable {{1}} requires a value. Pass headerText.',
       );
     }
     return {
@@ -125,7 +125,7 @@ function buildHeaderComponent(
   const id = params.headerMediaId;
   if (!link && !id) {
     throw new TemplateSendError(
-      `This template's ${headerType} header has no media to send with it — set the header media URL on the template (Settings → Templates), or pass headerMediaUrl/headerMediaId. Templates synced from Meta don't always carry a reusable media URL.`,
+      `This template's ${headerType} header has no media to send with it. Set the header media URL on the template (Settings → Templates), or pass headerMediaUrl/headerMediaId. Templates synced from Meta don't always carry a reusable media URL.`,
     );
   }
   const mediaPayload: { link?: string; id?: string } = id ? { id } : { link };
@@ -193,7 +193,7 @@ function buildButtonComponent(
       // the button's index in the template's buttons array.
       if (!override || !override.trim()) {
         throw new TemplateSendError(
-          `URL button #${index + 1} uses {{1}} — requires a buttonParams[${index}] value.`,
+          `URL button #${index + 1} uses {{1}} and requires a buttonParams[${index}] value.`,
         );
       }
       return {

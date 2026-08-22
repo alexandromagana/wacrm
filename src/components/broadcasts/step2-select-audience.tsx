@@ -252,7 +252,7 @@ export function Step2SelectAudience({
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">{t('selectAudience.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {t('selectAudience.subtitle')}
         </p>
       </div>

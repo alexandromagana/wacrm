@@ -48,14 +48,14 @@ export const TEMPLATE_GROUP_CONFIG: Record<string, GroupDisplay> = {
   },
   Sistema: {
     classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
-    hint: 'Meta samples and test templates — not for customers',
+    hint: 'Meta samples and test templates, not for customers',
   },
 };
 
 export const AUTOMATION_GROUP_CONFIG: Record<string, GroupDisplay> = {
   'Leads nuevos': {
     classes: 'bg-primary/20 text-primary border-primary/30',
-    hint: 'First contact — routing a lead into the pipeline',
+    hint: 'First contact, routing a lead into the pipeline',
   },
   'Seguimiento de cotización': {
     classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',

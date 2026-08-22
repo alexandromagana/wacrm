@@ -306,7 +306,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
         <CardDescription className="text-muted-foreground">
           {manualMode
             ? 'Escribe el consumo del recibo tú mismo y el sistema llena la propuesta. Útil cuando la foto no se deja leer, o cuando el cliente solo te pasó los números.'
-            : 'Escribe el nombre del cliente y elige el tipo de proyecto, adjunta su recibo CFE, y el sistema lee el consumo y llena la propuesta. El contacto es opcional — sirve para dejar la cotización ligada al CRM.'}
+            : 'Escribe el nombre del cliente y elige el tipo de proyecto, adjunta su recibo CFE, y el sistema lee el consumo y llena la propuesta. El contacto es opcional y sirve para dejar la cotización ligada al CRM.'}
         </CardDescription>
       </CardHeader>
 

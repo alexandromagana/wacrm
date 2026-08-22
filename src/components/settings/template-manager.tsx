@@ -361,7 +361,7 @@ export function TemplateManager() {
       if (!res.ok) {
         throw new Error(
           data?.error ||
-            `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status}). The server may be slow or unreachable — try again.`,
+            `${isEdit ? 'Edit' : 'Submit'} failed (HTTP ${res.status}). The server may be slow or unreachable. Try again.`,
         );
       }
       // Refresh first, then close — re-opening the dialog

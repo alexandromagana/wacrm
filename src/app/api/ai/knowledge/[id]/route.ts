@@ -98,7 +98,7 @@ export async function PATCH(request: Request, { params }: Params) {
         return NextResponse.json({
           success: true,
           warning:
-            'Updated with keyword search only — your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
+            'Updated with keyword search only. Your embeddings key could not be decrypted (check ENCRYPTION_KEY, then re-enter the key).',
         })
       }
     }

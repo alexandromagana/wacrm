@@ -71,7 +71,7 @@ export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
     id: "lime",
     name: "Lime",
-    tagline: "High-contrast chartreuse — the default, poster-bright on dark.",
+    tagline: "High-contrast chartreuse. The default, poster-bright on dark.",
     swatch: "oklch(0.9 0.175 118)",
   },
   {
@@ -83,25 +83,25 @@ export const THEMES: ReadonlyArray<ThemeMeta> = [
   {
     id: "emerald",
     name: "Emerald",
-    tagline: "Gama Energía brand green — growth-coded, messaging-adjacent.",
+    tagline: "Gama Energía brand green. Growth-coded, messaging-adjacent.",
     swatch: "oklch(0.77 0.17 152)",
   },
   {
     id: "cobalt",
     name: "Cobalt",
-    tagline: "Clean B2B-SaaS blue — calm and product-y.",
+    tagline: "Clean B2B-SaaS blue. Calm and product-y.",
     swatch: "oklch(0.585 0.2 254)",
   },
   {
     id: "amber",
     name: "Amber",
-    tagline: "Warm and friendly — feels good for SMB teams.",
+    tagline: "Warm and friendly. Feels good for SMB teams.",
     swatch: "oklch(0.745 0.16 65)",
   },
   {
     id: "rose",
     name: "Rose",
-    tagline: "Bold and modern — D2C, creator-economy, lifestyle.",
+    tagline: "Bold and modern. D2C, creator-economy, lifestyle.",
     swatch: "oklch(0.645 0.22 16)",
   },
 ];

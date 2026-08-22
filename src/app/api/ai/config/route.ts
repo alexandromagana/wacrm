@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       try {
         apiKeyPlain = decrypt(existing.api_key)
       } catch {
-        return bad('Stored API key could not be decrypted — re-enter your key.')
+        return bad('Stored API key could not be decrypted. Re-enter your key.')
       }
     } else {
       return bad('api_key is required')

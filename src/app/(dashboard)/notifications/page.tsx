@@ -166,7 +166,7 @@ export default function NotificationsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Notifications</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             Conversations other teammates assign to you show up here.
           </p>
         </div>

@@ -288,7 +288,7 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
         console.error(
           `Multiple configs (${configRows.length}) found for phone_number_id:`,
           phoneNumberId,
-          '— inbound message dropped. Resolve duplicates so each number maps to a single account.',
+          'Inbound message dropped. Resolve duplicates so each number maps to a single account.',
           'Account owners:',
           configRows.map((r: { account_id: string; user_id: string }) => `${r.account_id} (admin ${r.user_id})`)
         )

@@ -168,7 +168,7 @@ function validateTrigger(
           severity: "warning",
           scope: "trigger",
           field: "trigger_config.keywords",
-          message: `${blanks} keyword${blanks === 1 ? " is" : "s are"} blank — they won't match anything.`,
+          message: `${blanks} keyword${blanks === 1 ? " is" : "s are"} blank, so they won't match anything.`,
         });
       }
     }
@@ -631,7 +631,7 @@ function validateNode(
           scope: "node",
           node_key: node.node_key,
           field: "value",
-          message: `Operator "${cfg.operator}" usually expects a comparison value — empty value will only match empty subjects.`,
+          message: `Operator "${cfg.operator}" usually expects a comparison value. An empty value will only match empty subjects.`,
         });
       }
       for (const branch of ["true_next", "false_next"] as const) {

@@ -63,7 +63,7 @@ export function derivePresence(
  * internally (not injectable) and emits terse chip wording ("2h ago"),
  * whereas presence needs an injected `now` — so the dots and labels
  * advance in lockstep and the unit tests stay deterministic — plus
- * full-sentence wording for the tooltip ("Offline — last seen …").
+ * full-sentence wording for the tooltip ("Offline, last seen …").
  */
 export function formatLastSeen(
   lastSeenAt: string | null | undefined,
@@ -90,9 +90,9 @@ export function formatLastSeen(
 
 /**
  * Tooltip / aria label for a presence dot, e.g.
- *   "Online — active now"
- *   "Away — idle"
- *   "Offline — last seen 2 hours ago"
+ *   "Online, active now"
+ *   "Away, idle"
+ *   "Offline, last seen 2 hours ago"
  */
 export function presenceLabel(
   status: PresenceStatus,
@@ -101,11 +101,11 @@ export function presenceLabel(
 ): string {
   switch (status) {
     case "online":
-      return "Online — active now";
+      return "Online, active now";
     case "away":
-      return "Away — idle";
+      return "Away, idle";
     case "offline":
-      return `Offline — last seen ${formatLastSeen(lastSeenAt, now)}`;
+      return `Offline, last seen ${formatLastSeen(lastSeenAt, now)}`;
   }
 }
 

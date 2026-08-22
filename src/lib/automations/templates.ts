@@ -92,7 +92,7 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
         step_type: 'send_message',
         step_config: {
           text:
-            "Great — happy to help with pricing! Quick question: roughly how many seats are you looking for?",
+            "Great, happy to help with pricing! Quick question: roughly how many seats are you looking for?",
         },
       },
       {
@@ -120,7 +120,7 @@ export const AUTOMATION_TEMPLATES: Record<TemplateSlug, AutomationTemplateDefini
         step_type: 'send_message',
         step_config: {
           text:
-            "Just circling back — did you have any other questions for us? Happy to help!",
+            "Just circling back. Did you have any other questions for us? Happy to help!",
         },
       },
     ],

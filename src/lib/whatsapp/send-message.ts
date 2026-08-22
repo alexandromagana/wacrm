@@ -323,7 +323,7 @@ export async function sendMessageToConversation(
     if (data && !isMessageTemplate(data)) {
       throw new SendMessageError(
         'template_malformed',
-        'Template row is malformed locally — run "Sync from Meta" in Settings to repair it.',
+        'Template row is malformed locally. Run "Sync from Meta" in Settings to repair it.',
         500
       );
     }

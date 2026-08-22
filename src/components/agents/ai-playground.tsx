@@ -43,7 +43,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         if (data.code === 'ai_not_configured') {
-          toast.error('No agent configured yet — finish Setup first.');
+          toast.error('No agent configured yet. Finish Setup first.');
         } else {
           toast.error(data.error ?? "Couldn't get a reply.");
         }
@@ -87,7 +87,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
           <Bot className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium text-foreground">Playground</span>
           <span className="text-xs text-muted-foreground">
-            — test replies as if you were a customer
+            Test replies as if you were a customer
           </span>
         </div>
         <Button
@@ -109,7 +109,7 @@ export function AiPlayground({ onGoToSetup }: { onGoToSetup?: () => void }) {
             <p>Send a message to see how your agent would reply.</p>
             <p className="mt-1 text-xs">
               It uses your knowledge base and behaves exactly like the
-              auto-reply bot — including handoff.
+              auto-reply bot, including handoff.
             </p>
             {onGoToSetup && (
               <Button

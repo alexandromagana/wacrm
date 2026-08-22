@@ -65,11 +65,11 @@ describe("formatLastSeen", () => {
 describe("presenceLabel", () => {
   it("labels each state for the tooltip", () => {
     expect(presenceLabel("online", ago(1_000), NOW)).toBe(
-      "Online — active now",
+      "Online, active now",
     );
-    expect(presenceLabel("away", ago(1_000), NOW)).toBe("Away — idle");
+    expect(presenceLabel("away", ago(1_000), NOW)).toBe("Away, idle");
     expect(presenceLabel("offline", ago(2 * 60 * 60_000), NOW)).toBe(
-      "Offline — last seen 2 hours ago",
+      "Offline, last seen 2 hours ago",
     );
   });
 });

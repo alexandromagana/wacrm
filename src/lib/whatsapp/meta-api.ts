@@ -47,7 +47,7 @@ export async function fetchWithTimeout(
   } catch (err) {
     if (err instanceof Error && err.name === 'TimeoutError') {
       throw new Error(
-        `Meta API request timed out after ${timeoutMs / 1000}s. Meta may be slow right now — try again.`,
+        `Meta API request timed out after ${timeoutMs / 1000}s. Meta may be slow right now. Try again.`,
       )
     }
     throw err

@@ -162,7 +162,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       .maybeSingle()
     if (raw && !isMessageTemplate(raw)) {
       throw new Error(
-        'template row is malformed locally — run "Sync from Meta" in Settings',
+        'template row is malformed locally. Run "Sync from Meta" in Settings',
       )
     }
     templateRow = (raw as MessageTemplate | null) ?? null
@@ -171,7 +171,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       // cannot be built. Fail loudly here rather than letting Meta
       // return an opaque parameter error per recipient.
       throw new Error(
-        `template "${input.templateName}" (${input.language}) is not synced locally — run "Sync from Meta" in Settings`,
+        `template "${input.templateName}" (${input.language}) is not synced locally. Run "Sync from Meta" in Settings`,
       )
     }
   }

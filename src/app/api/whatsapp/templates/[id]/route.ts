@@ -103,7 +103,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            'This template was never submitted to Meta — use New Template to submit it instead.',
+            'This template was never submitted to Meta. Use New Template to submit it instead.',
         },
         { status: 400 },
       )
@@ -122,7 +122,7 @@ export async function PATCH(
       return NextResponse.json(
         {
           error:
-            'AUTHENTICATION templates are not editable here — manage them in Meta WhatsApp Manager.',
+            'AUTHENTICATION templates are not editable here. Manage them in Meta WhatsApp Manager.',
         },
         { status: 400 },
       )
@@ -285,7 +285,7 @@ export async function DELETE(
         .single()
       if (configError || !config || !config.waba_id) {
         return NextResponse.json(
-          { error: 'WhatsApp not configured — cannot delete on Meta.' },
+          { error: 'WhatsApp not configured, so it cannot be deleted on Meta.' },
           { status: 400 },
         )
       }

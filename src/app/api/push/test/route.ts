@@ -25,7 +25,7 @@ export async function POST() {
       'message_received',
       {
         title: 'Gama Energía',
-        body: 'Notificación de prueba — todo funciona.',
+        body: 'Notificación de prueba: todo funciona.',
         url: '/inbox',
         tag: 'push-test',
       },

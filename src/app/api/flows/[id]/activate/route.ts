@@ -98,7 +98,7 @@ export async function POST(
     if (blockers.length > 0) {
       return NextResponse.json(
         {
-          error: 'Cannot activate flow — fix the issues below first.',
+          error: 'Cannot activate flow. Fix the issues below first.',
           issues,
         },
         { status: 422 },

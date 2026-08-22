@@ -96,7 +96,7 @@ export default function AutomationLogsPage({
         </button>
         <div>
           <h1 className="text-2xl font-bold text-foreground">{automation.name}</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">{t("title")}</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t("title")}</p>
         </div>
       </div>
 
@@ -200,7 +200,7 @@ function StepRow({ result }: { result: AutomationLogStepResult }) {
       </span>
       <span className="text-muted-foreground">{result.step_type}</span>
       {result.detail && (
-        <span className="truncate text-muted-foreground">— {result.detail}</span>
+        <span className="truncate text-muted-foreground">{result.detail}</span>
       )}
     </li>
   )

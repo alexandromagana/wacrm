@@ -123,7 +123,7 @@ function explainRefusal(
     case 'above_table':
       return `El consumo (${kwh} kWh bimestrales) está por encima del último rango de este tipo de proyecto. Agrega un rango que lo cubra, o cotiza este proyecto a la medida.`;
     case 'low_confidence':
-      return 'Solo se pudo leer un periodo. Un promedio bimestral necesita al menos dos para no sobre o subdimensionar el sistema — sube la página del historial de consumo, o captúralo a mano abajo.';
+      return 'Solo se pudo leer un periodo. Un promedio bimestral necesita al menos dos para no sobre o subdimensionar el sistema. Sube la página del historial de consumo, o captúralo a mano abajo.';
     case 'needs_review':
       return reason === 'missing_current_period'
         ? 'No se leyó el consumo del bimestre actual, así que el promedio salió solo del historial. Revísalo abajo y complétalo antes de cotizar.'

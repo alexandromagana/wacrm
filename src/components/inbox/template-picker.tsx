@@ -361,7 +361,7 @@ export function TemplatePicker({
             {slots?.urlButtonSlots.map((slot) => (
               <div key={slot.index} className="space-y-1">
                 <Label className="text-xs text-popover-foreground">
-                  {`URL button "${slot.text}" — value for `}{`{{1}}`}
+                  {`URL button "${slot.text}", value for `}{`{{1}}`}
                 </Label>
                 <Input
                   value={buttonParams[slot.index] ?? ""}

@@ -205,7 +205,7 @@ export function NotificationsSettings() {
             <Smartphone className="size-4 text-muted-foreground" />
             {t('devicesTitle')}
           </h3>
-          <p className="mt-1 max-w-[62ch] text-sm text-muted-foreground">
+          <p className="mt-1 max-w-[62ch] text-xs leading-relaxed text-muted-foreground">
             {t('devicesDesc')}
           </p>
         </div>
@@ -289,7 +289,7 @@ export function NotificationsSettings() {
             <Bell className="size-4 text-muted-foreground" />
             {t('eventsTitle')}
           </h3>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t('eventsDesc')}
           </p>
         </div>
@@ -304,7 +304,7 @@ export function NotificationsSettings() {
                 <p className="text-sm font-medium text-foreground">
                   {t(`event_${event}`)}
                 </p>
-                <p className="mt-0.5 text-sm text-muted-foreground">
+                <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
                   {t(`event_${event}Desc`)}
                 </p>
               </div>

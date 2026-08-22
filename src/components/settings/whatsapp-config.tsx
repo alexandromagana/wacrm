@@ -252,14 +252,14 @@ export function WhatsAppConfig() {
         // Don't claim the number is "Live" — point at the
         // Registration status banner instead.
         toast.success(
-          'Credentials saved and verified. Inbound registration was skipped (no PIN) — see Registration status below.',
+          'Credentials saved and verified. Inbound registration was skipped (no PIN). See Registration status below.',
           { duration: 10000 },
         );
         setPin('');
       } else {
         toast.success(
           data.phone_info?.verified_name
-            ? `Live — ${data.phone_info.verified_name} can now receive events.`
+            ? `Live: ${data.phone_info.verified_name} can now receive events.`
             : 'WhatsApp connected. Events will start flowing within a minute.',
         );
         // Clear the PIN so subsequent saves don't accidentally
@@ -317,7 +317,7 @@ export function WhatsAppConfig() {
       const data = (await res.json()) as RegistrationProbe;
       setRegistrationProbe(data);
       if (data.live) {
-        toast.success('Number is fully wired — Meta is delivering events.');
+        toast.success('Number is fully wired. Meta is delivering events.');
       } else {
         toast.error(
           'Number is not fully registered. See the checks below for which step failed.',

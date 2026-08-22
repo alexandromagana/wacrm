@@ -123,7 +123,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error:
-            'AUTHENTICATION templates are not yet supported here — create them in Meta WhatsApp Manager and use "Sync from Meta".',
+            'AUTHENTICATION templates are not yet supported here. Create them in Meta WhatsApp Manager and use "Sync from Meta".',
         },
         { status: 400 },
       )

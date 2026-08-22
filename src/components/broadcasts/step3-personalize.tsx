@@ -237,7 +237,7 @@ export function Step3Personalize({
     <div className="space-y-6">
       <div>
         <h2 className="text-lg font-semibold text-foreground">{t('personalize.title')}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {t('personalize.subtitle')}
         </p>
       </div>
@@ -422,7 +422,7 @@ export function Step3Personalize({
 
       {unmappedKeys.length > 0 && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
-          Map every placeholder before continuing — still missing{' '}
+          Map every placeholder before continuing. Still missing{' '}
           <span className="font-mono font-semibold">
             {unmappedKeys.join(', ')}
           </span>

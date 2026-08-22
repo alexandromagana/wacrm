@@ -84,7 +84,7 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
       budgetExhausted
         ? `OpenAI returned an empty response: the output budget (${aiMaxOutputTokens()}) was consumed before any text was produced` +
           `${reasoning ? ` (${reasoning} reasoning tokens)` : ''}. ` +
-          'This model reasons before replying — raise AI_MAX_OUTPUT_TOKENS or use a non-reasoning model.'
+          'This model reasons before replying. Raise AI_MAX_OUTPUT_TOKENS or use a non-reasoning model.'
         : 'OpenAI returned an empty response.',
       { code: 'empty_response' },
     )
