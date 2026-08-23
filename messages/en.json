@@ -131,6 +131,7 @@
   },
   "Inbox": {
     "page": {
+      "contactPanelTitle": "Contact details",
       "whatsappNotConnected": "WhatsApp® is not connected. Go to Settings to connect your account.",
       "newMessage": "New message"
     },

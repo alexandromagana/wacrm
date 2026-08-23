@@ -114,6 +114,12 @@ interface MessageThreadProps {
    */
   contactPanelOpen?: boolean;
   onToggleContactPanel?: () => void;
+  /**
+   * Mobile counterpart to the toggle above. There's no room to dock the
+   * contact panel on a phone, so the page opens it as a slide-over
+   * instead and this just asks for it.
+   */
+  onShowContactSheet?: () => void;
 }
 
 function formatDateSeparator(dateStr: string, t: ReturnType<typeof useTranslations>): string {
@@ -174,6 +180,7 @@ export function MessageThread({
   onRefresh,
   contactPanelOpen,
   onToggleContactPanel,
+  onShowContactSheet,
 }: MessageThreadProps) {
   const t = useTranslations("Inbox.messageThread");
   const tTimer = useTranslations("Inbox.sessionTimer");
@@ -1009,6 +1016,21 @@ export function MessageThread({
               ) : (
                 <PanelRightOpen className="h-4 w-4" />
               )}
+            </button>
+          )}
+
+          {/* Same destination on a phone, different mechanics: the panel
+              can't dock at this width, so the page opens it as a
+              slide-over. Mirrors the button above, inverted breakpoint. */}
+          {onShowContactSheet && (
+            <button
+              type="button"
+              onClick={onShowContactSheet}
+              aria-label={t("showContactPanel")}
+              title={t("showContact")}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:hidden"
+            >
+              <PanelRightOpen className="h-4 w-4" />
             </button>
           )}
 

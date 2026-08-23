@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
@@ -121,14 +121,33 @@ export default function DashboardPage() {
     [series],
   )
 
+  // Only these two metrics have stored daily history (the conversations
+  // series, for whichever range is selected). New contacts and
+  // open-deals value are point-in-time, so their cards render without a
+  // trend rather than inventing a shape.
+  const currentSeries = series[range]
+  const incomingSpark = useMemo(
+    () => currentSeries?.map((d) => d.incoming),
+    [currentSeries],
+  )
+  const outgoingSpark = useMemo(
+    () => currentSeries?.map((d) => d.outgoing),
+    [currentSeries],
+  )
+
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-          {t('description')}
-        </p>
+      {/* Header. The quick actions sit inline on the right: this row
+          had ~1280px of empty space next to the title, and as a band of
+          their own the actions cost 62px of height plus a gap. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {t('description')}
+          </p>
+        </div>
+        <QuickActions />
       </div>
 
       {/* Metric cards */}
@@ -141,6 +160,7 @@ export default function DashboardPage() {
               title={t('activeConversations')}
               value={metrics.activeConversations.current.toLocaleString()}
               icon={MessageSquare}
+              spark={incomingSpark}
               delta={{
                 sign: metrics.activeConversations.previous,
                 label: deltaLabel(
@@ -174,6 +194,7 @@ export default function DashboardPage() {
               title={t('messagesSentToday')}
               value={metrics.messagesSentToday.current.toLocaleString()}
               icon={Send}
+              spark={outgoingSpark}
               delta={{
                 sign:
                   metrics.messagesSentToday.current - metrics.messagesSentToday.previous,
@@ -187,9 +208,6 @@ export default function DashboardPage() {
           </>
         )}
       </div>
-
-      {/* Quick actions */}
-      <QuickActions />
 
       {/* Charts row */}
       {/* items-stretch (the grid default) stretches the two columns to

@@ -58,7 +58,7 @@ export function InboxStatTiles({
             onClick={() => onSelect(tile.key)}
             aria-pressed={selected}
             className={cn(
-              "rounded-lg border px-2 py-1.5 text-left transition-colors",
+              "rounded-lg border px-2 py-1 text-left transition-colors lg:py-1.5",
               selected
                 ? "border-primary/50 bg-primary/10"
                 : "border-border bg-card-2 hover:bg-muted",
@@ -75,7 +75,7 @@ export function InboxStatTiles({
             </span>
             <span
               className={cn(
-                "mt-0.5 block text-base font-semibold leading-none",
+                "mt-0.5 block text-xl font-bold leading-none tabular-nums tracking-tight lg:mt-1",
                 selected ? "text-primary" : "text-foreground",
               )}
             >

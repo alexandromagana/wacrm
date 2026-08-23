@@ -19,6 +19,8 @@ import {
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
+import { panelValueSize } from "@/lib/stat-type";
+import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 
 interface PipelineAnalyticsProps {
@@ -179,7 +181,14 @@ function Metric({
           </TooltipContent>
         </Tooltip>
       </div>
-      <p className="mt-1 text-base font-semibold text-foreground">{value}</p>
+      <p
+        className={cn(
+          'mt-1 leading-none font-bold tracking-tight tabular-nums text-foreground',
+          panelValueSize(value),
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }

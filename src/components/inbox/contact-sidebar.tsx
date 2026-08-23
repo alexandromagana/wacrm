@@ -31,6 +31,12 @@ import { useTranslations } from "next-intl";
 
 interface ContactSidebarProps {
   contact: Contact | null;
+  /**
+   * Overrides the default fixed-width, left-bordered panel shell. The
+   * mobile sheet passes `w-full border-l-0` so the same body renders
+   * edge to edge inside the slide-over instead of as a docked column.
+   */
+  className?: string;
 }
 
 /**
@@ -43,7 +49,7 @@ function pickHeadlineDeal(deals: Deal[]): Deal | null {
   return deals.find((d) => (d.status ?? "open") === "open") ?? deals[0];
 }
 
-export function ContactSidebar({ contact }: ContactSidebarProps) {
+export function ContactSidebar({ contact, className }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
   const tDeal = useTranslations("DealProgress");
@@ -162,7 +168,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
 
   if (!contact) {
     return (
-      <div className="flex h-full w-70 items-center justify-center border-l border-border bg-card">
+      <div
+        className={cn(
+          "flex h-full w-70 items-center justify-center border-l border-border bg-card xl:w-80",
+          className,
+        )}
+      >
         <p className="text-sm text-muted-foreground">{tThread("selectConversation")}</p>
       </div>
     );
@@ -187,7 +198,12 @@ export function ContactSidebar({ contact }: ContactSidebarProps) {
   ];
 
   return (
-    <div className="flex h-full w-70 flex-col border-l border-border bg-card">
+    <div
+      className={cn(
+        "flex h-full w-70 flex-col border-l border-border bg-card xl:w-80",
+        className,
+      )}
+    >
       <ScrollArea className="flex-1">
         <div className="p-4">
           {/* Contact Info */}

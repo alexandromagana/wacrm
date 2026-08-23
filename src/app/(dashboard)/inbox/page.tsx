@@ -17,6 +17,12 @@ import {
 import { ConversationList } from "@/components/inbox/conversation-list";
 import { MessageThread } from "@/components/inbox/message-thread";
 import { ContactSidebar } from "@/components/inbox/contact-sidebar";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { toast } from "sonner";
 import { WifiOff } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -24,6 +30,10 @@ import { cn } from "@/lib/utils";
 // Remembers the agent's show/hide choice for the desktop contact panel
 // across reloads and sessions (device-scoped, like the theme prefs).
 const CONTACT_PANEL_STORAGE_KEY = "wacrm:inbox:contact-panel-open";
+
+// Where the contact panel stops being a slide-over and docks as a
+// column. Mirrors the `lg:` breakpoint the panel's own classes use.
+const CONTACT_PANEL_DOCK_MIN_PX = 1024;
 
 export default function InboxPage() {
   const t = useTranslations("Inbox.page");
@@ -62,6 +72,25 @@ export default function InboxPage() {
    * below reconciles to the stored value right after mount instead.
    */
   const [contactPanelOpen, setContactPanelOpen] = useState(true);
+  // Mobile-only slide-over. Deliberately not persisted the way the
+  // desktop panel is: on a phone this is a thing you open to check
+  // something, not a layout preference.
+  const [contactSheetOpen, setContactSheetOpen] = useState(false);
+
+  // Close it when the viewport grows past the docked panel's breakpoint
+  // (rotating a phone to landscape is enough). Hiding the sheet with a
+  // `lg:hidden` class instead would leave its overlay mounted: the
+  // panel goes invisible but its fixed inset-0 backdrop keeps swallowing
+  // every click and holds body scroll locked, freezing the desktop UI.
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${CONTACT_PANEL_DOCK_MIN_PX}px)`);
+    const sync = () => {
+      if (mq.matches) setContactSheetOpen(false);
+    };
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CONTACT_PANEL_STORAGE_KEY);
@@ -690,7 +719,12 @@ export default function InboxPage() {
             thread can occupy the full width. Always visible on lg+. */}
         <div
           className={cn(
-            "flex h-full flex-1 lg:flex-none",
+            // min-w-0 mirrors the thread panel below. Without it this
+            // flex child keeps min-width:auto and can't shrink under the
+            // list's content width, which on a phone stretched the
+            // column to ~2480px and clipped the timestamps, the status
+            // badges and three of the four filter tiles out of reach.
+            "flex h-full min-w-0 flex-1 lg:flex-none",
             hasActiveConv ? "hidden lg:flex" : "flex",
           )}
         >
@@ -733,6 +767,7 @@ export default function InboxPage() {
             onRefresh={handleManualRefresh}
             contactPanelOpen={contactPanelOpen}
             onToggleContactPanel={handleToggleContactPanel}
+            onShowContactSheet={() => setContactSheetOpen(true)}
           />
         </div>
 
@@ -745,6 +780,28 @@ export default function InboxPage() {
             <ContactSidebar contact={activeContact} />
           </div>
         )}
+
+        {/* Same panel on a phone, as a slide-over. Deals, quote values,
+            tags and notes are the reason an agent opens a chat at all,
+            and docking a column at 375px isn't an option. Mounted only
+            under lg so the desktop tree keeps a single instance. */}
+        <Sheet open={contactSheetOpen} onOpenChange={setContactSheetOpen}>
+          <SheetContent
+            side="right"
+            // The width classes need the same `data-[side=right]:`
+            // prefix the primitive uses, otherwise its own w-3/4 wins on
+            // specificity and twMerge treats them as separate keys.
+            className="gap-0 p-0 data-[side=right]:w-[92vw] data-[side=right]:sm:max-w-md"
+          >
+            <SheetHeader className="border-b border-border px-4 py-3">
+              <SheetTitle>{t("contactPanelTitle")}</SheetTitle>
+            </SheetHeader>
+            <ContactSidebar
+              contact={activeContact}
+              className="w-full border-l-0"
+            />
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );

@@ -326,9 +326,13 @@ export function ConversationList({
     // w-full on mobile so the list occupies the whole viewport when it's
     // the single pane showing; fixed 320px on desktop where it shares the
     // row with the thread + contact sidebar.
-    <div className="flex h-full w-full flex-col border-r border-border bg-card lg:w-80">
-      {/* Counts + Search + Filter */}
-      <div className="space-y-2 border-b border-border p-3">
+    <div className="flex h-full w-full min-w-0 flex-col border-r border-border bg-card lg:w-88 xl:w-96">
+      {/* Counts + Search + Filter.
+          Tighter on a phone: this block plus the topbar was eating 238px
+          of an 812px screen, which left room for exactly 8 conversations
+          and fell just short of a 9th. Desktop keeps its original
+          breathing room from lg up. */}
+      <div className="space-y-1.5 border-b border-border px-3 py-2 lg:space-y-2 lg:p-3">
         <InboxStatTiles
           conversations={conversations}
           active={filter}
@@ -352,7 +356,10 @@ export function ConversationList({
 
         <div className="flex flex-wrap items-center gap-1">
           <DropdownMenu>
-            <DropdownMenuTrigger className="inline-flex items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted">
+            {/* Hidden on a phone: this sets the same `filter` state the
+                count tiles above already set, and there it's a bigger
+                tap target that also shows the number. */}
+            <DropdownMenuTrigger className="hidden items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted lg:inline-flex">
                 {activeFilter?.label ?? t("filterAll")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
@@ -381,7 +388,7 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex items-center justify-center h-6 gap-1 px-2 text-xs rounded-md hover:bg-muted lg:h-7",
                   selectedTagIds.length > 0
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -423,7 +430,7 @@ export function ConversationList({
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={cn(
-                  "inline-flex max-w-40 items-center justify-center h-7 gap-1 px-2 text-xs rounded-md hover:bg-muted",
+                  "inline-flex max-w-40 items-center justify-center h-6 gap-1 px-2 text-xs rounded-md hover:bg-muted lg:h-7",
                   selectedCompany
                     ? "text-primary"
                     : "text-muted-foreground hover:text-foreground"
@@ -509,8 +516,11 @@ export function ConversationList({
           min-height:auto, so without it this ScrollArea grows to fit
           every conversation instead of shrinking to the remaining
           space — the list then overflows and gets clipped by the
-          parent's overflow-hidden with no scrollbar (issue #229). */}
-      <ScrollArea className="min-h-0 flex-1">
+          parent's overflow-hidden with no scrollbar (issue #229).
+          `min-w-0` is the same trap on the other axis: a row's preview
+          text sets nowrap, so its min-content width is the whole
+          string, and without this the column stretches to fit it. */}
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />

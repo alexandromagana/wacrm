@@ -629,7 +629,11 @@ export function MessageComposer({
           </Button>
         </div>
       ) : (
-        <div className="flex items-end gap-2">
+        // On a phone the four tool buttons plus send leave the input
+        // around 130px, too narrow to type in. The row wraps and the
+        // textarea takes its own full-width line; from sm up it stays
+        // the original single row.
+        <div className="flex flex-wrap items-end gap-2">
           {/* Attach menu — photo / video / document / voice. */}
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -745,7 +749,7 @@ export function MessageComposer({
             // The placeholder text also surfaces the read-only state.
             title={readOnly ? t("readOnlyTitle") : undefined}
             className={cn(
-              "flex-1 resize-none rounded-xl border border-border bg-muted px-4 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50",
+              "order-first w-full min-w-0 resize-none rounded-xl border border-border bg-muted px-3 py-2.5 text-sm text-foreground placeholder-muted-foreground outline-none transition-colors focus:border-primary/50 sm:order-none sm:w-auto sm:flex-1 sm:px-4",
               (sessionExpired || readOnly) && "cursor-not-allowed opacity-50"
             )}
           />
@@ -767,7 +771,7 @@ export function MessageComposer({
           `items-end` buttons below the textarea. Indented to line up
           under the textarea left edge. */}
       {!draft && !recording && (
-        <p className="mt-1 pl-[5.5rem] text-[10px] text-muted-foreground">
+        <p className="mt-1 hidden pl-[5.5rem] text-[10px] text-muted-foreground sm:block">
           {t("draftHint")}
         </p>
       )}
