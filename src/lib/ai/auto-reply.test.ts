@@ -667,25 +667,80 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     expect(h.sendQuoteProposal).toHaveBeenCalled()
   })
 
+  const STALLED_BATCH = {
+    assigned_agent_id: null,
+    ai_autoreply_disabled: false,
+    ai_reply_count: 0,
+    ai_meter_state: {
+      expected: null,
+      readings: [METER_A, METER_B],
+      readMediaIds: ['media-1', 'media-2'],
+      askedCount: 2,
+      updatedAt: new Date().toISOString(),
+    },
+  }
+
   it('hands off instead of asking a third time', async () => {
-    h.state.conv = {
-      assigned_agent_id: null,
-      ai_autoreply_disabled: false,
-      ai_reply_count: 0,
-      ai_meter_state: {
-        expected: null,
-        readings: [METER_A, METER_B],
-        readMediaIds: ['media-1', 'media-2'],
-        askedCount: 2,
-        updatedAt: new Date().toISOString(),
-      },
-    }
+    h.state.conv = { ...STALLED_BATCH }
     h.extractReceipts.mockResolvedValue([])
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
-    expect(h.generateReply).not.toHaveBeenCalled()
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'how many meters',
+    )
+  })
+
+  it('answers the customer before handing a stalled batch to a person', async () => {
+    // An open batch outlives the topic that opened it. The message that
+    // trips the limit is usually about something else — this customer is
+    // comparing financing offers — and escalating in silence reads as
+    // being ignored.
+    h.state.conv = { ...STALLED_BATCH }
+    h.extractReceipts.mockResolvedValue([])
+    h.generateReply.mockResolvedValue({
+      text: 'Sí, manejamos financiamiento hasta 60 meses 🙌',
+      handoff: false,
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('financiamiento') }),
+    )
+    // Answered, then escalated — and still no quote for a property we
+    // only partly covered.
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
+  it('stops escalating when the stalled batch closes on this turn', async () => {
+    // The customer finally states the count on the third turn. Now that
+    // the model gets a turn at all, that answer can land — and once the
+    // quote is out there is nothing left for a person to chase.
+    h.state.conv = { ...STALLED_BATCH }
+    h.extractReceipts.mockResolvedValue([])
+    h.generateReply.mockResolvedValue({
+      text: 'Son dos, va tu propuesta 🙌',
+      handoff: false,
+      metersExpected: 2,
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.sendQuoteProposal).toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_autoreply_disabled).not.toBe(true)
+  })
+
+  it('tells the model to drop the meter question and answer what was asked', async () => {
+    h.state.conv = { ...STALLED_BATCH }
+    h.extractReceipts.mockResolvedValue([])
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toMatch(/NO vuelvas a preguntar cuántos medidores/i)
+    expect(note).toMatch(/NO des precio/i)
   })
 
   it('does not re-quote a settled batch on a later text turn', async () => {

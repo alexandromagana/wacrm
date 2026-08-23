@@ -16,6 +16,7 @@ import {
   applyMeterConfirmation,
   clearMeterState,
   formatMeterGateNote,
+  formatStalledMeterNote,
   mergeReadings,
   parseMeterState,
   resolveMeterGate,
@@ -418,27 +419,20 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // The batch asked its questions and never got a usable answer.
-    // Handing off beats asking a third time — and beats quoting a sum
-    // that covers only part of the property. Mirrors the cap-exhausted
-    // path above: the thread goes to a person, who has the bills the
-    // batch collected sitting in the conversation.
+    // The batch asked its questions and never got a usable answer, so a
+    // person takes the quote from here. The thread is NOT abandoned mid-
+    // sentence to do it: an open batch outlives the topic that created
+    // it, and the message that trips this is usually about something
+    // else — financing, timelines — which returning here would answer
+    // with silence. Reply first, hand off after the send below.
+    // `receiptExtraction` stays null either way, so no partial property
+    // is ever priced.
     if (meterHandoff) {
       await saveMeterState(db, conversationId, meterState)
-      await performHandoff(db, {
-        accountId,
-        conversationId,
-        contactId,
-        handoffAgentId: config.handoffAgentId,
-        alreadyAssigned: conv.assigned_agent_id,
-        summary: buildHandoffSummary({
-          messages,
-          replyCount: conv.ai_reply_count ?? 0,
-          reason: 'meter_gate',
-        }),
+      messages.push({
+        role: 'user',
+        content: formatStalledMeterNote(meterState.readings.length),
       })
-      assistantHandled = true
-      return
     }
 
     // Ground the reply in the account's knowledge base (best-effort).
@@ -549,7 +543,11 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
-          reason: handoff ? 'model_requested' : 'no_reply',
+          reason: meterHandoff
+            ? 'meter_gate'
+            : handoff
+              ? 'model_requested'
+              : 'no_reply',
         }),
       })
       // If the model wrote a farewell alongside the sentinel ("a teammate
@@ -668,11 +666,19 @@ export async function dispatchInboundToAiReply(
       }
     }
 
-    // The handoff the model asked for on the same turn the quote landed.
-    // Deferred to here rather than skipped: the customer has their reply
-    // and their proposal, and the reason the model wanted a person —
-    // an unrelated question, a complaint — is still real.
-    if (handoff) {
+    // Handoffs deferred until the customer had their answer: the one the
+    // model asked for on the same turn the quote landed, and the stalled
+    // meter batch that needs a person to finish the quote. Both are real
+    // reasons to fetch a human — neither is a reason to leave the last
+    // message unanswered, which is why they run here and not earlier.
+    //
+    // A stalled batch that resolved on this turn is not stalled any more:
+    // now that the model gets a turn, the customer can finally state the
+    // count here, and `quoteReady` means they did. The quote went out —
+    // there is nothing left for a person to chase.
+    const meterStillStalled = meterHandoff && !quoteReady
+
+    if (handoff || meterStillStalled) {
       await performHandoff(db, {
         accountId,
         conversationId,
@@ -682,7 +688,7 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
-          reason: 'model_requested',
+          reason: meterStillStalled ? 'meter_gate' : 'model_requested',
         }),
       })
     }

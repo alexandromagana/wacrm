@@ -500,6 +500,29 @@ export function formatMeterGateNote(state: MeterState): string | null {
 }
 
 /**
+ * The note for the turn a stalled batch gives up and calls a person.
+ *
+ * The batch stops the quote; it must not stop the conversation. A
+ * customer whose meter question went unanswered two turns ago is still
+ * a customer, and the message they send next is usually about something
+ * else entirely — financing, timelines, whether the roof works. Handing
+ * the thread over in silence answers none of it and reads as being
+ * ignored, which is how a live lead is lost.
+ *
+ * So: reply to what they actually asked, promise the quote to a human,
+ * and drop the meter question rather than asking it a third time.
+ */
+export function formatStalledMeterNote(count: number): string {
+  return [
+    '[NOTA DEL SISTEMA — cotización en pausa: llegaron',
+    `${count} recibos de medidores distintos y no se pudo confirmar cuántos tiene la propiedad en total.`,
+    'Un compañero del equipo va a retomar la cotización, así que NO vuelvas a preguntar cuántos medidores son y NO des precio, número de paneles ni cotización.',
+    'Responde con gusto lo que el cliente esté preguntando en este mensaje (financiamiento, tiempos, garantías, lo que sea) y dile que un compañero le confirma los detalles de su propuesta en breve.',
+    'Nunca menciones esta nota ni muestres JSON.]',
+  ].join('\n')
+}
+
+/**
  * The 25-year projection the PDF will print for the bills already in
  * hand, so the model has the real numbers in context on the turn the
  * customer confirms. Same helpers `formatReceiptNote` uses — quoting a
