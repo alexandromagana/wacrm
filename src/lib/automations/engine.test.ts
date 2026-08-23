@@ -19,6 +19,13 @@ const h = vi.hoisted(() => ({
     stageRow: null as { id: string; pipeline_id: string } | null,
     pipelineRow: null as { id: string } | null,
     dealRow: null as { id: string; stage_id: string } | null,
+    // resumePendingExecution looks the automation up by id with .single(),
+    // so it needs a single row rather than the list `automations` holds.
+    automationRow: null as Record<string, unknown> | null,
+    // contact_tags is only ever read head+count (contactHasTag).
+    contactTagCount: 0,
+    // Send steps resolve a conversation before they can target anyone.
+    conversationRow: null as { id: string } | null,
   },
 }));
 
@@ -60,7 +67,20 @@ vi.mock("./admin-client", () => {
       }
       return { data: state.dealRow, error: null };
     }
-    if (table === "automations") return { data: state.automations, error: null };
+    if (table === "contact_tags") return { count: state.contactTagCount, error: null };
+    if (table === "conversations") return { data: state.conversationRow, error: null };
+    if (table === "automation_pending_executions") {
+      if (type === "update") {
+        state.updateCalls.push({ table, filters: ops.filters, payload: ops.payload });
+        return { data: null, error: null };
+      }
+      return { data: null, error: null };
+    }
+    if (table === "automations") {
+      // Dispatch reads a list; resume reads one row by id.
+      if (state.automationRow) return { data: state.automationRow, error: null };
+      return { data: state.automations, error: null };
+    }
     if (table === "automation_logs") {
       if (type === "insert") return { data: { id: "log1" }, error: null };
       if (type === "update") return { data: null, error: null };
@@ -113,7 +133,12 @@ vi.mock("./meta-send", () => ({
   engineSendInteractive: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
 
-import { runAutomationsForTrigger, triggerMatches, interpolate } from "./engine";
+import {
+  runAutomationsForTrigger,
+  resumePendingExecution,
+  triggerMatches,
+  interpolate,
+} from "./engine";
 import type { Automation } from "@/types";
 
 const ACCOUNT = "acct-1";
@@ -129,6 +154,9 @@ beforeEach(() => {
   h.state.stageRow = null;
   h.state.pipelineRow = null;
   h.state.dealRow = null;
+  h.state.automationRow = null;
+  h.state.contactTagCount = 0;
+  h.state.conversationRow = null;
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -327,6 +355,124 @@ function moveStep(stageId: string) {
     step_config: { stage_id: stageId },
   };
 }
+
+const TAG = "tag-fb-pendiente";
+
+function tagAutomation(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "a1",
+    account_id: ACCOUNT,
+    user_id: "u1",
+    trigger_type: "tag_added",
+    trigger_config: { tag_id: TAG },
+    is_active: true,
+    ...overrides,
+  };
+}
+
+function templateStep() {
+  return {
+    id: "s2",
+    automation_id: "a1",
+    step_type: "send_template",
+    position: 1,
+    parent_step_id: null,
+    step_config: { template_name: "gama_seguimiento_lead", language: "es_MX", variables: {} },
+  };
+}
+
+/** The pending row the cron hands back for a run parked at a wait step. */
+function pendingRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "pe1",
+    automation_id: "a1",
+    user_id: "u1",
+    account_id: ACCOUNT,
+    contact_id: "c1",
+    log_id: "log1",
+    parent_step_id: null,
+    branch: null,
+    next_step_position: 1,
+    context: {},
+    ...overrides,
+  } as Parameters<typeof resumePendingExecution>[0];
+}
+
+function pendingMarkedFailed() {
+  return h.state.updateCalls.some(
+    (c) =>
+      c.table === "automation_pending_executions" &&
+      (c.payload as { status?: string })?.status === "failed",
+  );
+}
+
+describe("resumePendingExecution — a parked wait re-checks before it sends", () => {
+  beforeEach(async () => {
+    h.state.owned = { id: "c1" };
+    h.state.steps = [templateStep()];
+    h.state.conversationRow = { id: "conv1" };
+    const { engineSendTemplate } = await import("./meta-send");
+    vi.mocked(engineSendTemplate).mockClear();
+  });
+
+  it("does not send when the automation was switched off during the wait", async () => {
+    h.state.automationRow = tagAutomation({ is_active: false });
+    h.state.contactTagCount = 1; // tag still there — only is_active differs
+
+    await resumePendingExecution(pendingRow());
+
+    const { engineSendTemplate } = await import("./meta-send");
+    expect(engineSendTemplate).not.toHaveBeenCalled();
+    expect(pendingMarkedFailed()).toBe(true);
+  });
+
+  it("does not send when the trigger tag was removed during the wait", async () => {
+    // The real-world case: the customer replied, "quitar al responder"
+    // dropped the tag, and this queued nudge must not go out.
+    h.state.automationRow = tagAutomation();
+    h.state.contactTagCount = 0;
+
+    await resumePendingExecution(pendingRow());
+
+    const { engineSendTemplate } = await import("./meta-send");
+    expect(engineSendTemplate).not.toHaveBeenCalled();
+    expect(pendingMarkedFailed()).toBe(true);
+  });
+
+  it("still sends when the automation is active and the tag is intact", async () => {
+    h.state.automationRow = tagAutomation();
+    h.state.contactTagCount = 1;
+
+    await resumePendingExecution(pendingRow());
+
+    const { engineSendTemplate } = await import("./meta-send");
+    expect(engineSendTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends for event-shaped triggers, which have no state to re-check", async () => {
+    // A keyword matched a day ago; there is nothing to re-read, so the
+    // tag guard must not block it. contactTagCount stays 0 on purpose.
+    h.state.automationRow = tagAutomation({
+      trigger_type: "keyword_match",
+      trigger_config: { keywords: ["hola"], match_type: "contains" },
+    });
+
+    await resumePendingExecution(pendingRow());
+
+    const { engineSendTemplate } = await import("./meta-send");
+    expect(engineSendTemplate).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats a tag_added automation with no tag configured as a catch-all", async () => {
+    h.state.automationRow = tagAutomation({ trigger_config: {} });
+    h.state.contactTagCount = 0;
+
+    await resumePendingExecution(pendingRow());
+
+    const { engineSendTemplate } = await import("./meta-send");
+    expect(engineSendTemplate).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("move_deal", () => {
   beforeEach(() => {
