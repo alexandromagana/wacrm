@@ -6,6 +6,7 @@ import {
   lookupSolarTier,
   resolveQuote,
   findAnomalousPeriod,
+  findAnomalousHighPeriod,
   renderPricingTableForPrompt,
 } from './pricing'
 
@@ -184,6 +185,34 @@ describe('resolveQuote', () => {
     expect(res.kind).toBe('ok')
   })
 
+  it('holds the document when one bimester towers over the rest', () => {
+    // The mirror of the vacancy case, and the one that costs the
+    // customer rather than the company: a single inflated figure drags
+    // the average up a tier and sells a system bigger than the roof
+    // needs. The tier still resolves so the bot can ballpark if pressed.
+    const res = resolveQuote(1_263, 6, {
+      includesCurrentPeriod: true,
+      periods: [900, 850, 800, 950, 5200, 880],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('anomalous_history_high')
+    expect(res.outlierKwh).toBe(5_200)
+    expect(res.tier.panels).toBe(8)
+  })
+
+  it('reports an empty house ahead of an inflated bimester', () => {
+    // Both fire on this window. The vacancy question is the one the
+    // customer can actually answer with a yes or a no, so it wins.
+    const res = resolveQuote(1_100, 6, {
+      includesCurrentPeriod: true,
+      periods: [50, 1_000, 1_000, 1_000, 1_000, 5_000],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('anomalous_history')
+  })
+
   it('lets an ordinary Cancún summer/winter swing through', () => {
     // 2:1 between the hottest and coldest bimester is normal here and
     // must not be mistaken for a vacancy, or every quote needs a human.
@@ -229,6 +258,42 @@ describe('findAnomalousPeriod', () => {
     expect(findAnomalousPeriod([1200])).toBeNull()
     expect(findAnomalousPeriod([])).toBeNull()
     expect(findAnomalousPeriod([0, 0])).toBeNull()
+  })
+})
+
+describe('findAnomalousHighPeriod', () => {
+  it('flags a bimester that towers over the rest', () => {
+    // The shape of a misread: five ordinary bimesters and one that could
+    // only be the accumulated meter reading wearing a period's clothes.
+    expect(findAnomalousHighPeriod([900, 850, 800, 950, 5200, 880])).toBe(5200)
+  })
+
+  it('leaves every legitimate bill on file alone', () => {
+    // The regression that matters most. Each of these is a real window
+    // that must keep pricing without a human — the low-baseline house
+    // that broke the old floor rule peaks at 1.85x its median, the
+    // ordinary Cancún swing at 1.42x, and the vacancy fixture, which is
+    // the highest-peaking real window we have, at 2.32x. A ceiling that
+    // catches any of them has been set too low.
+    expect(findAnomalousHighPeriod([1611, 1220, 683, 328, 655, 1060])).toBeNull()
+    expect(
+      findAnomalousHighPeriod([2944, 2177, 1487, 1447, 1966, 2788]),
+    ).toBeNull()
+    expect(findAnomalousHighPeriod([2545, 1126, 879, 1067, 1485, 216])).toBeNull()
+  })
+
+  it('cannot fire on two periods, however far apart they are', () => {
+    // The max of two positives is always under twice their mean, and at
+    // n=2 the median IS the mean — so the ceiling is unreachable here by
+    // arithmetic, not by choice. Documented so a future reader does not
+    // read it as a bug.
+    expect(findAnomalousHighPeriod([100, 100_000])).toBeNull()
+  })
+
+  it('says nothing about a single period, or about zeroes', () => {
+    expect(findAnomalousHighPeriod([1200])).toBeNull()
+    expect(findAnomalousHighPeriod([])).toBeNull()
+    expect(findAnomalousHighPeriod([0, 0])).toBeNull()
   })
 })
 

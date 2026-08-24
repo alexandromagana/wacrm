@@ -11,6 +11,14 @@ import { isPlausibleAverage, resolveQuote } from '@/lib/quotes/pricing'
 // both producers of a reading average the same window. See
 // `src/lib/quotes/reading.ts`.
 import { MAX_HISTORIAL_BIMESTRES } from '@/lib/quotes/reading'
+// Which rows of the historial table belong in the average, decided in
+// code against the dates on the paper rather than by the model.
+import {
+  MAX_HISTORIAL_RAW_ROWS,
+  parsePeriodoLabel,
+  selectRecentHistorial,
+  type HistorialCandidate,
+} from './receipt-periods'
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
 import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 
@@ -163,23 +171,28 @@ correctos vale igual que la hoja entera.
   nada a lo que costó este bimestre. Solo repórtalos por separado; la
   cuenta se hace por fuera.
 - El bloque del HISTORIAL: la tabla o gráfica de "Consumo histórico" /
-  "Historial de consumo". Extrae
-  ÚNICAMENTE los 5 bimestres MÁS RECIENTES anteriores al periodo
-  actual — si la tabla o gráfica muestra más de 5 (algunos recibos
-  muestran hasta 12), IGNORA los más antiguos y toma solo los 5 más
-  próximos al presente, de más reciente a más antiguo. Nunca reportes
-  más de 5 valores en el historial: el consumo actual más estos 5
-  bimestres forman exactamente 6 periodos = 1 año de consumo, que es
-  todo lo que se necesita.
+  "Historial de consumo". Transcribe TODOS los renglones que alcances a
+  leer, en el MISMO ORDEN en que están impresos, hasta un máximo de 12.
+  NO elijas tú cuáles son los más recientes y NO descartes los viejos:
+  esa selección se hace por fuera, con las fechas. Tu trabajo es copiar
+  la tabla tal como está.
   El periodo actual normalmente NO aparece en esta tabla — el renglón
   más reciente del historial es el bimestre ANTERIOR al que se está
   cobrando. Eso es lo normal y no es un error.
-  Si esa tabla trae una columna "Importe", reporta también el importe
-  de esos MISMOS 5 bimestres, en el MISMO ORDEN, uno por uno. Los dos
-  arreglos se leen por posición: si un importe no se alcanza a leer,
-  pon null en su lugar — nunca recorras los valores ni cambies el
-  orden para rellenar un hueco. Si el recibo no trae esa columna,
-  devuelve un arreglo vacío.
+  Por CADA renglón reporta, en tres arreglos que se leen POR POSICIÓN
+  (el índice 0 de los tres es el mismo renglón de la tabla):
+    · "historial_bimestres_kwh" — el consumo en kWh.
+    · "historial_periodos" — el periodo tal como viene impreso en ese
+      renglón, copiado literal (ej. "del 10 ABR 26 al 12 JUN 26" o
+      "10 ABR 26 - 12 JUN 26"). Esta fecha es la que decide cuáles
+      bimestres entran al promedio, así que cópiala con cuidado. Si un
+      renglón no trae fecha legible, pon null en su lugar.
+    · "historial_bimestres_importe_mxn" — el importe en pesos de ese
+      mismo renglón, si la tabla trae esa columna. Si no la trae,
+      devuelve un arreglo vacío.
+  Si un dato no se alcanza a leer, pon null EN SU LUGAR — nunca
+  recorras los valores ni cambies el orden para rellenar un hueco, o
+  los tres arreglos dejan de corresponder entre sí.
 
 # SI LA IMAGEN NO ES UN RECIBO DE CFE
 Deja todos los campos numéricos en null / lista vacía y explica en
@@ -202,27 +215,28 @@ CFE, parece una foto de un techo").
   los centavos tal cual (10237.85, no "$10,237.85" ni 10237).
 
 # COMPACTO (importante)
-Responde de la forma MÁS BREVE posible: solo los 11 campos del JSON de
-abajo, nada más. NO agregues campos extra, NO transcribas la tabla
-completa, NO repitas valores, NO expliques tu razonamiento. Los dos
-historiales son arreglos simples de máximo 5 números (ej. [1002, 1170,
-1701, 1420, 1543]) — nunca objetos, nunca fechas dentro del arreglo.
+Responde de la forma MÁS BREVE posible: solo los 12 campos del JSON de
+abajo, nada más. NO agregues campos extra, NO repitas valores, NO
+expliques tu razonamiento. Los tres arreglos del historial son listas
+simples y planas — nunca objetos, nunca un renglón anidado. Los dos de
+números traen números pelones (ej. [1076, 446, 459, 643, 984]); el de
+periodos trae cadenas (ej. ["del 10 ABR 26 al 12 JUN 26", ...]).
 "advertencias" es una frase corta o cadena vacía, jamás un párrafo.
-Una respuesta completa cabe en menos de 200 palabras.
 
 # FORMATO DE RESPUESTA
 Responde ÚNICAMENTE con este JSON, sin texto antes ni después:
 {
   "consumo_periodo_actual_kwh": <número o null>,
   "periodo_actual": "<fecha inicio - fecha fin>" o null,
-  "historial_bimestres_kwh": [<máximo 5 números, los más recientes>],
+  "historial_bimestres_kwh": [<todos los renglones, máximo 12, en el orden impreso>],
+  "historial_periodos": [<mismos renglones, mismo orden, la fecha de cada uno o null>],
   "tarifa": "<tarifa>" o null,
   "numero_servicio": "<No. de servicio / RPU, solo dígitos>" o null,
   "ciudad": "<ciudad o municipio del domicilio>" o null,
   "importe_periodo_mxn": <"Fac. del Periodo" o null>,
   "importe_dap_mxn": <DAP o null>,
   "importe_total_a_pagar_mxn": <el total impreso o null>,
-  "historial_bimestres_importe_mxn": [<mismos 5 bimestres, mismo orden>],
+  "historial_bimestres_importe_mxn": [<mismos renglones, mismo orden, o arreglo vacío>],
   "advertencias": "<texto breve, o cadena vacía si todo se leyó bien>"
 }`
 
@@ -255,6 +269,12 @@ export interface RawReceiptValues {
   consumo_periodo_actual_kwh?: unknown
   periodo_actual?: unknown
   historial_bimestres_kwh?: unknown
+  /**
+   * The period label of each historial row, read by position against
+   * the kWh above. Absent on a hand-typed reading, which is why every
+   * consumer of it degrades rather than requires it.
+   */
+  historial_periodos?: unknown
   tarifa?: unknown
   numero_servicio?: unknown
   ciudad?: unknown
@@ -287,13 +307,48 @@ export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
     typeof v === 'number' && Number.isFinite(v) ? v : null
 
   const consumoActual = num(r.consumo_periodo_actual_kwh)
-  const historial = (
-    Array.isArray(r.historial_bimestres_kwh)
-      ? r.historial_bimestres_kwh.filter(
-          (v): v is number => typeof v === 'number' && Number.isFinite(v),
-        )
-      : []
-  ).slice(0, MAX_HISTORIAL_BIMESTRES)
+
+  // The historial as reported, rebuilt row by row.
+  //
+  // Read strictly by position: the kWh, its importe and its period label
+  // are three columns of ONE row of the table. A row whose kWh is
+  // unreadable therefore takes its own importe out with it, instead of
+  // letting every later importe shift up a slot and pair with the wrong
+  // bimester.
+  const rawKwh = Array.isArray(r.historial_bimestres_kwh)
+    ? (r.historial_bimestres_kwh as unknown[])
+    : []
+  const rawImporte = Array.isArray(r.historial_bimestres_importe_mxn)
+    ? (r.historial_bimestres_importe_mxn as unknown[])
+    : []
+  const rawPeriodos = Array.isArray(r.historial_periodos)
+    ? (r.historial_periodos as unknown[])
+    : []
+
+  const candidates: HistorialCandidate[] = []
+  for (let i = 0; i < Math.min(rawKwh.length, MAX_HISTORIAL_RAW_ROWS); i++) {
+    const kwh = num(rawKwh[i])
+    if (kwh == null) continue
+    const periodo = rawPeriodos[i]
+    candidates.push({
+      kwh,
+      importeMxn: num(rawImporte[i]),
+      periodo: typeof periodo === 'string' ? periodo : null,
+    })
+  }
+
+  // Which of those rows are the most recent year, chosen against the
+  // dates rather than trusting the order they arrived in. Falls back to
+  // that order whenever the labels can't all be read, which is also the
+  // hand-capture path — it never has any.
+  const selection = selectRecentHistorial(
+    candidates,
+    MAX_HISTORIAL_BIMESTRES,
+    parsePeriodoLabel(
+      typeof r.periodo_actual === 'string' ? r.periodo_actual : null,
+    )?.end ?? null,
+  )
+  const historial = selection.selected.map((c) => c.kwh)
 
   const values = [consumoActual, ...historial].filter(
     (v): v is number => v != null,
@@ -303,16 +358,18 @@ export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
       ? Math.round(values.reduce((sum, v) => sum + v, 0) / values.length)
       : null
 
-  // Money. Kept slot-for-slot with the kWh history so a missing importe
-  // cannot silently shift every other period by one.
+  // Money. Carried out of the same selected rows, so the peso column can
+  // never describe a different set of bimesters than the kWh one.
+  //
+  // A bill with no importe column at all stays an empty array rather
+  // than becoming a row of nulls: "this table has no money in it" and
+  // "these bimesters cost an unknown amount" read the same to
+  // `projectionBaseCost`, but only the first is true here.
   const importePeriodo = num(r.importe_periodo_mxn)
   const importeDap = num(r.importe_dap_mxn)
   const importeTotal = num(r.importe_total_a_pagar_mxn)
-  const historialImporte = (
-    Array.isArray(r.historial_bimestres_importe_mxn)
-      ? r.historial_bimestres_importe_mxn.map(num)
-      : []
-  ).slice(0, MAX_HISTORIAL_BIMESTRES)
+  const historialImporte =
+    rawImporte.length > 0 ? selection.selected.map((c) => c.importeMxn) : []
 
   const costoPeriodo =
     importePeriodo != null ? importePeriodo + (importeDap ?? 0) : null
@@ -321,6 +378,11 @@ export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
   if (typeof r.advertencias === 'string' && r.advertencias) {
     advertencias.push(r.advertencias)
   }
+  // What the row selection noticed on its way past: a repeated bimester,
+  // a gap in the year, a row that wasn't older than the bill itself.
+  // None of these block a quote on their own; they tell whoever reviews
+  // it where to look.
+  if (selection.warning) advertencias.push(selection.warning)
   // Page 1's consumption is the hardest number on the bill to read —
   // three figures share the "Energía (kWh)" row and only the third is
   // the period. When it comes back null the average quietly becomes an
@@ -528,16 +590,22 @@ export function formatReceiptNote(
   // otherwise the customer gets a firm price the company has to walk
   // back once they answer.
   if (!pending && quote.kind === 'needs_review') {
-    lines.push(
+    const diagnostico =
       quote.reason === 'missing_current_period'
         ? 'lectura_incompleta: no se leyó el consumo del bimestre actual. Antes de dar cualquier número, pídele con amabilidad una foto nítida de la PRIMERA página del recibo, donde viene el renglón "Energía (kWh)".'
-        : `consumo_irregular: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por debajo del promedio de ${quote.kwh} kWh. Eso normalmente significa que la casa estuvo desocupada, en obra, o que apenas la van a habitar.`,
-    )
-    lines.push(
-      'NO des precio, ni número de paneles, ni cotización en este mensaje, y NO se enviará PDF.',
+        : quote.reason === 'anomalous_history_high'
+          ? `consumo_irregular_alto: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por encima del promedio de ${quote.kwh} kWh. Eso normalmente significa un bimestre fuera de lo normal (visitas, obra, un aire nuevo) o que ese número se leyó mal del recibo.`
+          : `consumo_irregular: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por debajo del promedio de ${quote.kwh} kWh. Eso normalmente significa que la casa estuvo desocupada, en obra, o que apenas la van a habitar.`
+    const tarea =
       quote.reason === 'missing_current_period'
         ? 'Tu única tarea en este turno es pedir esa página. Espera a tenerla antes de cotizar.'
-        : 'Tu única tarea en este turno es preguntar cuál de esas situaciones aplica: si la casa estuvo desocupada, si apenas la va a habitar, o si así es su consumo normal. Espera su respuesta antes de cotizar — dimensionar con el promedio equivocado le vende un sistema que no le alcanza.',
+        : quote.reason === 'anomalous_history_high'
+          ? 'Tu única tarea en este turno es preguntarle si ese bimestre tan alto tiene explicación o si así es su consumo normal. Espera su respuesta antes de cotizar: si ese número está mal, le estaríamos vendiendo un sistema más grande y más caro del que necesita.'
+          : 'Tu única tarea en este turno es preguntar cuál de esas situaciones aplica: si la casa estuvo desocupada, si apenas la va a habitar, o si así es su consumo normal. Espera su respuesta antes de cotizar — dimensionar con el promedio equivocado le vende un sistema que no le alcanza.'
+    lines.push(diagnostico)
+    lines.push(
+      'NO des precio, ni número de paneles, ni cotización en este mensaje, y NO se enviará PDF.',
+      tarea,
       'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pregunta al final del mensaje.',
     )
   }

@@ -1,5 +1,9 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { POST, readMeterGroups } from './route';
+import {
+  appendFinancingAnnex,
+  extractFinancingAnnexPage,
+} from '@/lib/quotes/financing-annex';
 
 /**
  * The form contract between the Cotizador panel and this route: bills
@@ -122,10 +126,15 @@ const PROJECT_TYPE = {
   quote_rate_tiers: TIERS,
 };
 
+/**
+ * Mutable in `file_type` alone: the annex is merged into a .pptx (which
+ * already converts to one PDF) but delivered beside a .docx, and that
+ * fork is the whole point of the financing tests below.
+ */
 const TEMPLATE = {
   id: 'tpl-1',
   name: 'Propuesta',
-  file_type: 'docx',
+  file_type: 'docx' as 'docx' | 'pptx',
   storage_path: 'templates/propuesta.docx',
 };
 
@@ -188,11 +197,30 @@ vi.mock('@/lib/quotes/pptx-to-pdf', () => ({
   PptxConvertError: class PptxConvertError extends Error {},
 }));
 
+// Stubbed like the two above: what the route decides here is WHICH
+// annex path runs and whether a second file goes out — the PDF page
+// surgery itself is covered, unmocked, in financing-annex.test.ts.
+vi.mock('@/lib/quotes/financing-annex', () => ({
+  appendFinancingAnnex: vi.fn(async (bytes: Uint8Array) =>
+    Buffer.concat([Buffer.from(bytes), Buffer.from(' + anexo')])
+  ),
+  extractFinancingAnnexPage: vi.fn(async () => Buffer.from('anexo suelto')),
+}));
+
+/** Every file the route uploaded, in order. */
+const uploads: Array<{ fileName: string; contentType: string }> = [];
+
 vi.mock('@/lib/storage/upload-server', () => ({
-  uploadServerMedia: async () => ({
-    publicUrl: 'https://example.test/doc.docx',
-    path: 'quotes/doc.docx',
-  }),
+  uploadServerMedia: async (args: {
+    fileName: string;
+    contentType: string;
+  }) => {
+    uploads.push({ fileName: args.fileName, contentType: args.contentType });
+    return {
+      publicUrl: `https://example.test/${uploads.length}-${args.fileName}`,
+      path: `quotes/${args.fileName}`,
+    };
+  },
 }));
 
 function makeSupabase() {
@@ -372,5 +400,83 @@ describe('POST /api/quotes/generate — hand-captured readings', () => {
     const body = await res.json();
     expect(body.readings).toHaveLength(1);
     expect(body.readings[0].consumo_periodo_actual_kwh).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The financing annex. Opt-in, and delivered two different ways: merged into
+// a .pptx's converted PDF, or as its own file beside a .docx. Both forks are
+// invisible in the response body except through the second URL, which is
+// exactly what a regression here would get wrong.
+// ---------------------------------------------------------------------------
+
+describe('POST /api/quotes/generate — the financing annex', () => {
+  /** A reading that prices cleanly, so every test below reaches the annex. */
+  const READING = JSON.stringify([
+    { consumo_periodo_actual_kwh: 900, historial_bimestres_kwh: [880, 920] },
+  ]);
+
+  beforeEach(() => {
+    visionResult = null;
+    quoteInserts.length = 0;
+    uploads.length = 0;
+    TEMPLATE.file_type = 'docx';
+    vi.mocked(appendFinancingAnnex).mockClear();
+    vi.mocked(extractFinancingAnnexPage).mockClear();
+  });
+
+  it('leaves the document alone when the box is unchecked', async () => {
+    const res = await post(quoteForm({ manual_reading: READING }));
+
+    expect(res.status).toBe(200);
+    expect(appendFinancingAnnex).not.toHaveBeenCalled();
+    expect(extractFinancingAnnexPage).not.toHaveBeenCalled();
+    expect((await res.json()).financing_download_url).toBeNull();
+    // One upload: the proposal itself, and nothing beside it.
+    expect(uploads).toHaveLength(1);
+  });
+
+  it('sends the annex as its own PDF beside a Word template', async () => {
+    const res = await post(
+      quoteForm({ manual_reading: READING, include_financing: 'true' })
+    );
+
+    expect(res.status).toBe(200);
+    expect(extractFinancingAnnexPage).toHaveBeenCalledTimes(1);
+    expect(appendFinancingAnnex).not.toHaveBeenCalled();
+
+    const body = await res.json();
+    expect(body.financing_download_url).toContain('Financiamiento.pdf');
+    expect(uploads).toHaveLength(2);
+    expect(uploads[1].contentType).toBe('application/pdf');
+    expect(uploads[1].fileName).toContain('Financiamiento');
+  });
+
+  it('merges the annex into a PowerPoint template’s single PDF', async () => {
+    TEMPLATE.file_type = 'pptx';
+
+    const res = await post(
+      quoteForm({ manual_reading: READING, include_financing: 'true' })
+    );
+
+    expect(res.status).toBe(200);
+    expect(appendFinancingAnnex).toHaveBeenCalledTimes(1);
+    expect(extractFinancingAnnexPage).not.toHaveBeenCalled();
+    // One document, not two — the annex is inside it.
+    expect((await res.json()).financing_download_url).toBeNull();
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0].contentType).toBe('application/pdf');
+  });
+
+  it('passes the quoted values through, so the annex prices this quote', async () => {
+    await post(
+      quoteForm({ manual_reading: READING, include_financing: 'true' })
+    );
+
+    // 900 kWh → the 705–1,024 band → the 6-panel, $62,400 tier. The
+    // annex has to be built from THAT price, not a default.
+    const [values] = vi.mocked(extractFinancingAnnexPage).mock.calls[0];
+    expect(values.paneles).toBe('6');
+    expect(values.enganche).toBeTruthy();
   });
 });

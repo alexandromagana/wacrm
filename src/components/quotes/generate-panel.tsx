@@ -22,6 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -55,6 +56,8 @@ interface ContactOption {
 
 interface Result {
   downloadUrl: string;
+  /** The annex as its own file, when the template could not absorb it. */
+  financingDownloadUrl: string | null;
   folio: string;
   warning: string | null;
 }
@@ -101,6 +104,14 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const [manual, setManual] = useState<ManualMeterReading[]>([
     emptyManualReading(),
   ]);
+
+  /**
+   * Whether to attach the financing annex. Off by default, unlike the
+   * bot's proposal, which always carries it: a template that already
+   * has its own financing section would otherwise show the instalments
+   * twice, and only the person choosing the template knows which it is.
+   */
+  const [includeFinancing, setIncludeFinancing] = useState(false);
 
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,6 +174,16 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   );
 
   /**
+   * A .docx is delivered as authored — there is no in-process Word to
+   * PDF converter — so its annex cannot be merged in and arrives as a
+   * second file. Worth saying before the user clicks, not after.
+   */
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === templateId),
+    [templates, templateId]
+  );
+
+  /**
    * Picking a contact fills the name in rather than locking it: most
    * quotes go out under the contact's own name, but a WhatsApp profile
    * is often a nickname, and the document should carry the real one.
@@ -218,6 +239,8 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       });
       // Its presence is what tells the route to skip the vision call.
       if (manualMode) body.append('manual_reading', JSON.stringify(manual));
+      // Same shape: sent only when asked for, never as a literal 'false'.
+      if (includeFinancing) body.append('include_financing', 'true');
 
       const res = await fetch('/api/quotes/generate', { method: 'POST', body });
       const data = await res.json().catch(() => ({}));
@@ -234,6 +257,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
       }
       setResult({
         downloadUrl: data.download_url,
+        financingDownloadUrl: data.financing_download_url ?? null,
         folio: data.folio,
         warning: data.warning ?? null,
       });
@@ -417,6 +441,38 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
           </div>
         </div>
 
+        {/* Sits with the template picker, not with the receipt fields:
+            what it changes is the document that comes out, and whether
+            it can be merged in depends on which template was chosen. */}
+        <div className="flex items-start gap-2.5">
+          <Checkbox
+            id="include-financing"
+            checked={includeFinancing}
+            onCheckedChange={(checked) => setIncludeFinancing(!!checked)}
+            className="mt-0.5"
+          />
+          <div className="space-y-1">
+            <Label
+              htmlFor="include-financing"
+              className="text-foreground cursor-pointer"
+            >
+              Incluir hoja de financiamiento
+            </Label>
+            <p className="text-muted-foreground text-[11px]">
+              Agrega la página con el enganche y las mensualidades a 12, 24,
+              36, 48 y 60 meses, calculadas sobre el precio de esta cotización.
+              Déjala apagada si la plantilla ya trae su propia sección de
+              financiamiento.
+            </p>
+            {includeFinancing && selectedTemplate?.file_type === 'docx' && (
+              <p className="text-muted-foreground text-[11px]">
+                Esta plantilla es Word, así que la hoja llega como un PDF
+                aparte para enviarla junto con el documento.
+              </p>
+            )}
+          </div>
+        </div>
+
         <div className={cn('space-y-3', manualMode && 'hidden')}>
           <Label className="text-muted-foreground">
             {meters.length > 1 ? 'Recibos CFE' : 'Recibo CFE'}
@@ -589,15 +645,34 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
                 <p>{result.warning}</p>
               </div>
             )}
-            <a
-              href={result.downloadUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className={buttonVariants({ size: 'sm', variant: 'outline' })}
-            >
-              <Download className="mr-1.5 size-4" />
-              Descargar documento
-            </a>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={result.downloadUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={buttonVariants({ size: 'sm', variant: 'outline' })}
+              >
+                <Download className="mr-1.5 size-4" />
+                Descargar documento
+              </a>
+              {result.financingDownloadUrl && (
+                <a
+                  href={result.financingDownloadUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={buttonVariants({ size: 'sm', variant: 'outline' })}
+                >
+                  <Download className="mr-1.5 size-4" />
+                  Descargar hoja de financiamiento
+                </a>
+              )}
+            </div>
+            {result.financingDownloadUrl && (
+              <p className="text-muted-foreground text-[11px]">
+                Son dos archivos: la propuesta en Word y la hoja de
+                financiamiento en PDF. Envíalos juntos al cliente.
+              </p>
+            )}
           </div>
         )}
       </CardContent>

@@ -269,6 +269,81 @@ describe('parseReceiptJson', () => {
     )!
     expect(misread.promedio_bimestral_kwh).toBe(1411)
   })
+
+  it('picks the recent year out of a twelve-row historial', () => {
+    // Moisés Gómez's bill, the second live misread. Page 2 prints ELEVEN
+    // prior bimesters and the model used to be asked to pick "the 5 most
+    // recent" out of them on its own. The quote went out at 1,090 kWh —
+    // 8 paneles, $75,500 — when the current bimester plus the five rows
+    // that actually precede it average 864, which is 6 paneles and
+    // $62,400. Now the dates decide, so the extra rows are inert.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 1574,
+        periodo_actual: '12 JUN 26 - 13 AGO 26',
+        historial_bimestres_kwh: [
+          1076, 446, 459, 643, 984, 1043, 1241, 1157, 860, 1397, 1450,
+        ],
+        historial_periodos: [
+          'del 10 ABR 26 al 12 JUN 26',
+          'del 10 FEB 26 al 10 ABR 26',
+          'del 11 DIC 25 al 10 FEB 26',
+          'del 10 OCT 25 al 11 DIC 25',
+          'del 12 AGO 25 al 10 OCT 25',
+          'del 11 JUN 25 al 12 AGO 25',
+          'del 09 ABR 25 al 11 JUN 25',
+          'del 07 FEB 25 al 09 ABR 25',
+          'del 11 DIC 24 al 07 FEB 25',
+          'del 10 OCT 24 al 11 DIC 24',
+          'del 12 AGO 24 al 10 OCT 24',
+        ],
+        tarifa: '1D',
+        ciudad: 'CANCUN,Q.R.',
+        advertencias: '',
+      }),
+    )!
+    expect(r.historial_bimestres_kwh).toEqual([1076, 446, 459, 643, 984])
+    expect(r.cantidad_periodos_usados).toBe(6)
+    expect(r.promedio_bimestral_kwh).toBe(864)
+    expect(r.promedio_bimestral_kwh).not.toBe(1090)
+  })
+
+  it('still reads a historial the model reports out of order', () => {
+    // The failure mode the dates exist to absorb. Same eleven rows,
+    // shuffled: the answer must not move.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 1574,
+        periodo_actual: '12 JUN 26 - 13 AGO 26',
+        historial_bimestres_kwh: [1450, 860, 984, 1076, 1241, 459, 446, 643],
+        historial_periodos: [
+          'del 12 AGO 24 al 10 OCT 24',
+          'del 11 DIC 24 al 07 FEB 25',
+          'del 12 AGO 25 al 10 OCT 25',
+          'del 10 ABR 26 al 12 JUN 26',
+          'del 09 ABR 25 al 11 JUN 25',
+          'del 11 DIC 25 al 10 FEB 26',
+          'del 10 FEB 26 al 10 ABR 26',
+          'del 10 OCT 25 al 11 DIC 25',
+        ],
+      }),
+    )!
+    expect(r.historial_bimestres_kwh).toEqual([1076, 446, 459, 643, 984])
+    expect(r.promedio_bimestral_kwh).toBe(864)
+  })
+
+  it('falls back to the reported order when the dates are missing', () => {
+    // Every reading taken before this field existed, and every one typed
+    // by hand in the Cotizador. Must behave exactly as it always did.
+    const r = parseReceiptJson(
+      JSON.stringify({
+        consumo_periodo_actual_kwh: 728,
+        historial_bimestres_kwh: [946, 1202, 1270, 1701, 1422, 999, 888],
+      }),
+    )!
+    expect(r.historial_bimestres_kwh).toEqual([946, 1202, 1270, 1701, 1422])
+    expect(r.promedio_bimestral_kwh).toBe(1212)
+  })
 })
 
 describe('parseReceiptJson — importes en pesos', () => {
@@ -491,6 +566,40 @@ describe('formatReceiptNote — the review gate', () => {
     )
     expect(note).not.toContain('NO des precio')
     expect(note).toContain('Usa el promedio contra tu tabla')
+  })
+
+  // The mirror of the vacancy case. A bimester towering over the rest
+  // drags the average UP a tier, so the error is billed to the customer
+  // rather than absorbed by the company — the one direction the old
+  // check could not see.
+  const inflado = () =>
+    extraction({
+      consumo_periodo_actual_kwh: 880,
+      historial_bimestres_kwh: [900, 850, 800, 950, 5200],
+      cantidad_periodos_usados: 6,
+      promedio_bimestral_kwh: 1597,
+      costo_periodo_mxn: 3611.16,
+      tarifa: '1D',
+    })
+
+  it('orders the bot to ask, and not to quote, on an inflated bimester', () => {
+    const note = formatReceiptNote(inflado())
+    expect(note).toContain('consumo_irregular_alto')
+    expect(note).toContain('5200 kWh')
+    expect(note).toContain('NO des precio')
+    // The low-side copy must not leak into the high-side branch: telling
+    // this customer their house looks empty is nonsense.
+    expect(note).not.toContain('desocupada')
+  })
+
+  it('withholds the projection on an inflated bimester too', () => {
+    const note = formatReceiptNote(inflado())
+    expect(note).not.toContain('proyeccion_25_anios')
+    expect(note).not.toContain('se_paga_solo_en')
+  })
+
+  it('still answers whatever else the customer asked', () => {
+    expect(formatReceiptNote(inflado())).toContain('financiamiento')
   })
 })
 

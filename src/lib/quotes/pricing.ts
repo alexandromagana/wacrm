@@ -98,12 +98,39 @@ export function isPlausibleAverage(kwh: number): boolean {
  */
 export const ANOMALY_FLOOR_RATIO = 0.3
 
+/**
+ * The mirror of `ANOMALY_FLOOR_RATIO`: a bimester this far ABOVE the
+ * window's median is not a hot summer, it is a number that was read
+ * wrong.
+ *
+ * The floor catches a house that was empty. This catches the failure
+ * that costs the customer money instead of the company: one inflated
+ * figure drags the average up a tier or two, and the customer is quoted
+ * a system larger and dearer than their roof needs. `EXTRACTION_PROMPT`
+ * already tells the model to suspect itself past 3x the historial max —
+ * the accumulated meter reading misread as a period — but that is the
+ * model policing itself. This is the same instinct enforced in code,
+ * where it cannot be forgotten mid-response.
+ *
+ * 4.0 rather than a naive mirror of the floor (1/0.3 = 3.33), because
+ * the cost of the two mistakes is not symmetric and the false-positive
+ * history here is real (see the floor's note, and commit d534877). Every
+ * legitimate bill on file peaks well under it: the vacancy fixture at
+ * 2.32x median is the worst, the ordinary Cancún swing 1.42x, and the
+ * low-baseline house that broke the old floor rule 1.85x. 4.0 leaves the
+ * highest real reading 1.7x of headroom while still catching the
+ * order-of-magnitude slips this exists for.
+ */
+export const ANOMALY_CEILING_RATIO = 4
+
 /** Why a reading is priced but not safe to put on a PDF unattended. */
 export type ReviewReason =
   /** The bill's own bimester never made it into the average. */
   | 'missing_current_period'
   /** The window mixes occupied and unoccupied periods. */
   | 'anomalous_history'
+  /** One bimester towers over the rest — almost always a misread. */
+  | 'anomalous_history_high'
 
 /**
  * Signals the pricing table cannot see for itself. Optional: callers
@@ -149,6 +176,29 @@ export function findAnomalousPeriod(
   if (middle <= 0) return null
   const lowest = Math.min(...values)
   return lowest < middle * ANOMALY_FLOOR_RATIO ? lowest : null
+}
+
+/**
+ * The highest reading in the window when it towers far enough over the
+ * window's own median to mean it was misread, else null.
+ *
+ * Same shape and the same n>=2 guard as `findAnomalousPeriod`, and the
+ * same known dead spot at exactly two periods: the max of two positive
+ * numbers is always under twice their mean, so a two-period window can
+ * never trip a 4x ceiling. That is accepted rather than special-cased —
+ * two periods is already `low_confidence` territory, and inventing a
+ * tighter rule for the case with the least evidence behind it is how
+ * false positives get made.
+ */
+export function findAnomalousHighPeriod(
+  periods: readonly number[],
+): number | null {
+  const values = periods.filter((v) => Number.isFinite(v) && v >= 0)
+  if (values.length < 2) return null
+  const middle = median(values)
+  if (middle <= 0) return null
+  const highest = Math.max(...values)
+  return highest > middle * ANOMALY_CEILING_RATIO ? highest : null
 }
 
 /**
@@ -246,6 +296,20 @@ export function resolveQuote(
         tier,
         reason: 'anomalous_history',
         outlierKwh: outlier,
+      }
+    }
+    // After the floor, deliberately. A window can trip both, and the
+    // empty-house question is the one a person can actually answer —
+    // "was the house occupied?" has a yes or no, where "is this figure
+    // real?" sends them back to the paper bill either way.
+    const high = findAnomalousHighPeriod(evidence.periods)
+    if (high != null) {
+      return {
+        kind: 'needs_review',
+        kwh,
+        tier,
+        reason: 'anomalous_history_high',
+        outlierKwh: high,
       }
     }
   }

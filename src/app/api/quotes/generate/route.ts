@@ -40,6 +40,10 @@ import {
 } from '@/lib/quotes/project-types';
 import { QUOTE_ASSETS_BUCKET, templateMimeType } from '@/lib/quotes/templates';
 import { convertPptxToPdf, PptxConvertError } from '@/lib/quotes/pptx-to-pdf';
+import {
+  appendFinancingAnnex,
+  extractFinancingAnnexPage,
+} from '@/lib/quotes/financing-annex';
 import { uploadServerMedia } from '@/lib/storage/upload-server';
 import type {
   QuoteProjectType,
@@ -125,9 +129,13 @@ function explainRefusal(
     case 'low_confidence':
       return 'Solo se pudo leer un periodo. Un promedio bimestral necesita al menos dos para no sobre o subdimensionar el sistema. Sube la página del historial de consumo, o captúralo a mano abajo.';
     case 'needs_review':
-      return reason === 'missing_current_period'
-        ? 'No se leyó el consumo del bimestre actual, así que el promedio salió solo del historial. Revísalo abajo y complétalo antes de cotizar.'
-        : `El historial trae un bimestre de ${outlierKwh} kWh, muy por debajo del resto (casa desocupada o en obra). Confírmalo con el cliente, o cotiza con estos datos si así es su consumo.`;
+      if (reason === 'missing_current_period') {
+        return 'No se leyó el consumo del bimestre actual, así que el promedio salió solo del historial. Revísalo abajo y complétalo antes de cotizar.';
+      }
+      if (reason === 'anomalous_history_high') {
+        return `El historial trae un bimestre de ${outlierKwh} kWh, muy por encima del resto (un pico real, o un número mal leído). Confírmalo con el cliente, o cotiza con estos datos si así es su consumo.`;
+      }
+      return `El historial trae un bimestre de ${outlierKwh} kWh, muy por debajo del resto (casa desocupada o en obra). Confírmalo con el cliente, o cotiza con estos datos si así es su consumo.`;
     default:
       return 'No se pudo cotizar con este recibo.';
   }
@@ -435,7 +443,9 @@ export async function POST(request: Request) {
       warnings.push(
         resolution.reason === 'missing_current_period'
           ? 'Se cotizó sin el consumo del bimestre actual: el promedio salió solo del historial.'
-          : `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por debajo del resto.`
+          : resolution.reason === 'anomalous_history_high'
+            ? `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por encima del resto.`
+            : `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por debajo del resto.`
       );
       quote = resolution;
     }
@@ -579,6 +589,44 @@ export async function POST(request: Request) {
       }
     }
 
+    // The financing annex, when the user asked for it. Opt-in rather
+    // than automatic like the bot's: a template that already carries its
+    // own financing section would otherwise quote the instalments twice.
+    //
+    // Where it lands depends on what we can deliver. A .pptx is already
+    // one converted PDF, so the annex becomes its last page and the
+    // customer gets a single document. A .docx has no in-process
+    // converter (see below), so it travels beside it as its own file.
+    const includeFinancing = form.get('include_financing') === 'true';
+    let financingOutput: Buffer | null = null;
+    if (includeFinancing) {
+      try {
+        if (extension === 'pdf') {
+          output = Buffer.from(await appendFinancingAnnex(output, values));
+        } else {
+          financingOutput = Buffer.from(
+            await extractFinancingAnnexPage(values)
+          );
+        }
+      } catch (err) {
+        console.error('[quotes/generate] financing annex failed:', err);
+        return NextResponse.json(
+          { error: 'No se pudo generar la hoja de financiamiento.' },
+          { status: 500 }
+        );
+      }
+      // The annex is priced off the tier alone, so it comes out blank
+      // only when the tier itself has no price — reachable here, unlike
+      // in the bot, because the rate table is the account's own and the
+      // zero-price check only runs in the browser. Said out loud rather
+      // than blocked: same call as the savings projection above.
+      if (!values.enganche) {
+        warnings.push(
+          'La hoja de financiamiento salió sin montos: el rango de precio con el que se cotizó no permite calcularlos.'
+        );
+      }
+    }
+
     const mimeType = templateMimeType(extension);
     const safeName = clientName.replace(/[^\p{L}\p{N} .-]/gu, '');
     const { publicUrl, path } = await uploadServerMedia({
@@ -589,6 +637,22 @@ export async function POST(request: Request) {
       fileName: `${folio} ${safeName}.${extension}`,
       contentType: mimeType,
     });
+
+    // The annex as its own download, for the .docx case above. Uploaded
+    // rather than streamed back so both files are fetched the same way,
+    // and so the link survives a page reload like the proposal's does.
+    let financingDownloadUrl: string | null = null;
+    if (financingOutput) {
+      const uploaded = await uploadServerMedia({
+        db: supabase,
+        bucket: QUOTE_ASSETS_BUCKET,
+        accountId,
+        bytes: financingOutput,
+        fileName: `${folio} ${safeName} - Financiamiento.pdf`,
+        contentType: templateMimeType('pdf'),
+      });
+      financingDownloadUrl = uploaded.publicUrl;
+    }
 
     // Audit copy of what was read. Best effort — a failure here must not
     // cost the user the document they just waited for. There is nothing
@@ -658,6 +722,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         download_url: publicUrl,
+        financing_download_url: financingDownloadUrl,
         folio,
         warning:
           'La cotización se generó, pero no se pudo guardar en el historial.',
@@ -668,6 +733,7 @@ export async function POST(request: Request) {
       success: true,
       quote: created,
       download_url: publicUrl,
+      financing_download_url: financingDownloadUrl,
       folio,
       warning: warnings.length > 0 ? warnings.join(' ') : null,
     });
