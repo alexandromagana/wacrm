@@ -182,7 +182,7 @@ export default function BroadcastsPage() {
 
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-foreground">{t('title')}</h1>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t('subtitle')}
           </p>

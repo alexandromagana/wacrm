@@ -163,9 +163,9 @@ export default function NotificationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Notifications</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-4xl font-bold tracking-tight text-foreground">Notifications</h1>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             Conversations other teammates assign to you show up here.
           </p>

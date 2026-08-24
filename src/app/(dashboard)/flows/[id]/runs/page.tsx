@@ -184,7 +184,7 @@ export default function FlowRunsPage() {
         <ArrowLeft className="h-3 w-3" />
         {flow.name}
       </button>
-      <h1 className="text-xl font-semibold text-foreground">{t("title")}</h1>
+      <h1 className="text-4xl font-semibold tracking-tight text-foreground">{t("title")}</h1>
       <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
         {t("description")}
       </p>

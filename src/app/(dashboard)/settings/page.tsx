@@ -72,7 +72,7 @@ export default function SettingsPage() {
   return (
     <div>
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">
+        <h1 className="text-4xl font-bold tracking-tight text-foreground">
           {t('pageTitle')}
         </h1>
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">

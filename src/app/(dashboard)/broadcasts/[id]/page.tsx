@@ -287,7 +287,7 @@ export default function BroadcastDetailPage() {
           </Button>
           <div>
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold text-foreground">{broadcast.name}</h1>
+              <h1 className="text-4xl font-bold tracking-tight text-foreground">{broadcast.name}</h1>
               <span
                 className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${status.classes}`}
               >

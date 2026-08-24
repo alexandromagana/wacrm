@@ -142,7 +142,7 @@ export default function DashboardPage() {
           their own the actions cost 62px of height plus a gap. */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-foreground">{t('title')}</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-foreground">{t('title')}</h1>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
             {t('description')}
           </p>

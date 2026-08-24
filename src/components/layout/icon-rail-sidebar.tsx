@@ -16,6 +16,7 @@ import {
 } from "@/components/layout/nav-items";
 import type { AccountRole } from "@/lib/auth/roles";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ModeToggle } from "@/components/layout/mode-toggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -185,6 +186,11 @@ export function IconRailSidebar({
               label={t(item.labelKey as string)}
             />
           ))}
+
+          {/* The theme toggle used to live in the top bar. That bar is
+              gone from lg up (everything else on it duplicated this
+              rail), so it lands here beside the account menu. */}
+          <ModeToggle />
 
           <div className="my-1 h-px w-8 bg-rail-border" />
 
