@@ -324,6 +324,9 @@ export async function dispatchInboundToAiReply(
           config,
           accessToken: accessToken!,
           mediaIds: receiptMediaIds!,
+          // Every read leaves its raw response behind, tied to this
+          // thread. A quote nobody can explain later is the reason.
+          audit: { accountId, conversationId, contactId },
           // Bills read on an earlier turn are already in the batch;
           // re-reading one costs a vision call and invites two readings
           // of the same bill to disagree.

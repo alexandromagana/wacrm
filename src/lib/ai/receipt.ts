@@ -19,6 +19,12 @@ import {
   selectRecentHistorial,
   type HistorialCandidate,
 } from './receipt-periods'
+// Forensics: what the model actually said, kept so a bad reading can be
+// explained after the fact rather than reasoned about from the bill.
+import {
+  logReceiptReading,
+  type ReceiptReadSource,
+} from './receipt-audit'
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
 import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
 
@@ -662,6 +668,7 @@ export function formatReceiptNote(
 export async function extractReceiptFromFiles(
   config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>,
   files: MediaFile[],
+  audit?: ReceiptAuditContext,
 ): Promise<ReceiptExtraction | null> {
   if (files.length === 0) return null
 
@@ -669,9 +676,44 @@ export async function extractReceiptFromFiles(
     config.provider === 'anthropic'
       ? await visionAnthropic(config, files)
       : await visionOpenAi(config, files)
-  if (!raw) return null
+  const extraction = raw ? parseReceiptJson(raw) : null
 
-  return parseReceiptJson(raw)
+  // Logged before the return, and on every outcome that reached the
+  // provider — a response that would not parse is the case most worth
+  // having afterwards, and returning null here used to leave nothing
+  // behind at all. Fire-and-forget: `logReceiptReading` owns its errors,
+  // and a customer waiting on a quote does not wait on an audit row.
+  if (audit) {
+    void logReceiptReading({
+      accountId: audit.accountId,
+      conversationId: audit.conversationId,
+      contactId: audit.contactId,
+      source: audit.source,
+      provider: config.provider,
+      model: config.visionModel,
+      rawResponse: raw,
+      extraction,
+      mediaIds: audit.mediaIds,
+    })
+  }
+
+  return extraction
+}
+
+/**
+ * Who a receipt read belongs to, for the forensic log.
+ *
+ * Optional at every call site: passing nothing reads the bill exactly as
+ * before and records nothing, which is what the unit tests do. Both real
+ * callers pass it — the media ids come from the group actually read, so
+ * a row can be traced back to the images the customer sent.
+ */
+export interface ReceiptAuditContext {
+  accountId: string
+  source: ReceiptReadSource
+  conversationId?: string | null
+  contactId?: string | null
+  mediaIds?: readonly string[]
 }
 
 /** One extracted bill, tied back to the media it was read from. */
@@ -746,8 +788,11 @@ export async function extractReceipts(args: {
    *  re-extracted — a second read of one bill costs tokens and is not
    *  obliged to agree with the first. */
   skipMediaIds?: readonly string[]
+  /** Account/conversation this read belongs to, for the forensic log.
+   *  Omitted only by tests. */
+  audit?: Omit<ReceiptAuditContext, 'mediaIds' | 'source'>
 }): Promise<ReceiptReading[]> {
-  const { config, accessToken, mediaIds, skipMediaIds } = args
+  const { config, accessToken, mediaIds, skipMediaIds, audit } = args
   const skip = new Set(skipMediaIds ?? [])
   const pending = mediaIds.filter((id) => !skip.has(id))
   if (pending.length === 0) return []
@@ -786,7 +831,17 @@ export async function extractReceipts(args: {
       // Per-group try/catch: one unreadable bill out of three must not
       // discard the two that read fine.
       try {
-        const extraction = await extractReceiptFromFiles(config, group.files)
+        const extraction = await extractReceiptFromFiles(
+          config,
+          group.files,
+          audit && {
+            ...audit,
+            source: 'auto_reply',
+            // This group's own media, not the whole turn's: one row per
+            // bill is what makes a multi-meter read auditable.
+            mediaIds: group.mediaIds,
+          },
+        )
         if (extraction) readings.push({ extraction, mediaIds: group.mediaIds })
       } catch (err) {
         console.error('[ai receipt] one receipt failed to extract:', err)

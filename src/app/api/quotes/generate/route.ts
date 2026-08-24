@@ -371,7 +371,13 @@ export async function POST(request: Request) {
         // than the bot's swallow-everything extractReceipts.
         let extracted;
         try {
-          extracted = await extractReceiptFromFiles(aiConfig, files);
+          extracted = await extractReceiptFromFiles(aiConfig, files, {
+            accountId,
+            source: 'cotizador',
+            // No conversation here, and the contact is null when the
+            // quote is being drawn up before one exists.
+            contactId,
+          });
         } catch (err) {
           console.error('[quotes/generate] vision call failed:', err);
           return NextResponse.json(
