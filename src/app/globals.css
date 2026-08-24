@@ -2,7 +2,12 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* Dark mode is driven by `data-mode` on <html> (set by the boot script
+ * in layout.tsx and by use-theme.tsx), never by a `.dark` class. The
+ * stock shadcn variant only matches `.dark *`, which made every
+ * `dark:*` utility in the codebase inert. `.dark *` is kept so any
+ * component pasted in from the shadcn CLI keeps working. */
+@custom-variant dark (&:is(.dark *, [data-mode="dark"] *));
 
 @theme inline {
   --color-background: var(--background);
