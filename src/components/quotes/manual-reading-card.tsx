@@ -151,7 +151,7 @@ export function ManualReadingCard({
                 id={`consumo-${index}`}
                 inputMode="decimal"
                 disabled={busy}
-                placeholder="1611"
+                placeholder="Ej. 1611"
                 value={numberText(reading.consumo_periodo_actual_kwh)}
                 onChange={(e) =>
                   update(index, {
@@ -173,6 +173,7 @@ export function ManualReadingCard({
                     <Input
                       inputMode="decimal"
                       disabled={busy}
+                      placeholder="kWh"
                       value={numberText(value)}
                       onChange={(e) =>
                         setHistorial(index, slot, parseField(e.target.value))
@@ -225,7 +226,7 @@ export function ManualReadingCard({
                   id={`importe-${index}`}
                   inputMode="decimal"
                   disabled={busy}
-                  placeholder="3634.31"
+                  placeholder="Ej. 3634.31"
                   value={numberText(reading.importe_periodo_mxn)}
                   onChange={(e) =>
                     update(index, {
@@ -245,7 +246,7 @@ export function ManualReadingCard({
                   id={`dap-${index}`}
                   inputMode="decimal"
                   disabled={busy}
-                  placeholder="156.65"
+                  placeholder="Ej. 156.65"
                   value={numberText(reading.importe_dap_mxn)}
                   onChange={(e) =>
                     update(index, {
@@ -276,7 +277,7 @@ export function ManualReadingCard({
                 <Input
                   id={`tarifa-${index}`}
                   disabled={busy}
-                  placeholder="1D"
+                  placeholder="Ej. 1D"
                   value={reading.tarifa ?? ''}
                   onChange={(e) =>
                     update(index, { tarifa: e.target.value || null })
@@ -293,7 +294,7 @@ export function ManualReadingCard({
                 <Input
                   id={`ciudad-${index}`}
                   disabled={busy}
-                  placeholder="Cancún"
+                  placeholder="Ej. Cancún"
                   value={reading.ciudad ?? ''}
                   onChange={(e) =>
                     update(index, { ciudad: e.target.value || null })

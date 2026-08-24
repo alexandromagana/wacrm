@@ -139,7 +139,7 @@ export function TemplateUploadDialog({ open, onOpenChange, onUploaded }: Props) 
             <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Propuesta residencial"
+              placeholder="Ej. Propuesta residencial"
             />
           </div>
 

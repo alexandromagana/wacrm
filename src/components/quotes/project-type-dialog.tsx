@@ -155,7 +155,7 @@ export function ProjectTypeDialog({
               <Input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Comercial PDBT"
+                placeholder="Ej. Comercial PDBT"
               />
             </div>
             <div className="space-y-2">
