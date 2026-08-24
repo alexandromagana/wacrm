@@ -2,6 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import {
+  contactSearchFilter,
+  type ContactSearchColumn,
+} from '@/lib/contacts/search';
 import { toast } from 'sonner';
 import type { Contact, Tag, ContactTag } from '@/types';
 import { Button } from '@/components/ui/button';
@@ -59,6 +63,15 @@ import { GatedButton } from '@/components/ui/gated-button';
 import { useTranslations } from 'next-intl';
 
 const PAGE_SIZE = 25;
+
+// What the search box looks through. Wider than the quote generator's
+// picker, which only offers name and phone, because this roster is
+// where you go to find a contact by whatever you happen to remember.
+const CONTACT_SEARCH_COLUMNS: readonly ContactSearchColumn[] = [
+  'name',
+  'phone',
+  'email',
+];
 
 // Custom fields surfaced as roster columns. Names must match what the
 // automatic intakes create: the receipt reader (lib/ai/receipt.ts) and
@@ -193,10 +206,8 @@ export default function ContactsPage() {
         .order('created_at', { ascending: false })
         .range(from, to);
 
-      if (term) {
-        const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
-      }
+      const searchFilter = contactSearchFilter(term, CONTACT_SEARCH_COLUMNS);
+      if (searchFilter) query = query.or(searchFilter);
 
       const { data, count: exactCount, error } = await query;
       if (seq !== fetchSeq.current) return; // superseded by a newer fetch
@@ -214,10 +225,8 @@ export default function ContactsPage() {
         .order('created_at', { ascending: false })
         .range(from, to);
 
-      if (term) {
-        const like = `%${term}%`;
-        query = query.or(`name.ilike.${like},phone.ilike.${like},email.ilike.${like}`);
-      }
+      const searchFilter = contactSearchFilter(term, CONTACT_SEARCH_COLUMNS);
+      if (searchFilter) query = query.or(searchFilter);
 
       const { data, count: exactCount, error } = await query;
       if (seq !== fetchSeq.current) return; // superseded by a newer fetch

@@ -26,12 +26,21 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from '@/components/ui/combobox';
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { contactSearchFilter } from '@/lib/contacts/search';
 import { createClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils';
 import { addFilesToMeter } from './meter-files';
@@ -54,6 +63,12 @@ interface ContactOption {
   phone: string;
 }
 
+/** What the picker shows and selects. Base UI reads both fields. */
+interface ContactItem {
+  value: string;
+  label: string;
+}
+
 interface Result {
   downloadUrl: string;
   /** The annex as its own file, when the template could not absorb it. */
@@ -68,6 +83,18 @@ const MAX_RECEIPT_FILES = 3;
 /** Meters one quote may cover. Mirrors the route's own ceiling. */
 const MAX_METERS = 4;
 
+/** Contacts pulled up front for the picker to filter without a network hop. */
+const CONTACT_PRELOAD = 500;
+
+/** Rows one server-side contact search brings back. */
+const CONTACT_SEARCH_LIMIT = 50;
+
+/** Letters before a server-side search is worth firing. */
+const CONTACT_SEARCH_MIN_CHARS = 2;
+
+/** Quiet time after the last keystroke before the query goes out. */
+const CONTACT_SEARCH_DEBOUNCE_MS = 250;
+
 export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const supabase = createClient();
   // One picker per meter, so a click lands in the group it belongs to.
@@ -76,6 +103,12 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   const [projectTypes, setProjectTypes] = useState<QuoteProjectType[]>([]);
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
   const [contacts, setContacts] = useState<ContactOption[]>([]);
+  /** How many contacts the account has, preloaded or not. */
+  const [contactTotal, setContactTotal] = useState(0);
+  /** Hits from a server-side search, for the book too big to preload. */
+  const [remoteContacts, setRemoteContacts] = useState<ContactOption[]>([]);
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactSearching, setContactSearching] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [projectTypeId, setProjectTypeId] = useState('');
@@ -125,13 +158,14 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
         fetch('/api/quotes/templates').then((r) => r.json()),
         supabase
           .from('contacts')
-          .select('id, name, phone')
+          .select('id, name, phone', { count: 'exact' })
           .order('name')
-          .limit(500),
+          .limit(CONTACT_PRELOAD),
       ]);
       setProjectTypes(typesRes?.projectTypes ?? []);
       setTemplates(templatesRes?.templates ?? []);
       setContacts((contactsRes.data as ContactOption[] | null) ?? []);
+      setContactTotal(contactsRes.count ?? 0);
     } finally {
       setLoading(false);
     }
@@ -143,20 +177,79 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
   }, [load]);
 
   /**
-   * Base UI reads the trigger's label off the root's `items`, not off the
-   * rendered options — without it the trigger prints the raw value, which
-   * here is a UUID. The empty value stands for "no contact": it leaves the
-   * trigger showing its placeholder.
+   * Under the preload ceiling the whole address book is in memory and
+   * filtering it is instant, so the network stays out of it. Over the
+   * ceiling the alphabet is cut off somewhere in the middle and every
+   * contact past the cut would be invisible to a local filter — so the
+   * query goes to the server instead.
    */
-  const contactItems = useMemo(
-    () => [
-      { value: '', label: 'Sin contacto' },
-      ...contacts.map((contact) => ({
+  const contactsTruncated = contactTotal > contacts.length;
+
+  useEffect(() => {
+    const term = contactQuery.trim();
+    const filter =
+      contactsTruncated && term.length >= CONTACT_SEARCH_MIN_CHARS
+        ? contactSearchFilter(term)
+        : null;
+    // Set here rather than in the timeout so the list says "Buscando…"
+    // for the whole wait, including the debounce — otherwise it claims
+    // there are no matches during the quarter second before we look.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setContactSearching(filter !== null);
+    if (!filter) {
+      setRemoteContacts((prev) => (prev.length === 0 ? prev : []));
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      const { data } = await supabase
+        .from('contacts')
+        .select('id, name, phone')
+        .or(filter)
+        .order('name')
+        .limit(CONTACT_SEARCH_LIMIT);
+      if (cancelled) return;
+      setRemoteContacts((data as ContactOption[] | null) ?? []);
+      setContactSearching(false);
+    }, CONTACT_SEARCH_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [contactQuery, contactsTruncated, supabase]);
+
+  /**
+   * The book the picker searches: what was preloaded, plus whatever the
+   * server turned up for the current query. Deduped by id — a remote hit
+   * is usually already in the preload.
+   */
+  const allContacts = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: ContactOption[] = [];
+    for (const contact of [...contacts, ...remoteContacts]) {
+      if (seen.has(contact.id)) continue;
+      seen.add(contact.id);
+      merged.push(contact);
+    }
+    return merged;
+  }, [contacts, remoteContacts]);
+
+  /**
+   * A contact saved under just a phone number still needs something to
+   * show, so the number stands in for the name it never had.
+   */
+  const contactItems = useMemo<ContactItem[]>(
+    () =>
+      allContacts.map((contact) => ({
         value: contact.id,
         label: contact.name || contact.phone,
       })),
-    ],
-    [contacts]
+    [allContacts]
+  );
+
+  const selectedContact = useMemo(
+    () => contactItems.find((item) => item.value === contactId) ?? null,
+    [contactItems, contactId]
   );
 
   const projectTypeItems = useMemo(
@@ -190,7 +283,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
    */
   function pickContact(id: string) {
     setContactId(id);
-    const picked = contacts.find((c) => c.id === id);
+    const picked = allContacts.find((c) => c.id === id);
     // Only overwrite the name when the contact has one to offer —
     // clearing the picker, or choosing a contact saved under just a
     // phone number, leaves whatever was typed alone.
@@ -361,26 +454,46 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <Label className="text-muted-foreground">
+            <Label htmlFor="quote-contact" className="text-muted-foreground">
               Contacto{' '}
               <span className="text-muted-foreground/70">(opcional)</span>
             </Label>
-            <Select
+            {/* A picker you type into, not one you scroll: past a few
+                dozen contacts, hunting alphabetically for the right
+                Pedro costs more than typing "ped". */}
+            <Combobox
               items={contactItems}
-              value={contactId}
-              onValueChange={(v) => pickContact(v ?? '')}
+              value={selectedContact}
+              onValueChange={(item: ContactItem | null) =>
+                pickContact(item?.value ?? '')
+              }
+              onInputValueChange={(value) => setContactQuery(value)}
+              isItemEqualToValue={(item: ContactItem, value: ContactItem) =>
+                item?.value === value?.value
+              }
             >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder="Sin contacto" />
-              </SelectTrigger>
-              <SelectContent>
-                {contactItems.map((item) => (
-                  <SelectItem key={item.value} value={item.value}>
-                    {item.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              <ComboboxInput
+                id="quote-contact"
+                placeholder="Busca por nombre o teléfono"
+                autoComplete="off"
+                clearLabel="Quitar el contacto"
+                openLabel="Ver los contactos"
+              />
+              <ComboboxContent>
+                <ComboboxEmpty>
+                  {contactSearching
+                    ? 'Buscando…'
+                    : 'Ningún contacto coincide.'}
+                </ComboboxEmpty>
+                <ComboboxList>
+                  {(item: ContactItem) => (
+                    <ComboboxItem key={item.value} value={item}>
+                      {item.label}
+                    </ComboboxItem>
+                  )}
+                </ComboboxList>
+              </ComboboxContent>
+            </Combobox>
           </div>
 
           <div className="space-y-2">
