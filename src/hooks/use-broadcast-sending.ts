@@ -4,6 +4,29 @@ import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Contact, MessageTemplate } from '@/types';
+import { checkBatchTemplateSendRisk } from '@/lib/whatsapp/template-send-risk';
+
+/**
+ * Thrown instead of proceeding when the audience doesn't match the tag
+ * this template's own automations would have required (2026-08-24
+ * audit). Not a hard block — `createAndSendBroadcast` called again with
+ * `confirmRisk: true` sends anyway.
+ */
+export class BroadcastRiskError extends Error {
+  riskyCount: number;
+  totalCount: number;
+  requiredTagName: string;
+
+  constructor(args: { riskyCount: number; totalCount: number; requiredTagName: string }) {
+    super(
+      `${args.riskyCount} de ${args.totalCount} destinatarios no tienen el tag "${args.requiredTagName}" que esta plantilla espera.`,
+    );
+    this.name = 'BroadcastRiskError';
+    this.riskyCount = args.riskyCount;
+    this.totalCount = args.totalCount;
+    this.requiredTagName = args.requiredTagName;
+  }
+}
 
 export type CustomFieldOperator = 'is' | 'is_not' | 'contains';
 
@@ -46,6 +69,9 @@ interface BroadcastPayload {
    * falls back to the template's stored URL only when this is empty.
    */
   headerMediaUrl?: string;
+  /** Set after the caller has already shown the risk warning and the
+   *  user chose to proceed anyway. */
+  confirmRisk?: boolean;
 }
 
 interface UseBroadcastSendingReturn {
@@ -349,6 +375,23 @@ export function useBroadcastSending(): UseBroadcastSendingReturn {
 
       if (contacts.length === 0) {
         throw new Error('No contacts found for this audience.');
+      }
+
+      // ── Step 1.5: Flag an audience mismatch before anything is
+      // persisted or sent ────────────────────────────────────────────
+      if (!payload.confirmRisk) {
+        const risk = await checkBatchTemplateSendRisk(supabase, {
+          accountId,
+          contactIds: contacts.map((c) => c.id),
+          templateName: payload.template.name,
+        });
+        if (risk) {
+          throw new BroadcastRiskError({
+            riskyCount: risk.riskyContactIds.size,
+            totalCount: contacts.length,
+            requiredTagName: risk.requiredTagName,
+          });
+        }
       }
 
       // ── Step 2: Create broadcast row ──────────────────────────────

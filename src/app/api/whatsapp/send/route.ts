@@ -10,6 +10,7 @@ import {
   validateSendMessageParams,
   SendMessageError,
 } from '@/lib/whatsapp/send-message'
+import { checkTemplateSendRisk } from '@/lib/whatsapp/template-send-risk'
 
 // The dashboard's outbound-send endpoint. It owns auth, per-user rate
 // limiting, and the two ways the UI targets a thread — an existing
@@ -77,6 +78,7 @@ export async function POST(request: Request) {
       template_message_params,
       interactive_payload,
       reply_to_message_id,
+      confirm_risk,
     } = body
 
     if ((!conversationIdInput && !contact_id) || !message_type) {
@@ -112,11 +114,12 @@ export async function POST(request: Request) {
     // contact so a business-initiated template send (Contact detail view)
     // reuses the shared send core below.
     let conversationId: string | null = null
+    let resolvedContactId: string | null = null
 
     if (conversationIdInput) {
       const { data, error: convError } = await supabase
         .from('conversations')
-        .select('id')
+        .select('id, contact_id')
         .eq('id', conversationIdInput)
         .eq('account_id', accountId)
         .single()
@@ -128,6 +131,7 @@ export async function POST(request: Request) {
         )
       }
       conversationId = data.id
+      resolvedContactId = data.contact_id
     } else {
       // contact_id path: verify the contact is in this account first so a
       // caller can't open a conversation against someone else's contact.
@@ -158,6 +162,7 @@ export async function POST(request: Request) {
         )
       }
       conversationId = resolved
+      resolvedContactId = contact_id
     }
 
     if (!conversationId) {
@@ -165,6 +170,25 @@ export async function POST(request: Request) {
         { error: 'Conversation not found' },
         { status: 404 }
       )
+    }
+
+    // Manual sends bypass every automation gate, which is exactly how a
+    // contact ended up getting the same "seguimiento" template twice from
+    // two different code paths (2026-08-24 audit). Flag — don't block —
+    // a template whose expected tag state doesn't match this contact, and
+    // require one extra confirmed request to actually send it.
+    if (message_type === 'template' && template_name && resolvedContactId && !confirm_risk) {
+      const risk = await checkTemplateSendRisk(supabase, {
+        accountId,
+        contactId: resolvedContactId,
+        templateName: template_name,
+      })
+      if (risk) {
+        return NextResponse.json(
+          { error: risk.reason, code: 'template_send_risk', reason: risk.reason },
+          { status: 409 },
+        )
+      }
     }
 
     // Delegate to the shared send core (validates, sends to Meta with

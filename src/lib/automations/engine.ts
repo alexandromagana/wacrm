@@ -512,11 +512,23 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       // ownership guard, since contact_tags carries no account_id.
       const cfg = step.step_config as TagStepConfig
       if (!args.contactId || !cfg.tag_id) throw new Error('remove_tag needs contact + tag_id')
-      await db
+      const { data: deleted } = await db
         .from('contact_tags')
         .delete()
         .eq('contact_id', args.contactId)
         .eq('tag_id', cfg.tag_id)
+        .select('id')
+      // Same "genuinely changed only" rule as add_tag: removing an
+      // already-absent tag is a no-op and must not fire, which is also
+      // what bounds remove_tag → tag_removed recursion.
+      if (deleted && deleted.length > 0) {
+        await runAutomationsForTrigger({
+          accountId: args.automation.account_id,
+          triggerType: 'tag_removed',
+          contactId: args.contactId,
+          context: { tag_id: cfg.tag_id },
+        })
+      }
       return `tag ${cfg.tag_id} removed`
     }
 
@@ -759,7 +771,7 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
   // Fire only for the configured tag. An automation saved without a
   // tag_id matches any tag (documented catch-all); a dispatch without a
   // tag in context can only match those catch-alls.
-  if (automation.trigger_type === 'tag_added') {
+  if (automation.trigger_type === 'tag_added' || automation.trigger_type === 'tag_removed') {
     const cfg = automation.trigger_config as TagTriggerConfig
     if (!cfg?.tag_id) return true
     return ctx?.tag_id === cfg.tag_id

@@ -141,10 +141,17 @@ const TRIGGER_OPTIONS: { value: AutomationTriggerType }[] = [
   { value: "new_contact_created" },
   { value: "conversation_assigned" },
   { value: "tag_added" },
+  { value: "tag_removed" },
   { value: "deal_stage_changed" },
   { value: "deal_won" },
   { value: "deal_lost" },
-  { value: "time_based" },
+  // "time_based" is deliberately not offered here: the engine has no
+  // dispatcher that reads trigger_config.schedule and fires it on a
+  // cron, so a saved time_based automation would either never run or
+  // (if ever invoked via the generic POST /api/automations/engine
+  // endpoint) fire unconditionally for every automation of this type,
+  // ignoring the configured schedule entirely. Re-add once a real
+  // scheduler backs it.
 ]
 
 function cid(): string {
@@ -911,7 +918,7 @@ function TriggerCard({
             {type === "interactive_reply" && (
               <InteractiveReplyConfig config={config} onChange={onConfigChange} t={t} />
             )}
-            {type === "tag_added" && (
+            {(type === "tag_added" || type === "tag_removed") && (
               <div>
                 <label className="mb-1 block text-xs font-medium text-muted-foreground">
                   Tag

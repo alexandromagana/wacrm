@@ -98,8 +98,7 @@ export async function DELETE(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'tag_id required' }, { status: 400 })
     }
 
-    // Ownership check mirrors POST; there is no tag_removed trigger, so
-    // the delete is plain bookkeeping.
+    // Ownership check mirrors POST.
     const { data: contact } = await supabase
       .from('contacts')
       .select('id')
@@ -110,17 +109,33 @@ export async function DELETE(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    const { error } = await supabase
+    const { data: deleted, error } = await supabase
       .from('contact_tags')
       .delete()
       .eq('contact_id', contactId)
       .eq('tag_id', tagId)
+      .select('id')
     if (error) {
       console.error('[contact tags] delete failed:', error)
       return NextResponse.json({ error: 'Failed to remove tag' }, { status: 500 })
     }
 
-    return NextResponse.json({ success: true })
+    const removed = (deleted ?? []).length > 0
+    if (removed) {
+      // Mirrors POST: fire only for a genuine removal, after the
+      // response is sent so a slow automation sequence can't hold up
+      // the tag toggle in the UI.
+      after(async () => {
+        await runAutomationsForTrigger({
+          accountId,
+          triggerType: 'tag_removed',
+          contactId,
+          context: { tag_id: tagId },
+        })
+      })
+    }
+
+    return NextResponse.json({ success: true, removed })
   } catch (err) {
     return toErrorResponse(err)
   }

@@ -15,6 +15,7 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import { checkBatchTemplateSendRisk } from '@/lib/whatsapp/template-send-risk'
 
 interface BroadcastResult {
   phone: string
@@ -103,6 +104,7 @@ export async function POST(request: Request) {
       template_name,
       template_language,
       template_params,
+      confirm_risk,
     } = body
 
     // Normalize to a list of {phone, params} regardless of shape.
@@ -132,6 +134,50 @@ export async function POST(request: Request) {
         { error: 'template_name is required' },
         { status: 400 }
       )
+    }
+
+    // Guards direct callers of this route (public API, MCP broadcast
+    // tool) — the dashboard wizard runs the same check earlier, against
+    // its already-resolved contact list, so it rarely reaches here with
+    // confirm_risk unset. Matches recipients to contacts by
+    // phone_normalized since this endpoint only knows phone numbers.
+    if (!confirm_risk) {
+      const sanitizedPhones = [
+        ...new Set(
+          recipients
+            .map((r) => sanitizePhoneForMeta(r.phone))
+            .filter((p) => isValidE164(p)),
+        ),
+      ]
+      if (sanitizedPhones.length > 0) {
+        const { data: matchedContacts } = await supabase
+          .from('contacts')
+          .select('id, phone_normalized')
+          .eq('account_id', accountId)
+          .in('phone_normalized', sanitizedPhones)
+        const contactIds = (matchedContacts ?? [])
+          .map((c) => c.id as string)
+          .filter(Boolean)
+
+        const risk = await checkBatchTemplateSendRisk(supabase, {
+          accountId,
+          contactIds,
+          templateName: template_name,
+        })
+        if (risk) {
+          const reason = `${risk.riskyContactIds.size} de ${recipients.length} destinatarios no tienen el tag "${risk.requiredTagName}" que esta plantilla espera.`
+          return NextResponse.json(
+            {
+              error: reason,
+              code: 'template_send_risk',
+              reason,
+              riskyCount: risk.riskyContactIds.size,
+              totalCount: recipients.length,
+            },
+            { status: 409 },
+          )
+        }
+      }
     }
 
     const { data: config, error: configError } = await supabase

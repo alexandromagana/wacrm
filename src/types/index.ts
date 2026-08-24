@@ -467,6 +467,11 @@ export type AutomationTriggerType =
   | 'new_contact_created'
   | 'conversation_assigned'
   | 'tag_added'
+  /** A tag was unlinked from the contact — `remove_tag` step, the
+   *  contact-detail UI, or `DELETE /api/contacts/[contactId]/tags`.
+   *  Lets a cleanup automation react directly instead of relying on
+   *  the next inbound message to re-check tag presence. */
+  | 'tag_removed'
   | 'time_based'
   /** Customer tapped a reply button / list row whose id matches; lets
    *  multi-step menus be chained across automations. */

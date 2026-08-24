@@ -10,9 +10,18 @@ import { Step1ChooseTemplate } from '@/components/broadcasts/step1-choose-templa
 import { Step2SelectAudience } from '@/components/broadcasts/step2-select-audience';
 import { Step3Personalize } from '@/components/broadcasts/step3-personalize';
 import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
-import { useBroadcastSending } from '@/hooks/use-broadcast-sending';
+import { useBroadcastSending, BroadcastRiskError } from '@/hooks/use-broadcast-sending';
 import { Check } from 'lucide-react';
 import { useTranslations } from 'next-intl';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 
 const steps = [
   { label: 'template', key: 'template' },
@@ -45,8 +54,9 @@ export default function NewBroadcastPage() {
   >({});
   const [headerMediaUrl, setHeaderMediaUrl] = useState('');
   const [name, setName] = useState('');
+  const [pendingRisk, setPendingRisk] = useState<BroadcastRiskError | null>(null);
 
-  async function handleSend() {
+  async function handleSend(confirmRisk: boolean = false) {
     if (!template) return;
 
     try {
@@ -62,9 +72,14 @@ export default function NewBroadcastPage() {
         },
         variables,
         headerMediaUrl,
+        confirmRisk,
       });
       router.push(`/broadcasts/${broadcastId}`);
     } catch (err) {
+      if (err instanceof BroadcastRiskError && !confirmRisk) {
+        setPendingRisk(err);
+        return;
+      }
       // Previously swallowed with console.error — the wizard would
       // just no-op, leaving the user confused. Surface the reason.
       const message = err instanceof Error ? err.message : 'Broadcast failed';
@@ -221,7 +236,7 @@ export default function NewBroadcastPage() {
               onNameChange={setName}
               template={template}
               audience={audience}
-              onSend={handleSend}
+              onSend={() => handleSend(false)}
               onSaveDraft={handleSaveDraft}
               onBack={() => setCurrentStep(2)}
               isProcessing={isProcessing}
@@ -230,6 +245,34 @@ export default function NewBroadcastPage() {
           )}
         </div>
       </div>
+
+      <Dialog
+        open={!!pendingRisk}
+        onOpenChange={(next) => {
+          if (!next) setPendingRisk(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('confirmRiskyBroadcastTitle')}</DialogTitle>
+            <DialogDescription>{pendingRisk?.message}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setPendingRisk(null)}>
+              {t('confirmRiskyBroadcastCancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                setPendingRisk(null);
+                handleSend(true);
+              }}
+            >
+              {t('confirmRiskyBroadcastSend')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

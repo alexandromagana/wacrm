@@ -41,6 +41,15 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import {
   MessageBubble,
   type TemplateInfo,
@@ -52,7 +61,7 @@ import {
   type SendMediaPayload,
 } from "./message-composer";
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
-import { TemplatePicker } from "./template-picker";
+import { TemplatePicker, type TemplateSendValues } from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
@@ -191,6 +200,11 @@ export function MessageThread({
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
+  const [pendingRiskyTemplate, setPendingRiskyTemplate] = useState<{
+    template: MessageTemplate;
+    values: TemplateSendValues;
+    reason: string;
+  } | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [reactions, setReactions] = useState<MessageReaction[]>([]);
   // Purely visual spin state for the manual-refresh button. The actual
@@ -719,28 +733,13 @@ export function MessageThread({
   const handleSendTemplate = useCallback(
     async (
       template: MessageTemplate,
-      values: {
-        body: string[];
-        headerText?: string;
-        buttonParams?: Record<number, string>;
-      },
+      values: TemplateSendValues,
+      confirmRisk: boolean = false,
     ) => {
       if (!conversation) return;
 
       const renderedBody = renderTemplateBody(template.body_text, values.body);
       const tempId = `temp-${Date.now()}`;
-
-      const optimisticMsg: Message = {
-        id: tempId,
-        conversation_id: conversation.id,
-        sender_type: "agent",
-        content_type: "template",
-        content_text: renderedBody,
-        template_name: template.name,
-        status: "sending",
-        created_at: new Date().toISOString(),
-      };
-      onNewMessage(optimisticMsg);
 
       try {
         const res = await fetch("/api/whatsapp/send", {
@@ -762,28 +761,46 @@ export function MessageThread({
             },
             template_params: values.body,
             content_text: renderedBody,
+            confirm_risk: confirmRisk,
           }),
         });
 
         const payload = await res.json().catch(() => ({}));
 
         if (!res.ok) {
+          // Nothing was sent yet — surface a confirmation instead of a
+          // failure, and let the dialog re-call this with confirmRisk=true.
+          if (payload?.code === "template_send_risk" && !confirmRisk) {
+            setPendingRiskyTemplate({
+              template,
+              values,
+              reason: payload.reason as string,
+            });
+            return;
+          }
           const reason = payload?.error || `HTTP ${res.status}`;
           console.error("Failed to send template:", reason);
           toast.error(`Failed to send template: ${reason}`);
-          onUpdateMessage(tempId, { status: "failed" });
           return;
         }
 
-        onUpdateMessage(tempId, { status: "sent" });
+        onNewMessage({
+          id: tempId,
+          conversation_id: conversation.id,
+          sender_type: "agent",
+          content_type: "template",
+          content_text: renderedBody,
+          template_name: template.name,
+          status: "sent",
+          created_at: new Date().toISOString(),
+        });
       } catch (err) {
         console.error("Failed to send template:", err);
         const reason = err instanceof Error ? err.message : "network error";
         toast.error(`Failed to send template: ${reason}`);
-        onUpdateMessage(tempId, { status: "failed" });
       }
     },
-    [conversation, onNewMessage, onUpdateMessage],
+    [conversation, onNewMessage],
   );
 
   // Build a quick id → Message map so reply quotes can be rendered without
@@ -1262,6 +1279,45 @@ export function MessageThread({
         onOpenChange={setTemplateModalOpen}
         onSelect={handleSendTemplate}
       />
+
+      <Dialog
+        open={!!pendingRiskyTemplate}
+        onOpenChange={(next) => {
+          if (!next) setPendingRiskyTemplate(null);
+        }}
+      >
+        <DialogContent className="border-border bg-popover sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-popover-foreground">
+              {t("confirmRiskyTemplateTitle")}
+            </DialogTitle>
+            <DialogDescription className="text-muted-foreground">
+              {pendingRiskyTemplate?.reason}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setPendingRiskyTemplate(null)}
+              className="border-border text-popover-foreground hover:bg-muted"
+            >
+              {t("confirmRiskyTemplateCancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const pending = pendingRiskyTemplate;
+                setPendingRiskyTemplate(null);
+                if (pending) {
+                  handleSendTemplate(pending.template, pending.values, true);
+                }
+              }}
+            >
+              {t("confirmRiskyTemplateSend")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -17,6 +17,14 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -70,6 +78,11 @@ export function ContactDetailView({
   // find-or-creates the conversation, so no inbound message is required.
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [sendingTemplate, setSendingTemplate] = useState(false);
+  const [pendingRiskyTemplate, setPendingRiskyTemplate] = useState<{
+    template: MessageTemplate;
+    values: TemplateSendValues;
+    reason: string;
+  } | null>(null);
 
   // Details tab
   const [editName, setEditName] = useState('');
@@ -352,6 +365,7 @@ export function ContactDetailView({
   async function handleSendTemplate(
     template: MessageTemplate,
     values: TemplateSendValues,
+    confirmRisk: boolean = false,
   ) {
     if (!contactId) return;
     setSendingTemplate(true);
@@ -372,11 +386,16 @@ export function ContactDetailView({
             buttonParams: values.buttonParams,
           },
           template_params: values.body,
+          confirm_risk: confirmRisk,
         }),
       });
 
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (payload?.code === 'template_send_risk' && !confirmRisk) {
+          setPendingRiskyTemplate({ template, values, reason: payload.reason as string });
+          return;
+        }
         const reason = payload?.error || `HTTP ${res.status}`;
         toast.error(t('toastTemplateFailed', { reason }));
         return;
@@ -794,6 +813,36 @@ export function ContactDetailView({
       onOpenChange={setTemplatePickerOpen}
       onSelect={handleSendTemplate}
     />
+    <Dialog
+      open={!!pendingRiskyTemplate}
+      onOpenChange={(next) => {
+        if (!next) setPendingRiskyTemplate(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>{t('confirmRiskyTemplateTitle')}</DialogTitle>
+          <DialogDescription>{pendingRiskyTemplate?.reason}</DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => setPendingRiskyTemplate(null)}>
+            {t('confirmRiskyTemplateCancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              const pending = pendingRiskyTemplate;
+              setPendingRiskyTemplate(null);
+              if (pending) {
+                handleSendTemplate(pending.template, pending.values, true);
+              }
+            }}
+          >
+            {t('confirmRiskyTemplateSend')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
     </>
   );
 }

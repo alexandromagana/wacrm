@@ -157,6 +157,9 @@
       "neverRepliedHint": "This contact has never messaged in. Only an approved template will send."
     },
     "messageThread": {
+      "confirmRiskyTemplateTitle": "Send anyway?",
+      "confirmRiskyTemplateCancel": "Cancel",
+      "confirmRiskyTemplateSend": "Send anyway",
       "backToConversations": "Back to conversations",
       "hideContactPanel": "Hide contact panel",
       "showContactPanel": "Show contact panel",
@@ -375,6 +378,9 @@
       "phoneRequired": "Phone number is required"
     },
     "detailView": {
+      "confirmRiskyTemplateTitle": "Send anyway?",
+      "confirmRiskyTemplateCancel": "Cancel",
+      "confirmRiskyTemplateSend": "Send anyway",
       "tabs": {
         "details": "Details",
         "activity": "Activity",
@@ -696,6 +702,9 @@
     "new": {
       "title": "New Broadcast",
       "subtitle": "Create and send a broadcast message to your contacts.",
+      "confirmRiskyBroadcastTitle": "Send anyway?",
+      "confirmRiskyBroadcastCancel": "Cancel",
+      "confirmRiskyBroadcastSend": "Send anyway",
       "steps": {
         "template": "Template",
         "audience": "Audience",
@@ -905,6 +914,10 @@
         "tag_added": {
           "label": "Tag Added",
           "hint": "When a tag is added to a contact"
+        },
+        "tag_removed": {
+          "label": "Tag Removed",
+          "hint": "When a tag is removed from a contact"
         },
         "time_based": {
           "label": "Time-Based",
