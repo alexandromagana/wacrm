@@ -239,6 +239,10 @@ export interface Message {
   template_name?: string;
   message_id?: string;
   status: MessageStatus;
+  /** Reason Meta gave for a `failed` status, from the statuses webhook's
+   *  `errors[]`. Null/undefined for anything that didn't fail, and for
+   *  failures that predate this column. Migration 046. */
+  status_error?: string | null;
   created_at: string;
   reply_to_message_id?: string;
   /**

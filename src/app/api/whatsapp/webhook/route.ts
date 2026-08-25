@@ -93,6 +93,15 @@ interface WhatsAppWebhookEntry {
         status: string
         timestamp: string
         recipient_id: string
+        /** Only present when `status === 'failed'` — the reason Meta
+         *  couldn't deliver, e.g. a media-download timeout or a closed
+         *  24h window. */
+        errors?: Array<{
+          code: number
+          title: string
+          message?: string
+          error_data?: { details?: string }
+        }>
       }>
     }
     field: string
@@ -362,20 +371,42 @@ function isValidStatusTransition(current: string, incoming: string): boolean {
   return ii > ci
 }
 
+/**
+ * One line for the inbox tooltip. Prefers `error_data.details` — Meta's
+ * most specific field — then falls back up the chain; mirrors the
+ * fallback style `throwMetaError` uses for the synchronous Graph API
+ * error shape (src/lib/whatsapp/meta-api.ts), applied here to the async
+ * status-webhook error shape instead.
+ */
+function statusErrorReason(
+  errors: Array<{ code: number; title: string; message?: string; error_data?: { details?: string } }> | undefined,
+): string | null {
+  const first = errors?.[0]
+  if (!first) return null
+  return first.error_data?.details || first.title || first.message || null
+}
+
 async function handleStatusUpdate(status: {
   id: string
   status: string
   timestamp: string
   recipient_id: string
+  errors?: Array<{ code: number; title: string; message?: string; error_data?: { details?: string } }>
 }) {
   // 1) Mirror onto messages (legacy behavior) — Meta's status values
   //    already match the CHECK constraint on messages.status. No
   //    `.select()`: message_id is NOT unique (migration 009 — Meta ids
   //    repeat across numbers), so this updates 0..N rows and must not
   //    assume a single row.
+  const update: { status: string; status_error?: string | null } = {
+    status: status.status,
+  }
+  if (status.status === 'failed') {
+    update.status_error = statusErrorReason(status.errors)
+  }
   const { error: msgErr } = await supabaseAdmin()
     .from('messages')
-    .update({ status: status.status })
+    .update(update)
     .eq('message_id', status.id)
 
   if (msgErr) {

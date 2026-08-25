@@ -41,7 +41,16 @@ interface MessageBubbleProps {
   templateInfo?: TemplateInfo | null;
 }
 
-function StatusIcon({ status }: { status: Message["status"] }) {
+function StatusIcon({
+  status,
+  errorReason,
+  t,
+}: {
+  status: Message["status"];
+  /** Meta's reason for a `failed` status, if the webhook captured one. */
+  errorReason?: string | null;
+  t: ReturnType<typeof useTranslations>;
+}) {
   switch (status) {
     case "sending":
       return <Clock className="h-3 w-3 text-muted-foreground" />;
@@ -52,7 +61,17 @@ function StatusIcon({ status }: { status: Message["status"] }) {
     case "read":
       return <CheckCheck className="h-3 w-3 text-blue-400" />;
     case "failed":
-      return <XCircle className="h-3 w-3 text-red-400" />;
+      return (
+        <span
+          title={
+            errorReason
+              ? t("failedWithReason", { reason: errorReason })
+              : t("failedGeneric")
+          }
+        >
+          <XCircle className="h-3 w-3 text-red-400" />
+        </span>
+      );
     default:
       return null;
   }
@@ -517,7 +536,13 @@ export function MessageBubble({
           >
             {time}
           </span>
-          {isAgent && <StatusIcon status={message.status} />}
+          {isAgent && (
+            <StatusIcon
+              status={message.status}
+              errorReason={message.status_error}
+              t={t}
+            />
+          )}
         </div>
       </div>
       {reactions && reactions.length > 0 && onToggleReaction && (

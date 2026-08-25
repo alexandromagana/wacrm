@@ -232,6 +232,8 @@
       "unsupported": "[Unsupported message type]",
       "aiBadge": "AI",
       "aiBadgeTitle": "Sent automatically by the AI assistant",
+      "failedWithReason": "Delivery failed: {reason}",
+      "failedGeneric": "Delivery failed",
       "openImage": "Open image",
       "lightboxZoom": "Actual size",
       "lightboxFit": "Fit to screen",
