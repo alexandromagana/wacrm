@@ -19,6 +19,7 @@ vi.mock('./receipt', () => ({ upsertField: h.upsertField }))
 vi.mock('./lead-status', () => ({ applyQuoteSentTag: h.applyQuoteSentTag }))
 
 import { sendQuoteProposal, PROPUESTA_FIELD_NAME } from './quote-pdf'
+import { MAX_QUOTABLE_KWH } from '@/lib/quotes/pricing'
 
 interface Seed {
   name?: string | null
@@ -351,7 +352,9 @@ describe('sendQuoteProposal — when it must not send', () => {
   it('skips a consumption past the price table', async () => {
     const out = await sendQuoteProposal(fakeDb(), {
       ...ARGS,
-      extraction: reading({ promedio_bimestral_kwh: 4000 }),
+      // Keyed to the table's own ceiling: a literal here silently
+      // becomes quotable the next time the ladder is extended.
+      extraction: reading({ promedio_bimestral_kwh: MAX_QUOTABLE_KWH + 1 }),
     })
     expect(out).toEqual({ kind: 'skipped', reason: 'not_quotable' })
     expectNothingSent()

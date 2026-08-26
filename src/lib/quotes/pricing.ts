@@ -33,6 +33,24 @@ export const SOLAR_TIERS: readonly SolarTier[] = Object.freeze([
   { minKwh: 1_665, maxKwh: 1_984, panels: 12, systemKw: 7.5, priceMxn: 106_900 },
   { minKwh: 1_985, maxKwh: 2_304, panels: 14, systemKw: 8.75, priceMxn: 127_000 },
   { minKwh: 2_305, maxKwh: 2_624, panels: 16, systemKw: 10, priceMxn: 140_000 },
+  // The extension past 16 panels. Ranges are transcribed from the
+  // company's own sheet rather than continued arithmetically, which is
+  // why the 18-panel band is 336 kWh wide where every other band is
+  // 320: the sheet's own boundary, and every band above it inherits
+  // that +16 offset. See `WATTS_PER_PANEL` and the coverage test in
+  // `finance.test.ts` for what that costs.
+  { minKwh: 2_625, maxKwh: 2_960, panels: 18, systemKw: 11.25, priceMxn: 161_300 },
+  { minKwh: 2_961, maxKwh: 3_280, panels: 20, systemKw: 12.5, priceMxn: 173_150 },
+  { minKwh: 3_281, maxKwh: 3_600, panels: 22, systemKw: 13.75, priceMxn: 196_500 },
+  { minKwh: 3_601, maxKwh: 3_920, panels: 24, systemKw: 15, priceMxn: 210_800 },
+  { minKwh: 3_921, maxKwh: 4_240, panels: 26, systemKw: 16.25, priceMxn: 229_000 },
+  { minKwh: 4_241, maxKwh: 4_560, panels: 28, systemKw: 17.5, priceMxn: 242_000 },
+  { minKwh: 4_561, maxKwh: 4_880, panels: 30, systemKw: 18.75, priceMxn: 264_000 },
+  { minKwh: 4_881, maxKwh: 5_200, panels: 32, systemKw: 20, priceMxn: 279_900 },
+  { minKwh: 5_201, maxKwh: 5_520, panels: 34, systemKw: 21.25, priceMxn: 299_500 },
+  { minKwh: 5_521, maxKwh: 5_840, panels: 36, systemKw: 22.5, priceMxn: 311_300 },
+  { minKwh: 5_841, maxKwh: 6_160, panels: 38, systemKw: 23.75, priceMxn: 333_300 },
+  { minKwh: 6_161, maxKwh: 6_480, panels: 40, systemKw: 25, priceMxn: 345_200 },
 ])
 
 /**
@@ -50,10 +68,10 @@ export const MAX_QUOTABLE_KWH = maxQuotableKwh(SOLAR_TIERS)
 
 /**
  * Panel wattage, derived from the table rather than configured: every
- * tier divides out to exactly 625 W (2500/4, 3750/6, 5000/8, 6250/10,
- * 7500/12, 8750/14, 10000/16). `pricing.test.ts` asserts that stays
- * true, so a future tier that breaks the ratio fails CI instead of
- * silently printing a wrong wattage on the proposal.
+ * tier divides out to exactly 625 W, from 2500/4 at the bottom to
+ * 25000/40 at the top. `pricing.test.ts` asserts that stays true, so a
+ * future tier that breaks the ratio fails CI instead of silently
+ * printing a wrong wattage on the proposal.
  */
 export const WATTS_PER_PANEL = 625
 

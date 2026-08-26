@@ -66,7 +66,7 @@ describe('lookupSolarTier', () => {
   })
 
   it('returns the top tier at the cap and null just past it', () => {
-    expect(lookupSolarTier(MAX_QUOTABLE_KWH)?.panels).toBe(16)
+    expect(lookupSolarTier(MAX_QUOTABLE_KWH)?.panels).toBe(40)
     expect(lookupSolarTier(MAX_QUOTABLE_KWH + 1)).toBeNull()
   })
 
@@ -103,7 +103,8 @@ describe('resolveQuote', () => {
   })
 
   it('escalates above the table', () => {
-    expect(resolveQuote(2_625, 6)).toEqual({ kind: 'above_table', kwh: 2_625 })
+    const past = MAX_QUOTABLE_KWH + 1
+    expect(resolveQuote(past, 6)).toEqual({ kind: 'above_table', kwh: past })
   })
 
   it('reports an implausible reading as implausible, not above_table', () => {
