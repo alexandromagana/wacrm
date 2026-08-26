@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { normalizeStatus } from '@/lib/whatsapp/template-status-normalize'
+import { isMetaSampleCdnUrl } from '@/lib/whatsapp/template-sample-cdn'
 import type { TemplateButton, TemplateSampleValues } from '@/types'
 
 /**
@@ -232,21 +233,50 @@ export async function POST() {
           ? headerFormat.toLowerCase()
           : null
 
+      // Looked up before the row is assembled: whether we may write
+      // header_media_url depends on what the account already has.
+      const { data: existing, error: lookupErr } = await supabase
+        .from('message_templates')
+        .select('id, header_media_url')
+        .eq('account_id', accountId)
+        .eq('name', t.name)
+        .eq('language', t.language)
+        .maybeSingle()
+
+      if (lookupErr) {
+        errors.push({
+          name: t.name,
+          language: t.language,
+          message: lookupErr.message,
+        })
+        continue
+      }
+
       // Media headers need a send-time media link, and Meta never
       // returns the original upload URL — only the approved sample in
-      // `example.header_handle`. For most approved templates that sample
-      // is a plain https:// CDN link, which IS usable at send time; for
-      // the rest it's an opaque Resumable-Upload handle
-      // ("4::aW1hZ2UvanBlZw==:…"), which is NOT — the send builder
-      // rejects those on purpose. So only the URL form is worth keeping.
+      // `example.header_handle`. That sample comes in two shapes: an
+      // opaque Resumable-Upload handle ("4::aW1hZ2UvanBlZw==:…"), which
+      // the send builder rejects on purpose, or an https:// link. The
+      // link form is only worth keeping when it points somewhere Meta
+      // will actually fetch from at send time — its own sample CDNs
+      // don't count (see isMetaSampleCdnUrl).
       //
-      // Without this, every media-header template pulled from Meta landed
-      // with header_media_url = null and could never be sent: the send
-      // builder threw while assembling the payload, before any Meta call.
+      // A URL the account already has always wins. It is either an
+      // upload we control or the hand-set fix for an opaque handle;
+      // either way it is known-sendable, and Meta's sample is not an
+      // upgrade over it. Overwriting it is what took delivery to zero.
+      //
+      // Only when there is nothing usable on file do we fall back to
+      // Meta's sample — better than leaving header_media_url null,
+      // which makes the template unsendable outright.
       const headerHandle = header?.example?.header_handle?.[0] ?? null
       const isMediaHeader = headerType !== null && headerType !== 'text'
       const syncedMediaUrl =
-        isMediaHeader && headerHandle && /^https?:\/\//i.test(headerHandle)
+        isMediaHeader &&
+        headerHandle &&
+        /^https?:\/\//i.test(headerHandle) &&
+        !isMetaSampleCdnUrl(headerHandle) &&
+        !existing?.header_media_url
           ? headerHandle
           : null
 
@@ -276,23 +306,6 @@ export async function POST() {
         meta_template_id: t.id,
         quality_score: normalizeQualityScore(t.quality_score),
         updated_at: new Date().toISOString(),
-      }
-
-      const { data: existing, error: lookupErr } = await supabase
-        .from('message_templates')
-        .select('id')
-        .eq('account_id', accountId)
-        .eq('name', t.name)
-        .eq('language', t.language)
-        .maybeSingle()
-
-      if (lookupErr) {
-        errors.push({
-          name: t.name,
-          language: t.language,
-          message: lookupErr.message,
-        })
-        continue
       }
 
       if (existing?.id) {
