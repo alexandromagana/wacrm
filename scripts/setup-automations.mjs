@@ -64,6 +64,17 @@ const BTN = {
   cotiDoubt: 'Tengo una duda',
   sinGo: '¡Vamos con todo!',
   sinLater: 'Sí, pero después',
+  // Visit templates. "Necesito cambiarla" is on BOTH visita_recordatorio
+  // and visita_confirmacion; one handler covers both, because the
+  // trigger matches the label string, not the template it came from.
+  visitOk: 'Sí, confirmado',
+  visitHere: 'Ahí estaré',
+  visitMove: 'Necesito cambiarla',
+  postGo: 'Sí, avancemos',
+  // recordatorio_recibo is DRAFT in Meta, so these two cannot be tapped
+  // yet. The handlers are here so approval is the only remaining step.
+  reciboYes: 'Sí, claro!',
+  reciboLater: 'Contáctame más tarde.',
 }
 
 // ------------------------------------------------------------
@@ -139,8 +150,24 @@ async function upsertAutomation(ctx, spec) {
   const verb = existing ? 'update' : 'create'
   console.log(`\n${verb === 'create' ? '+' : '~'} ${spec.name}`)
   console.log(`    trigger: ${spec.trigger_type} ${JSON.stringify(spec.trigger_config)}`)
+
+  // An interactive_reply trigger matches the button's label character
+  // for character. Meta assigns template quick-replies no id, so the
+  // label IS the id — rename a button over there and this automation
+  // stops firing with no error anywhere. Say so here instead.
+  if (spec.trigger_type === 'interactive_reply') {
+    for (const rid of spec.trigger_config.reply_ids ?? []) {
+      if (!ctx.buttonLabels.has(rid)) {
+        console.warn(`    ! WARNING: "${rid}" is not a live button label on any template`)
+      }
+    }
+  }
   for (const s of spec.steps) describeStep(s, '    ')
-  console.log(`    active: ${spec.is_active}`)
+  console.log(
+    existing
+      ? `    active: ${existing.is_active} (live value kept; spec says ${spec.is_active})`
+      : `    active: ${spec.is_active}`,
+  )
 
   if (!APPLY) return
 
@@ -156,6 +183,12 @@ async function upsertAutomation(ctx, spec) {
   }
 
   if (id) {
+    // `is_active` in a spec is the state to CREATE in, never a state to
+    // force on re-run. "FB Pendiente WA → pedir recibo" ships inactive
+    // here and was switched on from the Automations page after review;
+    // a blind update would have quietly switched it back off. Whoever
+    // holds the toggle in the UI keeps it.
+    delete row.is_active
     await must('update automation', db.from('automations').update(row).eq('id', id))
     await must('clear steps', db.from('automation_steps').delete().eq('automation_id', id))
   } else {
@@ -208,8 +241,20 @@ async function main() {
       'fallback profile',
       db.from('profiles').select('user_id').eq('account_id', account.id).limit(1).single(),
     )).user_id
-  const ctx = { accountId: account.id, userId }
+  // Every quick-reply label Meta currently has on this account, used to
+  // sanity-check the interactive_reply triggers below.
+  const templates = await must(
+    'templates',
+    db.from('message_templates').select('name, buttons').eq('account_id', account.id),
+  )
+  const buttonLabels = new Set()
+  for (const t of templates ?? []) {
+    for (const b of t.buttons ?? []) if (b?.text) buttonLabels.add(b.text)
+  }
+
+  const ctx = { accountId: account.id, userId, buttonLabels }
   console.log(`account: ${account.name} · runs as: ${userId}`)
+  console.log(`live button labels: ${JSON.stringify([...buttonLabels])}`)
 
   const tags = await resolveTagIds(ctx.accountId, ctx.userId, [
     'Quote sent',
@@ -343,6 +388,111 @@ async function main() {
       {
         step_type: 'send_template',
         step_config: { template_name: TPL.lead.name, language: TPL.lead.language, variables: TPL.lead.variables },
+      },
+    ],
+  })
+
+  // --- 7..11. The remaining orphan buttons -----------------------
+  // Every template button whose label had no `interactive_reply`
+  // handler. An unhandled tap is answered by nobody: the runner only
+  // starts a flow on an exact keyword match, and the webhook mutes the
+  // AI on taps outright, so the customer just gets silence.
+  //
+  // Deliberately NOT flows. A flow consuming a tap suppresses
+  // `new_message_received`, and this account runs "Clear follow-up tag
+  // on reply" and "FB Pendiente WA → quitar al responder" on exactly
+  // that trigger — handling these as automations keeps their tag
+  // clearing intact for free.
+  //
+  // "Tengo una duda" is absent on purpose: automation 4 already claims
+  // that label, so it covers post_visita's copy of the button too.
+
+  await upsertAutomation(ctx, {
+    name: 'Botón: visita confirmada',
+    description:
+      'Tocó "Sí, confirmado" o "Ahí estaré" en los recordatorios de visita. Solo acusa recibo: la visita ya está agendada y no hay nada que Alejandro tenga que hacer, así que no reasigna ni mueve etiquetas.',
+    trigger_type: 'interactive_reply',
+    trigger_config: { reply_ids: [BTN.visitOk, BTN.visitHere] },
+    is_active: true,
+    steps: [
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: '¡Perfecto! 🙌 Tu visita queda confirmada. Si necesitas algo antes, escríbenos por aquí.',
+        },
+      },
+    ],
+  })
+
+  await upsertAutomation(ctx, {
+    name: 'Botón: reagendar visita',
+    description:
+      'Tocó "Necesito cambiarla" en cualquiera de los dos recordatorios de visita. Cambiar una fecha ya agendada es cosa de un humano, así que pide el nuevo horario y asigna a Alejandro.',
+    trigger_type: 'interactive_reply',
+    trigger_config: { reply_ids: [BTN.visitMove] },
+    is_active: true,
+    steps: [
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: 'Claro que sí 🙂 Dinos qué día y horario te acomodan mejor y la reagendamos. Alejandro te confirma la nueva fecha en un momento.',
+        },
+      },
+      { step_type: 'assign_conversation', step_config: { mode: 'specific', agent_id: ctx.userId } },
+    ],
+  })
+
+  await upsertAutomation(ctx, {
+    name: 'Botón: post-visita, quiere avanzar',
+    description:
+      'Tocó "Sí, avancemos" después de la visita técnica. Es el lead más caliente que hay: ya vio el techo con un técnico. Mismo trato que "cliente listo para avanzar".',
+    trigger_type: 'interactive_reply',
+    trigger_config: { reply_ids: [BTN.postGo] },
+    is_active: true,
+    steps: [
+      { step_type: 'remove_tag', step_config: { tag_id: quoteSent } },
+      { step_type: 'add_tag', step_config: { tag_id: hot } },
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: '¡Excelente noticia! 🙌 Alejandro te contacta enseguida para dejar todo listo y arrancar con tu instalación.',
+        },
+      },
+      { step_type: 'assign_conversation', step_config: { mode: 'round_robin' } },
+    ],
+  })
+
+  await upsertAutomation(ctx, {
+    name: 'Botón: sí mando el recibo',
+    description:
+      'Tocó "Sí, claro!" en recordatorio_recibo. Solo acusa recibo y deja la conversación abierta: la foto que llegue después la lee el agente por visión, que es quien arma la cotización. Nota: la plantilla sigue en DRAFT en Meta, así que este botón no se puede tocar todavía.',
+    trigger_type: 'interactive_reply',
+    trigger_config: { reply_ids: [BTN.reciboYes] },
+    is_active: true,
+    steps: [
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: '¡Gracias! 🌞 Aquí quedo al pendiente de tu recibo de CFE, las dos páginas. En cuanto lo tenga preparamos tu propuesta.',
+        },
+      },
+    ],
+  })
+
+  await upsertAutomation(ctx, {
+    name: 'Botón: recibo para después',
+    description:
+      'Tocó "Contáctame más tarde." en recordatorio_recibo. Sigue interesado pero pospone, igual que "Sí, pero después": lo marca Warm lead para retomarlo en campañas. La plantilla sigue en DRAFT en Meta.',
+    trigger_type: 'interactive_reply',
+    trigger_config: { reply_ids: [BTN.reciboLater] },
+    is_active: true,
+    steps: [
+      { step_type: 'add_tag', step_config: { tag_id: warm } },
+      {
+        step_type: 'send_message',
+        step_config: {
+          text: 'Sin problema 🌞 Aquí seguimos cuando estés listo. Cuando quieras retomarlo, mándanos tu recibo de CFE y te armamos tu propuesta.',
+        },
       },
     ],
   })

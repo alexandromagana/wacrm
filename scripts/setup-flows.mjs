@@ -47,6 +47,21 @@ async function must(label, promise) {
   return data
 }
 
+/** Look tag ids up by name. Never creates: a flow that silently invents
+ *  a tag would fork the account's taxonomy without anyone noticing. */
+async function resolveTagIds(accountId, names) {
+  const rows = await must(
+    'tags',
+    db.from('tags').select('id, name').eq('account_id', accountId).in('name', names),
+  )
+  const byName = new Map(rows.map((t) => [t.name, t.id]))
+  const missing = names.filter((n) => !byName.has(n))
+  if (missing.length) {
+    throw new Error(`missing tags on this account: ${missing.join(', ')}`)
+  }
+  return byName
+}
+
 // ------------------------------------------------------------
 // The flow specs.
 //
@@ -59,7 +74,7 @@ async function must(label, promise) {
 // 27k-character agent whose whole job is quoting. Exact keeps the flow
 // to the tap and leaves prose to the agent.
 // ------------------------------------------------------------
-const FLOWS = [
+const buildFlows = (tags) => [
   {
     name: 'Botón: quiero cotización (plantilla de lead)',
     description:
@@ -76,7 +91,31 @@ const FLOWS = [
       {
         node_key: 'start',
         node_type: 'start',
-        config: { next_node_key: 'pedir_recibo' },
+        config: { next_node_key: 'limpiar_quote_sent' },
+      },
+      // Consuming the tap suppresses `new_message_received`, and this
+      // account runs two automations on that trigger whose only job is
+      // clearing these tags when a customer replies ("Clear follow-up
+      // tag on reply" and "FB Pendiente WA → quitar al responder").
+      // A flow therefore has to do their work itself, or the contact
+      // stays tagged as awaiting a reply it already sent.
+      {
+        node_key: 'limpiar_quote_sent',
+        node_type: 'set_tag',
+        config: {
+          mode: 'remove',
+          tag_id: tags.get('Quote sent'),
+          next_node_key: 'limpiar_fb_pendiente',
+        },
+      },
+      {
+        node_key: 'limpiar_fb_pendiente',
+        node_type: 'set_tag',
+        config: {
+          mode: 'remove',
+          tag_id: tags.get('FB Pendiente WA'),
+          next_node_key: 'pedir_recibo',
+        },
       },
       {
         node_key: 'pedir_recibo',
@@ -204,6 +243,9 @@ async function main() {
   )
   const labels = (tpl?.buttons ?? []).map((b) => b.text)
   console.log(`gama_seguimiento_lead buttons: ${JSON.stringify(labels)}`)
+  const tags = await resolveTagIds(account.id, ['Quote sent', 'FB Pendiente WA'])
+  const FLOWS = buildFlows(tags)
+
   for (const spec of FLOWS) {
     for (const kw of spec.trigger_config.keywords ?? []) {
       if (!labels.includes(kw)) {
