@@ -42,6 +42,11 @@ vi.mock('./receipt', () => ({
     (meters && meters.count > 1 ? ` de ${meters.count} medidores` : '') +
     (meters?.pending ? ` PENDIENTE:${meters.pending.kind}` : '') +
     ']',
+  formatHeldQuoteNote: (
+    r: { promedio_bimestral_kwh: number | null },
+    hold: { reason: string },
+  ) => `[NOTA RETOMA: promedio ${r.promedio_bimestral_kwh} motivo ${hold.reason}]`,
+  formatStalledQuoteNote: () => '[NOTA COTIZACION ESTANCADA]',
   METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
@@ -540,6 +545,13 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     incluye_periodo_actual: true,
     periodos_promediados_kwh: [1000, 1000, 1000, 1000, 1000, 1000],
     historial_bimestres_kwh: [1000, 1000, 1000, 1000, 1000],
+    historial_bimestres_periodo: [
+      'del 22 MAR 26 al 22 MAY 26',
+      'del 22 ENE 26 al 22 MAR 26',
+      'del 22 NOV 25 al 22 ENE 26',
+      'del 22 SEP 25 al 22 NOV 25',
+      'del 22 JUL 25 al 22 SEP 25',
+    ],
     historial_bimestres_importe_mxn: [4000, 4000, 4000, 4000, 4000],
     consumo_periodo_actual_kwh: 1000,
     periodo_actual: '22 MAY 26 - 22 JUL 26',
@@ -872,5 +884,185 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+
+  // ----------------------------------------------------------------
+  // A proposal priced and deliberately not sent.
+  //
+  // Tony's thread is what this is for. The pricing layer read his bill
+  // correctly and shipped the PDF; the model, on its own reading of the
+  // same history, spent that turn asking whether the house had been
+  // empty — so the customer got an interrogation with a quote stapled
+  // underneath. Then he answered, and the bot — with the reading long
+  // gone from its context — replied with a panel count it made up and
+  // no document at all.
+  //
+  // Both halves are covered here: the model can stop the send, and the
+  // answer it waited for can start it.
+  // ----------------------------------------------------------------
+
+  /** A bill already read, parked on a question, as the column stores it. */
+  const parked = (hold: Record<string, unknown>) => ({
+    expected: null,
+    readings: [
+      {
+        consumo_periodo_actual_kwh: 1725,
+        periodo_actual: 'del 12 JUN 26 al 13 AGO 26',
+        historial_bimestres_kwh: [1352, 646, 477, 820, 1200],
+        historial_bimestres_periodo: [null, null, null, null, null],
+        cantidad_periodos_usados: 6,
+        promedio_bimestral_kwh: 1036,
+        incluye_periodo_actual: true,
+        periodos_promediados_kwh: [1725, 1352, 646, 477, 820, 1200],
+        tarifa: '1D',
+        numero_servicio: '783940411500',
+        ciudad: 'CANCUN',
+        importe_periodo_mxn: 4165.39,
+        importe_dap_mxn: 179.54,
+        importe_total_a_pagar_mxn: 4345.4,
+        historial_bimestres_importe_mxn: [2516, 1766, 977, 2596, 1734],
+        costo_periodo_mxn: 4344.93,
+        advertencias: '',
+      },
+    ],
+    readMediaIds: ['media-1'],
+    askedCount: 0,
+    hold,
+    updatedAt: new Date().toISOString(),
+  })
+
+  const cleanBill = {
+    consumo_periodo_actual_kwh: 2944,
+    periodo_actual: null,
+    historial_bimestres_kwh: [2177, 1487, 1447, 1966, 2788],
+    cantidad_periodos_usados: 6,
+    promedio_bimestral_kwh: 2135,
+    tarifa: '1D',
+    costo_periodo_mxn: 10237.3,
+    advertencias: '',
+  }
+
+  it('lets the model stop a send it is about to contradict', async () => {
+    mockBills(cleanBill)
+    h.generateReply.mockResolvedValue({
+      text: '¿Ese recibo es de la casa que vas a equipar?',
+      handoff: false,
+      holdQuote: true,
+      holdReason: 'confirmar el domicilio',
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    // The question goes out alone. That is the whole fix.
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_meter_state).toMatchObject({
+      hold: {
+        reason: 'model',
+        detail: 'confirmar el domicilio',
+        askedCount: 1,
+      },
+    })
+  })
+
+  it('parks the quote the pricing layer held, so it can come back', async () => {
+    mockBills(cleanBill)
+    h.sendQuoteProposal.mockResolvedValue({
+      kind: 'skipped',
+      reason: 'needs_review',
+      review: 'anomalous_history',
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.state.updatePayload?.ai_meter_state).toMatchObject({
+      hold: { reason: 'anomalous_history', askedCount: 1 },
+    })
+  })
+
+  it('puts the reading back in front of the model on the answering turn', async () => {
+    // No new receipt this turn — just the customer explaining. Before
+    // this the reading was gone and the model answered from memory it
+    // did not have.
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toBe('[NOTA RETOMA: promedio 1036 motivo anomalous_history]')
+  })
+
+  it('sends the parked proposal once the customer confirms the consumption', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Perfecto, entonces vamos con 8 paneles.',
+      handoff: false,
+      consumptionVerdict: 'normal',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        reviewCleared: true,
+        extraction: expect.objectContaining({ promedio_bimestral_kwh: 1036 }),
+      }),
+    )
+  })
+
+  it('fetches a person instead when the history turns out not to be theirs', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Entiendo, un compañero te contacta.',
+      handoff: false,
+      consumptionVerdict: 'atypical',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    // No document — an empty house's average sizes nothing — and the
+    // customer still got answered before the thread changed hands.
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'consumption history needs explaining',
+    )
+  })
+
+  it('keeps the quote parked while the answer is still unclear', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_meter_state).toMatchObject({
+      hold: { reason: 'anomalous_history', askedCount: 2 },
+    })
+  })
+
+  it('stops asking after the second try and hands the quote to a person', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 3,
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toBe('[NOTA COTIZACION ESTANCADA]')
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
   })
 })

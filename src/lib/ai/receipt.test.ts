@@ -4,6 +4,7 @@ import {
   buildExtraction,
   parseReceiptJson,
   isPlausibleAverage,
+  formatHeldQuoteNote,
   formatReceiptNote,
   inferPropertyType,
   saveReceiptData,
@@ -79,6 +80,7 @@ function extraction(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtracti
     consumo_periodo_actual_kwh: null,
     periodo_actual: null,
     historial_bimestres_kwh: [],
+    historial_bimestres_periodo: [],
     cantidad_periodos_usados: 0,
     promedio_bimestral_kwh: null,
     incluye_periodo_actual: false,
@@ -600,6 +602,186 @@ describe('formatReceiptNote — the review gate', () => {
 
   it('still answers whatever else the customer asked', () => {
     expect(formatReceiptNote(inflado())).toContain('financiamiento')
+  })
+})
+
+// ------------------------------------------------------------------
+// Tony's bill, the one that produced two contradictory messages: a
+// clean 1,036 kWh year that prices at 8 panels, with the LOW bimesters
+// a year back and the high ones most recent. The pricing layer read it
+// correctly and shipped the PDF; the model, handed the same history as
+// a bare comma-list, read it left-to-right as a timeline, announced
+// that "the last few months are low", and asked the customer to explain
+// a slump that never happened — with the proposal landing underneath
+// the question.
+// ------------------------------------------------------------------
+const tony = () =>
+  extraction({
+    consumo_periodo_actual_kwh: 1725,
+    periodo_actual: 'del 12 JUN 26 al 13 AGO 26',
+    historial_bimestres_kwh: [1352, 646, 477, 820, 1200],
+    historial_bimestres_periodo: [
+      'del 10 ABR 26 al 12 JUN 26',
+      'del 10 FEB 26 al 10 ABR 26',
+      'del 11 DIC 25 al 10 FEB 26',
+      'del 10 OCT 25 al 11 DIC 25',
+      'del 12 AGO 25 al 10 OCT 25',
+    ],
+    cantidad_periodos_usados: 6,
+    promedio_bimestral_kwh: 1036,
+    costo_periodo_mxn: 4344.93,
+    tarifa: '1D',
+  })
+
+describe('formatReceiptNote — reading the history in the right direction', () => {
+  it('marries every figure to the bimester it belongs to', () => {
+    const note = formatReceiptNote(tony())
+    expect(note).toContain('1352 (del 10 ABR 26 al 12 JUN 26)')
+    expect(note).toContain('1200 (del 12 AGO 25 al 10 OCT 25)')
+  })
+
+  it('says which end of the list is recent, so it cannot be read backwards', () => {
+    const note = formatReceiptNote(tony())
+    expect(note).toContain('del MÁS RECIENTE al MÁS ANTIGUO')
+    expect(note).toContain('el primero de esa lista es el bimestre pasado')
+  })
+
+  it('anchors the current period to its own dates', () => {
+    expect(formatReceiptNote(tony())).toContain(
+      '1725 (el bimestre que se está cobrando ahora, del 12 JUN 26 al 13 AGO 26)',
+    )
+  })
+
+  it('still labels the rows it has when the dates were unreadable', () => {
+    const note = formatReceiptNote({
+      ...tony(),
+      historial_bimestres_periodo: [null, null, null, null, null],
+    })
+    expect(note).toContain('el recibo no traía fechas legibles')
+  })
+})
+
+describe('formatReceiptNote — one decision, not two', () => {
+  it('tells the model the PDF is already on its way', () => {
+    // The document is sent by code seconds after the reply lands, from a
+    // verdict the model never sees. Unsaid, the model spent that turn
+    // asking a question and the proposal went out under it.
+    const note = formatReceiptNote(tony())
+    expect(note).toContain('SE ENVÍA automáticamente')
+    expect(note).toContain('NO le digas que se la vas a preparar')
+  })
+
+  it('hands over the resolved system instead of making the model map it', () => {
+    // 1,036 kWh is the 1,025-1,344 band: 8 panels at $75,500. The model
+    // used to derive this from a table in its prompt, and a turn where
+    // it got the mapping wrong is a message that contradicts the PDF.
+    const note = formatReceiptNote(tony())
+    expect(note).toContain('sistema_cotizado: 8 paneles')
+    expect(note).toContain('NO los recalcules')
+  })
+
+  it('gives the model a way to stop the send when it needs to ask first', () => {
+    const note = formatReceiptNote(tony())
+    expect(note).toContain('[ESPERAR: motivo breve]')
+    expect(note).toContain('el PDF NO sale en este turno')
+  })
+
+  it('offers no such marker on a turn that was never going to send one', () => {
+    // The review gate already forbids quoting here. Handing the model a
+    // second lever over a document that is not moving is noise.
+    const note = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: 2545,
+        historial_bimestres_kwh: [1126, 879, 1067, 1485, 216],
+        cantidad_periodos_usados: 6,
+        promedio_bimestral_kwh: 1220,
+        costo_periodo_mxn: 8304.21,
+      }),
+    )
+    expect(note).not.toContain('[ESPERAR')
+  })
+})
+
+describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
+  const held = () =>
+    extraction({
+      consumo_periodo_actual_kwh: 2545,
+      historial_bimestres_kwh: [1126, 879, 1067, 1485, 216],
+      historial_bimestres_periodo: [null, null, null, null, null],
+      cantidad_periodos_usados: 6,
+      promedio_bimestral_kwh: 1220,
+      costo_periodo_mxn: 8304.21,
+      tarifa: '1D',
+    })
+
+  it('puts the reading back in front of the model', () => {
+    // The whole point. The note that carried these numbers lived for one
+    // turn and was never persisted, so by the time the customer said
+    // "así gasto siempre" the model had nothing left and answered with a
+    // panel count it invented.
+    const note = formatHeldQuoteNote(held(), {
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })!
+    expect(note).toContain('promedio_bimestral_kwh: 1220')
+    expect(note).toContain('sistema_cotizado: 8 paneles')
+    expect(note).toContain('proyeccion_25_anios')
+    expect(note).toContain('Nunca inventes un número de paneles')
+  })
+
+  it('reminds the model what it asked, so the answer has a question', () => {
+    const note = formatHeldQuoteNote(held(), {
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })!
+    expect(note).toContain('pregunta_pendiente')
+    expect(note).toContain('desocupada')
+  })
+
+  it('carries both verdict markers, so the quote can be released or buried', () => {
+    const note = formatHeldQuoteNote(held(), {
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })!
+    expect(note).toContain('[CONSUMO: NORMAL]')
+    expect(note).toContain('[CONSUMO: ATIPICO]')
+  })
+
+  it('quotes the model its own words when the model is what parked it', () => {
+    const note = formatHeldQuoteNote(held(), {
+      reason: 'model',
+      detail: 'confirmar si el historial es de esta casa',
+      askedCount: 1,
+    })!
+    expect(note).toContain('tú mismo pediste esperar')
+    expect(note).toContain('confirmar si el historial es de esta casa')
+  })
+
+  it('re-asks for page 1 and offers no verdict marker when a photo is what is missing', () => {
+    // That hold is released by an image arriving, which takes the
+    // ordinary path. There is nothing here for a marker to decide.
+    const note = formatHeldQuoteNote(
+      extraction({
+        consumo_periodo_actual_kwh: null,
+        historial_bimestres_kwh: [1126, 879, 1067, 1485, 1200],
+        cantidad_periodos_usados: 5,
+        promedio_bimestral_kwh: 1151,
+        costo_periodo_mxn: 4200,
+      }),
+      { reason: 'missing_current_period', askedCount: 1 },
+    )!
+    expect(note).toContain('PRIMERA página')
+    expect(note).toContain('NO des precio')
+    expect(note).not.toContain('[CONSUMO:')
+  })
+
+  it('returns null for a reading that stopped being priceable', () => {
+    expect(
+      formatHeldQuoteNote(extraction({ promedio_bimestral_kwh: null }), {
+        reason: 'anomalous_history',
+        askedCount: 1,
+      }),
+    ).toBeNull()
   })
 })
 

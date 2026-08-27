@@ -18,6 +18,7 @@ export type HandoffReason =
   | 'cap_reached'
   | 'model_requested'
   | 'meter_gate'
+  | 'quote_review'
   | 'no_reply'
 
 const REASON_TEXT: Record<HandoffReason, string> = {
@@ -25,6 +26,8 @@ const REASON_TEXT: Record<HandoffReason, string> = {
   model_requested: 'It asked for a person to continue.',
   meter_gate:
     "It couldn't confirm how many meters the property has, so a quote would have covered only part of it.",
+  quote_review:
+    'A proposal is priced and waiting: the bill\'s consumption history needs explaining before the system can be sized from it.',
   no_reply: 'It produced no reply to send.',
 }
 

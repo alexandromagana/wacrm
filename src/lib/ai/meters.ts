@@ -1,5 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { METERS_MARKER_INSTRUCTION, type ReceiptExtraction } from './receipt'
+import {
+  METERS_MARKER_INSTRUCTION,
+  type QuoteHold,
+  type ReceiptExtraction,
+} from './receipt'
 import { resolveQuote } from '@/lib/quotes/pricing'
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
 import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
@@ -53,6 +57,18 @@ export interface MeterState {
    * never on one that is simply taking a few messages to get there.
    */
   askedCount: number
+  /**
+   * A proposal this batch already priced and deliberately did NOT send,
+   * with the question it is waiting on. Null on the ordinary path.
+   *
+   * It lives here — in the column that already carries the readings —
+   * rather than in a column of its own, because a hold is meaningless
+   * without the reading behind it: releasing one means pricing exactly
+   * the bills stored here, and splitting the two across columns is how
+   * a released quote ends up sized from a batch that moved on. The
+   * column's 24h TTL covers it for free.
+   */
+  hold: QuoteHold | null
   /** ISO timestamp of the newest bill added. Drives batch expiry. */
   updatedAt: string
 }
@@ -80,8 +96,39 @@ export function emptyMeterState(): MeterState {
     readings: [],
     readMediaIds: [],
     askedCount: 0,
+    hold: null,
     updatedAt: new Date().toISOString(),
   }
+}
+
+/**
+ * Park the proposal for this batch, recording what it is waiting on.
+ *
+ * Re-parking an already-parked quote advances the ask count instead of
+ * starting over, so the bound below measures how long the customer has
+ * been asked — not how many times the code noticed.
+ */
+export function parkQuote(
+  state: MeterState,
+  hold: Omit<QuoteHold, 'askedCount'>,
+): MeterState {
+  const askedCount = (state.hold?.askedCount ?? 0) + 1
+  return { ...state, hold: { ...hold, askedCount } }
+}
+
+/** Let a parked quote go — sent, answered, or abandoned. */
+export function releaseQuote(state: MeterState): MeterState {
+  return state.hold ? { ...state, hold: null } : state
+}
+
+/**
+ * Asks a held quote gets before a person takes the thread. Shares
+ * `MAX_ASKS` with the meter gate deliberately: both are the same
+ * judgement — a question the customer has not answered twice is not
+ * going to be answered by asking a third time.
+ */
+export function isHoldStalled(hold: QuoteHold | null): boolean {
+  return hold != null && hold.askedCount > MAX_ASKS
 }
 
 /**
@@ -175,13 +222,30 @@ export function combineReadings(
     ...new Set(readings.map((r) => r.advertencias).filter(Boolean)),
   ].join('; ')
 
+  // The bimesters themselves, not a sum of them: every meter on one
+  // property is billed on the same calendar, and index i already means
+  // "the same bimester" everywhere else in this function. Truncated to
+  // the summed history so a label can never outlive the figure it
+  // describes.
+  const historialKwh = sumByPeriod(readings.map((r) => r.historial_bimestres_kwh))
+  const periodos =
+    readings
+      .map((r) =>
+        Array.isArray(r.historial_bimestres_periodo)
+          ? r.historial_bimestres_periodo
+          : [],
+      )
+      .find((p) => p.some((label) => label)) ?? []
+
   return {
     consumo_periodo_actual_kwh: sumOrNull(
       readings.map((r) => r.consumo_periodo_actual_kwh),
     ),
     periodo_actual: first((r) => r.periodo_actual),
-    historial_bimestres_kwh: sumByPeriod(
-      readings.map((r) => r.historial_bimestres_kwh),
+    historial_bimestres_kwh: historialKwh,
+    historial_bimestres_periodo: Array.from(
+      { length: historialKwh.length },
+      (_, i) => periodos[i] ?? null,
     ),
     // The weakest meter governs: an average is only as trustworthy as
     // the thinnest evidence behind any part of it.
@@ -245,6 +309,11 @@ export function mergeReadings(
     // a slow one — otherwise a customer who sends their meters one
     // message at a time gets handed to a human for cooperating.
     askedCount: incoming.length > 0 ? 0 : state.askedCount,
+    // A new bill is new evidence, so whatever the old quote was parked
+    // on no longer describes what we hold. Keeping the hold would ask
+    // the customer to explain a window that has since changed, and
+    // could release a proposal priced from a different set of bills.
+    hold: incoming.length > 0 ? null : state.hold,
     updatedAt: new Date().toISOString(),
   }
 }
@@ -584,10 +653,47 @@ export function parseMeterState(raw: unknown): MeterState {
   return {
     expected:
       typeof s.expected === 'number' && s.expected > 0 ? s.expected : null,
-    readings: s.readings as ReceiptExtraction[],
+    readings: (s.readings as ReceiptExtraction[]).map(normalizeReading),
     readMediaIds: Array.isArray(s.readMediaIds) ? s.readMediaIds : [],
     askedCount: typeof s.askedCount === 'number' ? s.askedCount : 0,
+    // Unrecognised shapes read as "nothing parked": a hold only ever
+    // suppresses a document, so losing one costs a proposal that goes
+    // out unheld — the behaviour every account had before it existed —
+    // while trusting a malformed one parks a quote forever.
+    hold: parseHold(s.hold),
     updatedAt,
+  }
+}
+
+/**
+ * Fill in what a stored reading may predate.
+ *
+ * `readings` is JSON written by whatever version of this code was
+ * deployed when the customer sent the bill, so a batch left open across
+ * a deploy comes back missing every field added since. The period
+ * labels are the first of those, and an absent array reaching
+ * `combineReadings` is a crash mid-conversation — on the one customer
+ * who is halfway through sending their meters.
+ */
+function normalizeReading(reading: ReceiptExtraction): ReceiptExtraction {
+  if (Array.isArray(reading.historial_bimestres_periodo)) return reading
+  return {
+    ...reading,
+    historial_bimestres_periodo: reading.historial_bimestres_kwh.map(
+      () => null,
+    ),
+  }
+}
+
+/** A stored hold, or null for anything that isn't one. */
+function parseHold(raw: unknown): QuoteHold | null {
+  if (!raw || typeof raw !== 'object') return null
+  const h = raw as Partial<QuoteHold>
+  if (typeof h.reason !== 'string') return null
+  return {
+    reason: h.reason as QuoteHold['reason'],
+    detail: typeof h.detail === 'string' ? h.detail : null,
+    askedCount: typeof h.askedCount === 'number' ? h.askedCount : 1,
   }
 }
 

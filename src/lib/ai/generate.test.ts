@@ -47,6 +47,9 @@ describe('parseGeneration', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage: null,
     })
   })
@@ -58,6 +61,9 @@ describe('parseGeneration', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
@@ -66,6 +72,9 @@ describe('parseGeneration', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage: null,
     })
   })
@@ -78,6 +87,9 @@ describe('parseGeneration', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage,
     })
   })
@@ -152,6 +164,67 @@ describe('parseGeneration — quote marker', () => {
   })
 })
 
+describe('parseGeneration — hold marker', () => {
+  it('detects + strips [ESPERAR: motivo] and keeps the motive', () => {
+    const res = parseGeneration(
+      '¿Ese recibo es de la casa que quieres equipar? [ESPERAR: confirmar el domicilio]',
+    )
+    expect(res.text).toBe('¿Ese recibo es de la casa que quieres equipar?')
+    expect(res.holdQuote).toBe(true)
+    expect(res.holdReason).toBe('confirmar el domicilio')
+  })
+
+  it('accepts a bare marker — a hold that only counts when punctuated is no hold', () => {
+    const res = parseGeneration('Una pregunta antes de cotizar. [ESPERAR]')
+    expect(res.text).toBe('Una pregunta antes de cotizar.')
+    expect(res.holdQuote).toBe(true)
+    expect(res.holdReason).toBeNull()
+  })
+
+  it('tolerates the English spellings', () => {
+    expect(parseGeneration('X [WAIT]').holdQuote).toBe(true)
+    expect(parseGeneration('X [ HOLD : checking ]').holdQuote).toBe(true)
+  })
+
+  it('stays false on ordinary replies', () => {
+    const res = parseGeneration('Con esos números te preparo la propuesta.')
+    expect(res.holdQuote).toBe(false)
+    expect(res.holdReason).toBeNull()
+  })
+})
+
+describe('parseGeneration — consumption verdict', () => {
+  it('reads a confirmed-normal answer and strips the marker', () => {
+    const res = parseGeneration(
+      'Perfecto, entonces vamos con 8 paneles. [CONSUMO: NORMAL]',
+    )
+    expect(res.text).toBe('Perfecto, entonces vamos con 8 paneles.')
+    expect(res.consumptionVerdict).toBe('normal')
+  })
+
+  it('reads the atypical answer, accent and all', () => {
+    expect(parseGeneration('Entiendo. [CONSUMO: ATÍPICO]').consumptionVerdict).toBe(
+      'atypical',
+    )
+    expect(parseGeneration('Entiendo. [CONSUMO: ATIPICO]').consumptionVerdict).toBe(
+      'atypical',
+    )
+  })
+
+  it('ignores a value it does not recognise rather than guessing', () => {
+    // Guessing here either ships a proposal on an empty house's numbers
+    // or buries one the customer already cleared. Neither is worth a
+    // coin flip: no verdict simply re-asks.
+    const res = parseGeneration('Ok. [CONSUMO: tal vez]')
+    expect(res.text).toBe('Ok.')
+    expect(res.consumptionVerdict).toBeNull()
+  })
+
+  it('stays null on ordinary replies', () => {
+    expect(parseGeneration('¿Me compartes tu recibo?').consumptionVerdict).toBeNull()
+  })
+})
+
 describe('generateReply — OpenAI', () => {
   it('calls the chat completions endpoint and returns the reply', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -174,6 +247,9 @@ describe('generateReply — OpenAI', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -292,6 +368,9 @@ describe('generateReply — Anthropic', () => {
       leadStatus: null,
       quoteSent: false,
       metersExpected: null,
+      holdQuote: false,
+      holdReason: null,
+      consumptionVerdict: null,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

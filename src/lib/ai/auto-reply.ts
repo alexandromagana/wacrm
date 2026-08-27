@@ -8,8 +8,11 @@ import { buildHandoffSummary } from './handoff'
 import { applyLeadStatusTag } from './lead-status'
 import {
   extractReceipts,
+  formatHeldQuoteNote,
   formatReceiptNote,
+  formatStalledQuoteNote,
   saveReceiptData,
+  type QuoteHold,
   type ReceiptExtraction,
 } from './receipt'
 import {
@@ -17,8 +20,11 @@ import {
   clearMeterState,
   formatMeterGateNote,
   formatStalledMeterNote,
+  isHoldStalled,
   mergeReadings,
+  parkQuote,
   parseMeterState,
+  releaseQuote,
   resolveMeterGate,
   saveMeterState,
   type MeterState,
@@ -308,6 +314,16 @@ export async function dispatchInboundToAiReply(
     // usable count) goes to a person instead of asking a third time.
     let meterHandoff = false
 
+    // A proposal priced on an earlier turn and parked on a question,
+    // put back in front of the model because this is the turn the
+    // answer should arrive on. Distinct from `receiptExtraction`: the
+    // reading is in context, but the document stays held until the
+    // model says the customer actually cleared it.
+    let held: { reading: ReceiptExtraction; hold: QuoteHold } | null = null
+    // That question, asked twice and still unanswered. Same bound as
+    // the meter gate, and the same conclusion.
+    let holdHandoff = false
+
     // The conversation's open batch of meters, if any. An ordinary
     // single-receipt customer parses to an empty batch and never writes
     // the column back.
@@ -377,10 +393,11 @@ export async function dispatchInboundToAiReply(
       } else if (gate.kind === 'ready') {
         // Only when this turn actually brought a bill, or just closed
         // the gate by confirming the ones already in. A settled batch
-        // left over from an earlier turn — one whose proposal was held
-        // back for review, say — must not re-inject its reading into
-        // every "gracias" that follows and re-offer a quote nobody
-        // asked for again.
+        // left over from an earlier turn must not re-inject its reading
+        // into every "gracias" that follows and re-offer a quote nobody
+        // asked for again. The one exception — a batch whose proposal
+        // is parked on a question — is the branch below, and it is an
+        // exception precisely because the customer WAS asked something.
         if (hasReceipt || meterConfirmedNow) {
           receiptExtraction = gate.reading
           void saveReceiptData(db, {
@@ -393,6 +410,34 @@ export async function dispatchInboundToAiReply(
             role: 'user',
             content: formatReceiptNote(gate.reading, { count: gate.count }),
           })
+        } else if (meterState.hold) {
+          // No new bill, but a priced proposal is parked on a question
+          // the bot asked — so THIS is the turn the answer arrives on,
+          // and the exception the rule above is written around.
+          //
+          // The reading has to come back with it. It lived for exactly
+          // one turn (a note pushed into `messages`, never persisted),
+          // so by the time the customer explained themselves the model
+          // had no numbers left and answered with a quote it made up —
+          // a panel count, a saving, and no document behind any of it.
+          const note = isHoldStalled(meterState.hold)
+            ? null
+            : formatHeldQuoteNote(gate.reading, meterState.hold)
+          if (note) {
+            held = { reading: gate.reading, hold: meterState.hold }
+            messages.push({ role: 'user', content: note })
+          } else {
+            // Asked twice with no usable answer, or a reading that
+            // stopped pricing between turns. Either way there is
+            // nothing left for the bot to release, and a customer with
+            // a quote nobody sent is exactly who a person should call.
+            meterState = releaseQuote(meterState)
+            holdHandoff = true
+            messages.push({
+              role: 'user',
+              content: formatStalledQuoteNote(),
+            })
+          }
         }
       } else {
         // Gate open: the reading is real but partial. The note forbids
@@ -452,12 +497,20 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
-    const { text, handoff, leadStatus, metersExpected, usage } =
-      await generateReply({
-        config,
-        systemPrompt,
-        messages,
-      })
+    const {
+      text,
+      handoff,
+      leadStatus,
+      metersExpected,
+      holdQuote,
+      holdReason,
+      consumptionVerdict,
+      usage,
+    } = await generateReply({
+      config,
+      systemPrompt,
+      messages,
+    })
 
     // The customer just told us how many meters the property has. That
     // answer can complete the batch on this very turn — the bot's reply
@@ -476,6 +529,55 @@ export async function dispatchInboundToAiReply(
           extraction: settled.reading,
         })
       }
+    }
+
+    // ------------------------------------------------------------
+    // Whether the proposal PDF goes out on this turn.
+    //
+    // Two things decide it, and before this they never spoke to each
+    // other: the pricing verdict in code, and the model writing the
+    // message. Code could silence the model (a `needs_review` note
+    // forbids quoting) but the model could not silence the code — so a
+    // turn it spent asking a question still shipped the document
+    // underneath the question. Both directions run here now.
+    // ------------------------------------------------------------
+
+    /** Lets a `needs_review` document out, once the customer explained it. */
+    let reviewCleared = false
+
+    if (held) {
+      if (consumptionVerdict === 'normal') {
+        // The customer says that window is how they actually live. The
+        // numbers were never in doubt — only whether they described
+        // this household — so the proposal goes out exactly as priced.
+        receiptExtraction = held.reading
+        reviewCleared = true
+        meterState = releaseQuote(meterState)
+      } else if (consumptionVerdict === 'atypical') {
+        // It does not represent them: an empty house, a remodel, a
+        // bimester read wrong. Nothing here can size a system, and
+        // guessing at one is the mistake the hold exists to prevent.
+        meterState = releaseQuote(meterState)
+        holdHandoff = true
+      } else {
+        // No verdict — the answer was vague, or the marker went
+        // missing. Ask once more; `isHoldStalled` ends it after that.
+        meterState = parkQuote(meterState, held.hold)
+      }
+    }
+
+    if (receiptExtraction && holdQuote) {
+      // The model wants to ask something first. This is its only say
+      // over a send that is otherwise decided entirely in code, and the
+      // whole reason the marker exists.
+      console.log(
+        `[ai auto-reply] proposal held by the model on ${conversationId}${holdReason ? `: ${holdReason}` : ''}`,
+      )
+      meterState = parkQuote(meterState, {
+        reason: 'model',
+        detail: holdReason,
+      })
+      receiptExtraction = null
     }
 
     // Persist the batch before the send: if the proposal or the reply
@@ -652,6 +754,7 @@ export async function dispatchInboundToAiReply(
         conversationId,
         contactId,
         extraction: receiptExtraction,
+        reviewCleared,
       })
       if (outcome.kind === 'sent') {
         console.log(
@@ -666,6 +769,16 @@ export async function dispatchInboundToAiReply(
         console.log(
           `[ai auto-reply] proposal skipped (${outcome.reason}) on ${conversationId}`,
         )
+        // A document held for review is a promise to come back to it.
+        // Park it against the batch so the customer's answer — which
+        // lands on a turn carrying no receipt at all — has something to
+        // release. Without this the hold was terminal: the bot asked,
+        // the customer explained, and the proposal it had already
+        // priced was never mentioned again.
+        if (outcome.reason === 'needs_review' && outcome.review) {
+          meterState = parkQuote(meterState, { reason: outcome.review })
+          await saveMeterState(db, conversationId, meterState)
+        }
       }
     }
 
@@ -681,7 +794,7 @@ export async function dispatchInboundToAiReply(
     // there is nothing left for a person to chase.
     const meterStillStalled = meterHandoff && !quoteReady
 
-    if (handoff || meterStillStalled) {
+    if (handoff || meterStillStalled || holdHandoff) {
       await performHandoff(db, {
         accountId,
         conversationId,
@@ -691,7 +804,11 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
-          reason: meterStillStalled ? 'meter_gate' : 'model_requested',
+          reason: meterStillStalled
+            ? 'meter_gate'
+            : holdHandoff
+              ? 'quote_review'
+              : 'model_requested',
         }),
       })
     }

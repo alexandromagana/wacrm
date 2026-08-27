@@ -6,7 +6,12 @@ import {
   CIUDAD_FIELD_NAME,
   PROPIEDAD_FIELD_NAME,
 } from '@/lib/contacts/lead-form'
-import { isPlausibleAverage, resolveQuote } from '@/lib/quotes/pricing'
+import {
+  isPlausibleAverage,
+  resolveQuote,
+  type ReviewReason,
+  type SolarTier,
+} from '@/lib/quotes/pricing'
 // The history cap lives with the manual-capture form's own limits so
 // both producers of a reading average the same window. See
 // `src/lib/quotes/reading.ts`.
@@ -43,6 +48,21 @@ export interface ReceiptExtraction {
   consumo_periodo_actual_kwh: number | null
   periodo_actual: string | null
   historial_bimestres_kwh: number[]
+  /**
+   * The period label of each history row, aligned by index with the kWh.
+   * Null for a row whose label could not be read, and all-null on the
+   * hand-capture path, which never has any.
+   *
+   * Carried purely so the chat model can be told WHICH bimester each
+   * figure belongs to. Without it the note handed it a bare list —
+   * `historial_kwh: 1352, 646, 477, 820, 1200` — in newest-first order
+   * with nothing saying so, and the model read it left-to-right as a
+   * timeline and announced that "the last few months are low" about the
+   * bill's HIGHEST months. It then asked the customer to explain a
+   * downturn that never happened, while the PDF (built from the same,
+   * correct numbers) went out underneath it.
+   */
+  historial_bimestres_periodo: (string | null)[]
   cantidad_periodos_usados: number
   promedio_bimestral_kwh: number | null
   /**
@@ -417,6 +437,7 @@ export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
     periodo_actual:
       typeof r.periodo_actual === 'string' ? r.periodo_actual : null,
     historial_bimestres_kwh: historial,
+    historial_bimestres_periodo: selection.selected.map((c) => c.periodo),
     cantidad_periodos_usados: values.length,
     promedio_bimestral_kwh: promedio,
     incluye_periodo_actual: consumoActual != null,
@@ -497,6 +518,55 @@ export { isPlausibleAverage }
  * turns for provider prompt caching. Here the instruction costs nothing
  * until a conversation actually has meters in play.
  */
+/**
+ * What the model is told on a turn whose PDF is already cleared to go.
+ *
+ * The document is sent by code the moment the reply lands, from a
+ * verdict the model never sees. Left unsaid, the two drift: the pricing
+ * layer reads a clean window, ships the proposal, and the model — on
+ * its own reading of the same bill — spends that turn asking a
+ * question, so the customer gets an interrogation with a quote stapled
+ * underneath it. Saying "this is going out now" is what keeps the
+ * message and the document describing one decision.
+ */
+export const QUOTE_SHIPPING_INSTRUCTION =
+  'IMPORTANTE: la propuesta en PDF SE ENVÍA automáticamente en cuanto termines este mensaje, con exactamente esos números. Tu mensaje es el que la presenta: dale al cliente el número de paneles y el ahorro, y NO le digas que se la vas a preparar o mandar después — ya va en camino.'
+
+/**
+ * The model's veto over that send.
+ *
+ * The guard in `pricing.ts` only runs one way: when CODE distrusts the
+ * window it forbids the model to quote. Nothing ran the other way, so a
+ * model that decided to ask something first had no way to hold the
+ * document back — it asked, and the PDF went out under the question
+ * anyway. This is that missing direction, and it is deliberately a
+ * marker rather than a heuristic on the reply text: "did this message
+ * mean to quote or to ask" is exactly the judgement the model is
+ * already making, so let it say so instead of guessing at it afterwards.
+ */
+export const QUOTE_HOLD_MARKER_INSTRUCTION =
+  'Si necesitas preguntar algo ANTES de que salga el PDF (algo del recibo no te cuadra, el cliente pidió esperar, quieres confirmar un dato), TERMINA tu mensaje con el marcador [ESPERAR: motivo breve] — por ejemplo "[ESPERAR: confirmar si el historial es de esta casa]". Con ese marcador el PDF NO sale en este turno y la cotización queda guardada tal cual para retomarla en cuanto el cliente conteste. El marcador se borra antes de enviar y el cliente nunca lo ve. Sin marcador el PDF sale de todas formas, así que no preguntes y dejes que la propuesta salga debajo de tu pregunta.'
+
+/**
+ * How a parked quote gets released — or buried.
+ *
+ * Same shape as `METERS_MARKER_INSTRUCTION`, and for the same reason:
+ * the answer arrives as prose on a turn that carries no receipt, and
+ * without a marker to carry it the customer's "sí, así gasto siempre"
+ * falls on the floor and the quote they were promised never comes.
+ *
+ * No plain-language fallback here, unlike the meter gate: "are those
+ * all your meters" has a yes and a no, while "was the house empty" is
+ * answered in open prose that no word list can be trusted to read.
+ * The ask bound in `meters.ts` is what covers a missed marker — after
+ * two turns a person takes the thread.
+ */
+export const CONSUMO_MARKER_INSTRUCTION =
+  'En cuanto el cliente conteste, TERMINA tu mensaje con UNO de estos marcadores (se borran antes de enviar, el cliente nunca los ve): ' +
+  '[CONSUMO: NORMAL] si dijo que así es su consumo de siempre, que la casa ha estado habitada, o que lo que subió fueron las tarifas de CFE — con ese marcador la propuesta sale de inmediato con los números de arriba. ' +
+  '[CONSUMO: ATIPICO] si dijo que la casa estuvo desocupada, en obra, que apenas la va a habitar, o cualquier cosa que haga que ese historial NO represente lo que va a gastar — con ese marcador no sale PDF y un compañero retoma la cotización. ' +
+  'Si su respuesta todavía no aclara cuál de las dos es, no pongas ningún marcador y vuelve a preguntarlo con amabilidad.'
+
 export const METERS_MARKER_INSTRUCTION =
   'Si el cliente dice (ahora o en cualquier mensaje posterior) cuántos medidores tiene en total, o confirma que ya no hay más, TERMINA tu mensaje con el marcador [MEDIDORES: N] donde N es el total de medidores de la propiedad (ej. "[MEDIDORES: 3]"; si confirma que solo es el que ya mandó, "[MEDIDORES: 1]"). El marcador se borra antes de enviar y el cliente nunca lo ve. Sin él la cotización se queda esperando recibos que ya no van a llegar.'
 
@@ -524,6 +594,61 @@ export interface MeterNoteContext {
 }
 
 /**
+ * The reading itself, as the lines every note about it opens with.
+ *
+ * Shared by `formatReceiptNote` and `formatHeldQuoteNote` so a quote
+ * parked for review comes back on a later turn describing the SAME
+ * bill in the same words — the model has no other copy of these
+ * numbers, and two spellings of one reading is how a bot ends up
+ * quoting a figure the PDF never carried.
+ *
+ * Every history figure is married to the bimester it belongs to. The
+ * bare comma-list this replaced said nothing about direction, and a
+ * newest-first list read left-to-right as a timeline is a downward
+ * trend that isn't there.
+ */
+function formatReadingLines(r: ReceiptExtraction): string[] {
+  const lines = [
+    `promedio_bimestral_kwh: ${r.promedio_bimestral_kwh ?? 'no legible'}`,
+  ]
+  if (r.consumo_periodo_actual_kwh != null) {
+    const periodo = r.periodo_actual ? `, ${r.periodo_actual}` : ''
+    lines.push(
+      `consumo_periodo_actual_kwh: ${r.consumo_periodo_actual_kwh} (el bimestre que se está cobrando ahora${periodo})`,
+    )
+  }
+  if (r.historial_bimestres_kwh.length > 0) {
+    // Defensive: a reading stored before this field existed comes back
+    // without it, and a note that throws costs the customer their reply.
+    const periodos: (string | null)[] = Array.isArray(
+      r.historial_bimestres_periodo,
+    )
+      ? r.historial_bimestres_periodo
+      : []
+    const dated = periodos.some((p) => p)
+    const rows = r.historial_bimestres_kwh.map((kwh, i) => {
+      const periodo = periodos[i]
+      return periodo ? `${kwh} (${periodo})` : `${kwh}`
+    })
+    lines.push(
+      `historial_kwh — bimestres ANTERIORES, del MÁS RECIENTE al MÁS ANTIGUO` +
+        `${dated ? '' : ' (el recibo no traía fechas legibles)'}: ${rows.join(' | ')}`,
+      'OJO con el orden: el primero de esa lista es el bimestre pasado y el último es el más viejo. Leerla al revés convierte los meses más altos en "los últimos meses vienen bajos", que es justo lo contrario de lo que dice el recibo.',
+    )
+  }
+  return lines
+}
+
+/** The resolved system, spelled out so the model never has to map
+ *  kWh → paneles itself. */
+function formatTierLines(tier: SolarTier): string[] {
+  return [
+    `sistema_cotizado: ${tier.panels} paneles, ${tier.systemKw} kW, ${formatMxn(tier.priceMxn)} (precio llave en mano, IVA incluido)`,
+    'Ese número de paneles y ese precio salen de la tabla oficial ya resuelta contra el promedio de arriba. Úsalos tal cual: NO los recalcules ni los estimes por tu cuenta.',
+  ]
+}
+
+/**
  * Render the extraction as the bracketed system note the auto-reply
  * model receives as a user-role message. Mirrors the date/time
  * injection pattern: context reaches the model inside the turn, the
@@ -541,15 +666,7 @@ export function formatReceiptNote(
       `medidores_leidos: ${meters.count} (esta propiedad tiene el consumo repartido en varios medidores; TODAS las cifras de abajo ya son la SUMA de los ${meters.count} recibos, no las vuelvas a sumar)`,
     )
   }
-  lines.push(
-    `promedio_bimestral_kwh: ${r.promedio_bimestral_kwh ?? 'no legible'}`,
-  )
-  if (r.consumo_periodo_actual_kwh != null) {
-    lines.push(`consumo_periodo_actual_kwh: ${r.consumo_periodo_actual_kwh}`)
-  }
-  if (r.historial_bimestres_kwh.length > 0) {
-    lines.push(`historial_kwh: ${r.historial_bimestres_kwh.join(', ')}`)
-  }
+  lines.push(...formatReadingLines(r))
   if (r.costo_periodo_mxn != null) {
     lines.push(
       `costo_bimestral_mxn: ${r.costo_periodo_mxn.toFixed(2)} (lo que costó este bimestre de luz; NO es el total a pagar del recibo)`,
@@ -625,9 +742,17 @@ export function formatReceiptNote(
     })
     if (financials) {
       lines.push(
+        // The tier itself, not just the projection. The model used to be
+        // left to map kWh → paneles against the table in its prompt,
+        // which is the one arithmetic step `pricing.ts` exists to take
+        // away from it — and on any turn it got that mapping wrong, the
+        // message and the PDF disagreed about the size of the system.
+        ...formatTierLines(quote.tier),
         `proyeccion_25_anios: sin paneles ${formatMxn(financials.sinPaneles25Anios)}, con paneles ${formatMxn(financials.conPaneles25Anios)}, ahorro ${formatMxn(financials.ahorro25Anios)}`,
         `se_paga_solo_en: ${formatPaybackDuration(financials.paybackAnios, financials.paybackMeses)}`,
         'Estas cifras son las que llevará la propuesta en PDF: si mencionas alguna, usa exactamente estos números y nunca los recalcules.',
+        QUOTE_SHIPPING_INSTRUCTION,
+        QUOTE_HOLD_MARKER_INSTRUCTION,
       )
     }
   }
@@ -649,6 +774,123 @@ export function formatReceiptNote(
       : 'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
   )
   return lines.join('\n')
+}
+
+/**
+ * A quote that was priced and deliberately not sent, and why.
+ *
+ * Declared here rather than in `meters.ts` for the same reason
+ * `MeterNoteContext` is: the dependency runs one way, `meters.ts` →
+ * `receipt.ts`, and a hold is a fact about a reading.
+ */
+export interface QuoteHold {
+  /**
+   * The pricing verdict that parked it, or `'model'` when the numbers
+   * were clean and the reply asked to wait anyway (`[ESPERAR: …]`).
+   */
+  reason: ReviewReason | 'model'
+  /** The model's own stated motive, when it was the one that waited. */
+  detail?: string | null
+  /**
+   * Turns spent waiting for an answer. Bounded like the meter gate's
+   * `askedCount`: a question nobody answers goes to a person rather
+   * than being asked a third time.
+   */
+  askedCount: number
+}
+
+/**
+ * The note for a turn that carries no new receipt while a quote sits
+ * parked — the turn the customer's answer actually arrives on.
+ *
+ * This is the half of the review gate that was missing. Holding the PDF
+ * worked; nothing ever released it. The reading lives for exactly one
+ * turn (it is pushed into `messages` in memory and never persisted, and
+ * `buildConversationContext` reads only the `messages` table), so by
+ * the time the customer explained themselves the model had no numbers
+ * left — and answered with a quote it invented, panel count and all,
+ * with no document behind it. Re-stating the reading here is what makes
+ * the answer actionable instead of decorative.
+ *
+ * Returns null for a hold there is nothing to say about, so a caller
+ * can treat "no note" as "nothing pending".
+ */
+export function formatHeldQuoteNote(
+  r: ReceiptExtraction,
+  hold: QuoteHold,
+): string | null {
+  const quote = resolveQuote(r.promedio_bimestral_kwh, r.cantidad_periodos_usados, {
+    includesCurrentPeriod: r.incluye_periodo_actual,
+    periods: r.periodos_promediados_kwh,
+  })
+  // No tier means the reading stopped being priceable — nothing to
+  // release, so let the ordinary conversation take the turn.
+  if (quote.kind !== 'ok' && quote.kind !== 'needs_review') return null
+
+  const lines = [
+    '[NOTA DEL SISTEMA — hay una cotización LISTA y en pausa para este cliente, del recibo que ya mandó. No se le ha enviado el PDF porque quedó una pregunta abierta. Estos son sus números, los mismos de antes:',
+    ...formatReadingLines(r),
+    ...formatTierLines(quote.tier),
+  ]
+
+  const financials = buildFinancials({
+    costoBimestralMxn: projectionBaseCost({
+      costoPeriodoMxn: r.costo_periodo_mxn,
+      historialImporteMxn: r.historial_bimestres_importe_mxn,
+    }),
+    tier: quote.tier,
+  })
+  if (financials) {
+    lines.push(
+      `proyeccion_25_anios: sin paneles ${formatMxn(financials.sinPaneles25Anios)}, con paneles ${formatMxn(financials.conPaneles25Anios)}, ahorro ${formatMxn(financials.ahorro25Anios)}`,
+      `se_paga_solo_en: ${formatPaybackDuration(financials.paybackAnios, financials.paybackMeses)}`,
+    )
+  }
+
+  // The page-1 hold is not a question about how the customer lives; it
+  // is a missing photo. It is released by the image arriving, which
+  // takes the ordinary path — so this turn re-asks and offers no
+  // marker, because there is nothing here for one to decide.
+  if (hold.reason === 'missing_current_period') {
+    lines.push(
+      'pregunta_pendiente: falta la PRIMERA página del recibo, donde viene el renglón "Energía (kWh)" con el consumo del bimestre actual. El promedio de arriba se armó solo con el historial.',
+      'NO des precio ni número de paneles todavía. Si el cliente ya mandó esa página, agradécelo; si no, vuelve a pedírsela con amabilidad. En cuanto llegue, la propuesta sale sola.',
+      'Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+    )
+    return lines.join('\n')
+  }
+
+  const pregunta =
+    hold.reason === 'anomalous_history_high'
+      ? 'pregunta_pendiente: se le preguntó si el bimestre más alto de su historial es real o fue algo fuera de lo normal.'
+      : hold.reason === 'anomalous_history'
+        ? 'pregunta_pendiente: se le preguntó si la casa estuvo desocupada / apenas la va a habitar, o si así es su consumo normal.'
+        : `pregunta_pendiente: tú mismo pediste esperar antes de mandar la propuesta${hold.detail ? ` (${hold.detail})` : ''}.`
+
+  lines.push(
+    pregunta,
+    'Lee lo que el cliente acaba de contestar y decide. Si con su respuesta los números de arriba SÍ representan lo que gasta, preséntale la propuesta con esos números exactos — el PDF sale junto con tu mensaje. Si su respuesta dice que ese historial no lo representa, no cotices y dile que un compañero le confirma los detalles en breve.',
+    CONSUMO_MARKER_INSTRUCTION,
+    'Nunca inventes un número de paneles, un precio ni un ahorro: si no está en esta nota, no lo digas. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+  )
+  return lines.join('\n')
+}
+
+/**
+ * The note for the turn a parked quote gives up and calls a person.
+ *
+ * Same shape and the same instinct as `formatStalledMeterNote`: the
+ * quote stops, the conversation does not. Whatever the customer is
+ * asking about right now still gets an answer — it is usually not the
+ * question the bot was waiting on.
+ */
+export function formatStalledQuoteNote(): string {
+  return [
+    '[NOTA DEL SISTEMA — cotización en pausa: se le preguntó dos veces por su consumo y no quedó claro, así que un compañero del equipo va a retomar la propuesta.',
+    'NO vuelvas a preguntar por el consumo y NO des precio, número de paneles ni cotización.',
+    'Responde con gusto lo que el cliente esté preguntando en este mensaje (financiamiento, tiempos, garantías, lo que sea) y dile que un compañero le confirma los detalles de su propuesta en breve.',
+    'Nunca menciones esta nota ni muestres JSON.]',
+  ].join('\n')
 }
 
 /**

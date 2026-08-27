@@ -63,6 +63,17 @@ export interface ProviderResult {
  *  trailing `[STATUS: …]` / `[ESTATUS: …]` marker, normalized to English. */
 export type LeadStatus = 'hot' | 'warm' | 'cold'
 
+/**
+ * The model's verdict on a consumption question it asked a turn ago
+ * (the `[CONSUMO: NORMAL]` / `[CONSUMO: ATIPICO]` marker).
+ *
+ * `normal` means the customer confirmed the reading represents how they
+ * actually live, and the parked proposal may go out on these numbers.
+ * `atypical` means it does not — an empty house, a remodel, a bimester
+ * that was misread — so no document goes out and a person sizes it.
+ */
+export type ConsumptionVerdict = 'normal' | 'atypical'
+
 /** Outcome of a generation call. */
 export interface GenerateResult {
   /** The reply text, with any handoff sentinel and internal markers stripped. */
@@ -80,6 +91,20 @@ export interface GenerateResult {
    *  multi-meter gate in `src/lib/ai/meters.ts`: the bot waits for that
    *  many bills, then quotes their sum. */
   metersExpected: number | null
+  /**
+   * True when the reply asked for the proposal PDF to wait a turn (the
+   * `[ESPERAR: motivo]` marker). The model's only say over a document
+   * that is otherwise sent by code the moment its reply lands — without
+   * it, a turn spent asking a question still shipped the quote.
+   */
+  holdQuote: boolean
+  /** The motive stated inside that marker, for the log. Null when the
+   *  model gave none, and always null when `holdQuote` is false. */
+  holdReason: string | null
+  /** The model's read on the consumption question it asked a turn ago
+   *  (`[CONSUMO: …]`), or null when it hasn't answered it yet. Releases
+   *  or buries the parked proposal. */
+  consumptionVerdict: ConsumptionVerdict | null
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null
 }

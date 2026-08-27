@@ -3,6 +3,7 @@ import {
   type AiConfig,
   type AiUsage,
   type ChatMessage,
+  type ConsumptionVerdict,
   type GenerateResult,
   type LeadStatus,
 } from './types'
@@ -98,6 +99,32 @@ const METERS_MARKER_RE = /\[\s*(?:MEDIDORES|METERS)\s*:\s*(\d{1,2})\s*\]/gi
 const MAX_METERS_MARKER = 6
 
 /**
+ * Hold marker: the reply is asking something and does NOT want the
+ * proposal PDF going out underneath it this turn. The motive is
+ * optional so a bare `[ESPERAR]` still works — a marker that only
+ * counts when it is punctuated correctly is a marker that fails on the
+ * turn it matters.
+ */
+const HOLD_MARKER_RE = /\[\s*(?:ESPERAR|WAIT|HOLD)\s*(?::\s*([^\]]*))?\]/gi
+
+/** Longest motive we keep. It goes to a log line, not to the customer. */
+const MAX_HOLD_REASON = 120
+
+/**
+ * Consumption verdict: the answer to the question a held quote is
+ * waiting on. Accented and unaccented spellings both land, because the
+ * model writes these in Spanish and "ATÍPICO" is the natural one.
+ */
+const CONSUMO_MARKER_RE = /\[\s*(?:CONSUMO|CONSUMPTION)\s*:\s*([^\]]*)\]/gi
+
+/** Accepted labels (accents stripped) → canonical verdict. */
+const CONSUMO_LABELS: Record<string, ConsumptionVerdict> = {
+  NORMAL: 'normal',
+  ATIPICO: 'atypical',
+  ATYPICAL: 'atypical',
+}
+
+/**
  * Split the raw model output into `{ text, handoff, leadStatus, usage }`.
  * The sentinel can appear alone or trailing a partial reply; either way
  * we treat the turn as a handoff and strip the marker from any remaining
@@ -113,6 +140,9 @@ export function parseGeneration(
   let leadStatus: LeadStatus | null = null
   let quoteSent = false
   let metersExpected: number | null = null
+  let holdQuote = false
+  let holdReason: string | null = null
+  let consumptionVerdict: ConsumptionVerdict | null = null
   const text = raw
     .split(HANDOFF_SENTINEL)
     .join('')
@@ -135,6 +165,31 @@ export function parseGeneration(
       if (parsed >= 1 && parsed <= MAX_METERS_MARKER) metersExpected = parsed
       return ''
     })
+    .replace(HOLD_MARKER_RE, (_marker, reason?: string) => {
+      holdQuote = true
+      const trimmed = reason?.trim().slice(0, MAX_HOLD_REASON) || ''
+      if (trimmed) holdReason = trimmed
+      return ''
+    })
+    .replace(CONSUMO_MARKER_RE, (_marker, label: string) => {
+      const key = label
+        .trim()
+        .toUpperCase()
+        .normalize('NFD')
+        .replace(/\p{M}/gu, '')
+      consumptionVerdict = CONSUMO_LABELS[key] ?? consumptionVerdict
+      return ''
+    })
     .trim()
-  return { text, handoff, leadStatus, quoteSent, metersExpected, usage }
+  return {
+    text,
+    handoff,
+    leadStatus,
+    quoteSent,
+    metersExpected,
+    holdQuote,
+    holdReason,
+    consumptionVerdict,
+    usage,
+  }
 }

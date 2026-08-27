@@ -18,6 +18,7 @@ function bill(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtraction {
     consumo_periodo_actual_kwh: 1000,
     periodo_actual: '22 MAY 26 - 22 JUL 26',
     historial_bimestres_kwh: [900, 950, 1000, 1050, 1100],
+    historial_bimestres_periodo: [null, null, null, null, null],
     cantidad_periodos_usados: 6,
     promedio_bimestral_kwh: 1000,
     incluye_periodo_actual: true,
