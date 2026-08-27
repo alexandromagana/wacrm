@@ -109,6 +109,55 @@ export function matchesKeywordTrigger(
   return false;
 }
 
+/**
+ * The strings an inbound message offers up to an entry trigger.
+ *
+ * Text offers its body. A tap offers both halves of the reply:
+ * template quick-reply buttons reach us with no Meta-assigned id at
+ * all — the webhook backfills `reply_id` with the button's visible
+ * text — so the title is the only handle a menu sent from a broadcast
+ * leaves behind. Interactive (non-template) taps do carry our own
+ * send-time id, which is what a builder-authored keyword would name,
+ * so both are worth matching.
+ */
+export function entryTriggerCandidates(message: ParsedInbound): string[] {
+  if (message.kind === "text") return [message.text];
+  return message.reply_id === message.reply_title
+    ? [message.reply_id]
+    : [message.reply_id, message.reply_title];
+}
+
+/**
+ * Does this flow's entry trigger fire for this inbound? Pure — the
+ * DB-backed `findEntryFlow` loops the account's active flows over it.
+ *
+ * Taps are eligible here, unlike inside an active run where a reply is
+ * answering the node the customer is standing on. A tap with no run
+ * behind it is just a message: the customer picked an option off a
+ * template we broadcast hours ago, and the flow whose keyword matches
+ * that option is the one meant to pick it up. Before this, such a tap
+ * matched nothing, and the webhook mutes the AI on taps — so those
+ * customers got silence.
+ */
+export function matchesEntryTrigger(
+  flow: Pick<FlowRow, "trigger_type" | "trigger_config">,
+  message: ParsedInbound,
+  isFirstInbound: boolean,
+): boolean {
+  if (flow.trigger_type === "keyword") {
+    const cfg = flow.trigger_config as KeywordTriggerConfig;
+    return entryTriggerCandidates(message).some((candidate) =>
+      matchesKeywordTrigger(candidate, cfg),
+    );
+  }
+  // A tap can be a contact's first-ever inbound — that is exactly the
+  // shape of a lead answering a cold outreach template — so this
+  // trigger is about WHO is messaging, not how.
+  if (flow.trigger_type === "first_inbound_message") return isFirstInbound;
+  // 'manual' triggers do not auto-start from inbound messages.
+  return false;
+}
+
 /** Nodes that advance to a next_node_key without waiting for input. */
 export function isAutoAdvancing(node_type: string): boolean {
   return (
@@ -314,10 +363,6 @@ async function findEntryFlow(
   message: ParsedInbound,
   isFirstInbound: boolean,
 ): Promise<FlowRow | null> {
-  // Only text messages can match an entry trigger. Interactive replies
-  // are responses to existing prompts; they never start a new flow.
-  if (message.kind !== "text") return null;
-
   // Pull all active flows for this account. Active set is bounded
   // (the builder discourages double-trigger overlap; partial index
   // makes the lookup index-supported).
@@ -329,21 +374,13 @@ async function findEntryFlow(
     .order("created_at", { ascending: true });
   if (error || !flows) return null;
 
-  const typed = flows as FlowRow[];
-  for (const flow of typed) {
-    if (flow.trigger_type === "keyword") {
-      if (matchesKeywordTrigger(
-        message.text,
-        flow.trigger_config as KeywordTriggerConfig,
-      )) {
-        return flow;
-      }
-    } else if (flow.trigger_type === "first_inbound_message" && isFirstInbound) {
-      return flow;
-    }
-    // 'manual' triggers do not auto-start from inbound messages.
-  }
-  return null;
+  // First match wins, oldest flow first — the ORDER BY above makes
+  // that deterministic when two flows claim overlapping keywords.
+  return (
+    (flows as FlowRow[]).find((flow) =>
+      matchesEntryTrigger(flow, message, isFirstInbound),
+    ) ?? null
+  );
 }
 
 // ============================================================

@@ -326,6 +326,9 @@ function TriggerPanel({
               }
               t={t}
             />
+            <p className="text-muted-foreground mt-1 text-xs">
+              {t('keywordsTapHint')}
+            </p>
           </div>
         )}
       </div>

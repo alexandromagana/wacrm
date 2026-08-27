@@ -1107,11 +1107,12 @@
     "builder": {
       "triggerTitle": "Trigger",
       "whenLabel": "When…",
-      "triggerKeywordTitle": "A message contains a keyword",
+      "triggerKeywordTitle": "A message or button tap contains a keyword",
       "triggerFirstInboundTitle": "Customer's first ever inbound message",
       "triggerManualTitle": "Manual only (no auto-trigger)",
       "keywordsLabel": "Keywords (comma-separated)",
       "keywordsPlaceholder": "support, help, hi",
+      "keywordsTapHint": "Also matches when a customer taps a button on a template or broadcast, against the button's text. Replies inside a running flow are handled by that flow, not here.",
       "entryNodeTitle": "Entry node:",
       "entryNodePlaceholder": "Pick the first node…",
       "nodesTitle": "Nodes ({count})",

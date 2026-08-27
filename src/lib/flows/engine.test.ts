@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   matchReplyId,
   matchesKeywordTrigger,
+  entryTriggerCandidates,
+  matchesEntryTrigger,
   isAutoAdvancing,
   isSuspending,
   isTerminal,
@@ -140,6 +142,131 @@ describe("matchesKeywordTrigger", () => {
     const cfg = { keywords: ["", "support", ""] };
     expect(matchesKeywordTrigger("support center", cfg)).toBe(true);
     expect(matchesKeywordTrigger("nope", cfg)).toBe(false);
+  });
+});
+
+describe("entryTriggerCandidates", () => {
+  it("offers the body of a text message", () => {
+    expect(
+      entryTriggerCandidates({
+        kind: "text",
+        text: "hola quiero info",
+        meta_message_id: "wamid.1",
+      }),
+    ).toEqual(["hola quiero info"]);
+  });
+
+  it("offers both id and title of an interactive tap", () => {
+    expect(
+      entryTriggerCandidates({
+        kind: "interactive_reply",
+        reply_id: "opt_quote",
+        reply_title: "Sí, quiero cotización",
+        meta_message_id: "wamid.2",
+      }),
+    ).toEqual(["opt_quote", "Sí, quiero cotización"]);
+  });
+
+  it("collapses the pair for template buttons, where id IS the title", () => {
+    // Meta assigns no id to template quick-replies; the webhook fills
+    // reply_id with button.payload || button.text.
+    expect(
+      entryTriggerCandidates({
+        kind: "interactive_reply",
+        reply_id: "Sí, quiero cotización",
+        reply_title: "Sí, quiero cotización",
+        meta_message_id: "wamid.3",
+      }),
+    ).toEqual(["Sí, quiero cotización"]);
+  });
+});
+
+describe("matchesEntryTrigger", () => {
+  const keywordFlow = {
+    trigger_type: "keyword" as const,
+    trigger_config: { keywords: ["cotización"] },
+  };
+
+  it("starts a keyword flow from a template button tap", () => {
+    // The regression this whole change exists for: a broadcast-sent
+    // template's button tap used to match nothing at all.
+    expect(
+      matchesEntryTrigger(
+        keywordFlow,
+        {
+          kind: "interactive_reply",
+          reply_id: "Sí, quiero cotización",
+          reply_title: "Sí, quiero cotización",
+          meta_message_id: "wamid.4",
+        },
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("matches on the reply id when the visible title does not", () => {
+    expect(
+      matchesEntryTrigger(
+        keywordFlow,
+        {
+          kind: "interactive_reply",
+          reply_id: "cotización_si",
+          reply_title: "Yes please",
+          meta_message_id: "wamid.5",
+        },
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("still matches plain text", () => {
+    expect(
+      matchesEntryTrigger(
+        keywordFlow,
+        { kind: "text", text: "quiero una cotización", meta_message_id: "w.6" },
+        false,
+      ),
+    ).toBe(true);
+  });
+
+  it("does not fire when neither half of the tap matches", () => {
+    expect(
+      matchesEntryTrigger(
+        keywordFlow,
+        {
+          kind: "interactive_reply",
+          reply_id: "opt_no",
+          reply_title: "Ahora no",
+          meta_message_id: "wamid.7",
+        },
+        false,
+      ),
+    ).toBe(false);
+  });
+
+  it("fires first_inbound_message for a tap that is the first inbound", () => {
+    const flow = {
+      trigger_type: "first_inbound_message" as const,
+      trigger_config: {},
+    };
+    const tap = {
+      kind: "interactive_reply" as const,
+      reply_id: "whatever",
+      reply_title: "Whatever",
+      meta_message_id: "wamid.8",
+    };
+    expect(matchesEntryTrigger(flow, tap, true)).toBe(true);
+    expect(matchesEntryTrigger(flow, tap, false)).toBe(false);
+  });
+
+  it("never auto-starts a manual flow", () => {
+    expect(
+      matchesEntryTrigger(
+        { trigger_type: "manual" as const, trigger_config: {} },
+        { kind: "text", text: "cotización", meta_message_id: "w.9" },
+        true,
+      ),
+    ).toBe(false);
   });
 });
 
