@@ -32,6 +32,7 @@ import {
 import { sendQuoteProposal } from './quote-pdf'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
+import { markReceiptMediaRead } from './inbound-buffer'
 import { engineSendText } from '@/lib/flows/meta-send'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import {
@@ -240,11 +241,31 @@ export async function dispatchInboundToAiReply(
     assistantWasExpectedToReply = true
 
     if (conv.ai_autoreply_disabled) return // handed off / turned off here
+
+    // Whether this turn carries a bill no turn has opened yet. Read
+    // before the cap check, because an unread bill changes what that
+    // check is allowed to do.
+    const hasReceipt = Boolean(
+      receiptMediaIds && receiptMediaIds.length > 0 && accessToken,
+    )
+
     // Cheap early-out; the authoritative cap check is the atomic claim
     // below (this read can race a concurrent inbound). The bot has run
     // out of replies for this thread — hand it off rather than leaving
     // the customer's message sitting unflagged.
-    if (conv.ai_reply_count >= config.autoReplyMaxPerConversation) {
+    //
+    // A turn carrying an unread bill is the exception, and the reason is
+    // that the bill IS the conversation: returning here handed a person
+    // the one customer who had already done exactly what the bot asked,
+    // with no quote and nothing saying why. That turn now runs, prices
+    // the proposal, and hands off after the send rather than instead of
+    // it. If the bill turns out unreadable there is no quote to protect
+    // — the claim below fails as it always did and the thread reaches a
+    // person one vision call later.
+    if (
+      conv.ai_reply_count >= config.autoReplyMaxPerConversation &&
+      !hasReceipt
+    ) {
       const messages = await buildConversationContext(db, conversationId)
       await performHandoff(db, {
         accountId,
@@ -271,9 +292,6 @@ export async function dispatchInboundToAiReply(
     const inboundText = last?.role === 'user' ? last.content : ''
     // Image-only turns have no text rows yet — the receipt note below
     // becomes the turn. Without either, there's nothing to reply to.
-    const hasReceipt = Boolean(
-      receiptMediaIds && receiptMediaIds.length > 0 && accessToken,
-    )
     if (messages.length === 0 && !hasReceipt) return
 
     // Account-wide throttle on the shared BYO key. The per-conversation
@@ -347,6 +365,19 @@ export async function dispatchInboundToAiReply(
           // re-reading one costs a vision call and invites two readings
           // of the same bill to disagree.
           skipMediaIds: meterState.readMediaIds,
+        })
+        // This turn has now looked at them. Written before anything
+        // branches on the result, and for the whole burst rather than
+        // the bills that parsed: an unreadable one has still had its
+        // vision call, and what moves that conversation on is the bot
+        // asking for a resend — which arrives as a new media id.
+        //
+        // Awaited, unlike the bookkeeping around it. The next delivery
+        // in this burst is already sleeping its debounce, and it decides
+        // what to read from exactly this column.
+        await markReceiptMediaRead(db, {
+          conversationId,
+          mediaIds: receiptMediaIds!,
         })
         if (readings.length > 0) {
           meterState = mergeReadings(
@@ -699,7 +730,15 @@ export async function dispatchInboundToAiReply(
       console.error('[ai auto-reply] claim_ai_reply_slot failed:', claimErr)
       return
     }
-    if (claimed !== true) {
+    // A priced proposal outranks the cap the same way it outranks the
+    // handoff above. A turn that got here with a quote in hand ran only
+    // because the customer's bill arrived after the last slot was spent,
+    // so there was never a slot for it to claim — and discarding the
+    // document here would repeat the failure the early-out was changed
+    // to avoid. It sends outside the cap, like the farewell send above,
+    // and the thread is handed over immediately after.
+    const capExempt = claimed !== true
+    if (capExempt && !quoteReady) {
       // Lost the per-conversation cap race — a concurrent inbound claimed
       // the last slot first. The reply we generated is discarded unsent,
       // and the thread is now at the same "cap exhausted" state as the
@@ -794,7 +833,10 @@ export async function dispatchInboundToAiReply(
     // there is nothing left for a person to chase.
     const meterStillStalled = meterHandoff && !quoteReady
 
-    if (handoff || meterStillStalled || holdHandoff) {
+    // `capExempt` joins them for the same reason: the bot is out of
+    // replies and a person has to take it from here, but not before the
+    // proposal it just priced reaches the customer.
+    if (handoff || meterStillStalled || holdHandoff || capExempt) {
       await performHandoff(db, {
         accountId,
         conversationId,
@@ -808,7 +850,9 @@ export async function dispatchInboundToAiReply(
             ? 'meter_gate'
             : holdHandoff
               ? 'quote_review'
-              : 'model_requested',
+              : handoff
+                ? 'model_requested'
+                : 'cap_reached',
         }),
       })
     }

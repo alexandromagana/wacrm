@@ -13,6 +13,7 @@ const h = vi.hoisted(() => ({
   extractReceipts: vi.fn(),
   saveReceiptData: vi.fn(),
   sendQuoteProposal: vi.fn(),
+  markReceiptMediaRead: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
     autoResponders: [] as { id: string }[],
@@ -50,6 +51,9 @@ vi.mock('./receipt', () => ({
   METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
+vi.mock('./inbound-buffer', () => ({
+  markReceiptMediaRead: h.markReceiptMediaRead,
+}))
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendText: h.engineSendText }))
 vi.mock('./admin-client', () => ({
   supabaseAdmin: () => ({
@@ -168,6 +172,7 @@ beforeEach(() => {
   h.applyQuoteSentTag.mockResolvedValue(undefined)
   h.extractReceipts.mockResolvedValue([])
   h.saveReceiptData.mockResolvedValue(undefined)
+  h.markReceiptMediaRead.mockResolvedValue(undefined)
   h.sendQuoteProposal.mockResolvedValue({
     kind: 'skipped',
     reason: 'not_quotable',
@@ -308,6 +313,76 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
       ai_autoreply_disabled: true,
       assigned_agent_id: 'agent-7',
     })
+  })
+
+  it('reads the bill before handing a cap-exhausted thread over', async () => {
+    // The failure this exists for: a customer sends the receipt the bot
+    // spent three turns asking for, arrives one message past the cap,
+    // and gets a silent handoff instead of the quote they earned. The
+    // reader runs, the proposal ships, and the person takes it from
+    // there — after the send, not instead of it.
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+    }
+    h.state.claim = false // no slot left to claim, and none is needed
+    mockBills({
+      consumo_periodo_actual_kwh: 1450,
+      periodo_actual: null,
+      historial_bimestres_kwh: [1380, 1420],
+      cantidad_periodos_usados: 3,
+      promedio_bimestral_kwh: 1417,
+      tarifa: null,
+      costo_periodo_mxn: 6200,
+      advertencias: '',
+    })
+    h.sendQuoteProposal.mockResolvedValue({
+      kind: 'sent',
+      folio: 'F-1',
+      panels: 6,
+    })
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      receiptMediaIds: ['media-1'],
+      accessToken: 'meta-token',
+    })
+
+    expect(h.extractReceipts).toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'Hello!' }),
+    )
+    expect(h.sendQuoteProposal).toHaveBeenCalled()
+    // And the thread still goes to a person, once the quote is out.
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'It ran out of replies',
+    )
+  })
+
+  it('hands a cap-exhausted thread over when the bill will not read', async () => {
+    // The other half of the exception: no quote to protect, so nothing
+    // changes — the reply is discarded unsent and a person picks it up,
+    // one vision call later than before.
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 3,
+    }
+    h.state.claim = false
+    h.extractReceipts.mockResolvedValue([])
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      receiptMediaIds: ['media-1'],
+      accessToken: 'meta-token',
+    })
+
+    expect(h.engineSendText).not.toHaveBeenCalled()
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'It ran out of replies',
+    )
   })
 
   it('skips when there is nothing to reply to', async () => {
@@ -502,6 +577,20 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   it('runs no extraction on a plain text turn', async () => {
     await dispatchInboundToAiReply(ARGS)
     expect(h.extractReceipts).not.toHaveBeenCalled()
+    expect(h.markReceiptMediaRead).not.toHaveBeenCalled()
+  })
+
+  it('marks the whole burst read, parsed or not', async () => {
+    // What stops the next delivery in the burst from handing the same
+    // bill over again. Written for every media the turn carried, not
+    // just the ones that parsed: an unreadable bill has had its vision
+    // call, and the resend the bot asks for arrives as a new media id.
+    h.extractReceipts.mockResolvedValue([])
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+    expect(h.markReceiptMediaRead).toHaveBeenCalledWith(
+      expect.anything(),
+      { conversationId: 'conv-1', mediaIds: ['media-1', 'media-2'] },
+    )
   })
 
   it('sends the proposal from the same reading, after the text reply', async () => {

@@ -24,7 +24,13 @@ import {
 // Inbound processing can fan out to per-media Meta verification calls, so
 // give it headroom beyond the platform default (Vercel clamps this to the
 // plan's ceiling). Tune as needed.
-export const maxDuration = 60
+//
+// The heaviest path is a receipt turn, and it now opens with a 20s burst
+// debounce (`inboundDebounceMs`) before it downloads the media, spends a
+// vision call, spends a chat call, renders the proposal PDF and sends it.
+// Sixty seconds left that with no margin, so raise it in step with the
+// debounce rather than discovering the ceiling on a customer's quote.
+export const maxDuration = 120
 
 // Lazy-initialized to avoid build-time crash when env vars are missing
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
