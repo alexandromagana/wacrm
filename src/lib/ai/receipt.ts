@@ -312,6 +312,19 @@ export interface RawReceiptValues {
 }
 
 /**
+ * Raised when a reading carries history but no current period — the
+ * shape a photo of page 2 alone produces.
+ *
+ * Exported because it is not only a warning, it is a fact about which
+ * half of the bill this reading came from, and `joinPages` has to strip
+ * it back off once the other half arrives. A stale copy would reach the
+ * model through `formatReceiptNote` and have it ask for a page it is
+ * already holding.
+ */
+export const MISSING_PAGE_ONE_WARNING =
+  'no se pudo leer el consumo del periodo actual (página 1); el promedio se calculó solo con el historial y puede no reflejar el consumo de hoy'
+
+/**
  * Turn raw receipt values into a `ReceiptExtraction`: coerce, cap the
  * history, derive the average and the period cost, and raise the two
  * warnings that fall out of the numbers themselves.
@@ -415,9 +428,7 @@ export function buildExtraction(r: RawReceiptValues): ReceiptExtraction {
   // average of older bimesters, which is how a house that was empty last
   // year gets sized for a house nobody lives in. Say so out loud.
   if (consumoActual == null && historial.length > 0) {
-    advertencias.push(
-      'no se pudo leer el consumo del periodo actual (página 1); el promedio se calculó solo con el historial y puede no reflejar el consumo de hoy',
-    )
+    advertencias.push(MISSING_PAGE_ONE_WARNING)
   }
   // A gap between the period charge and the headline total means the
   // customer carries debt or credit from earlier bimesters. Not an

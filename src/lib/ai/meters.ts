@@ -1,6 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  buildExtraction,
   METERS_MARKER_INSTRUCTION,
+  MISSING_PAGE_ONE_WARNING,
   type QuoteHold,
   type ReceiptExtraction,
 } from './receipt'
@@ -278,6 +280,138 @@ export function combineReadings(
   }
 }
 
+// ============================================================
+// The two halves of one bill, photographed a minute apart.
+//
+// `groupIntoReceipts` reads every photo of a turn in one vision call,
+// which is exactly right for "page 1 and page 2 sent back-to-back". But
+// a customer who sends page 1, gets asked for the rest, and finds it a
+// minute later splits those pages across TURNS — and the second turn
+// skips the page already read (`skipMediaIds`), so the model sees page
+// 2 alone.
+//
+// A page-2-only reading has no service number, no current period and no
+// amounts: every field `sameMeter` compares lives on page 1. It
+// therefore scored zero against the bill it belongs to and was filed as
+// a second meter, and the bot asked a customer with one meter to
+// confirm meters they don't have.
+//
+// The join below is deliberately the narrowest thing that fixes it: it
+// only ever fills a hole. A continuation page merges into a stored
+// reading when the two are literal complementary halves — one has the
+// identity and no history, the other has history and no identity — and
+// never when they overlap. Anything else takes the old path, because
+// the failure it would otherwise risk is the worse one: page 2 of a
+// genuine second meter, absorbed in silence into the first.
+// ============================================================
+
+/**
+ * Whether a reading carries anything that identifies which meter and
+ * which bimester it belongs to. All of these are printed on page 1.
+ */
+function hasPageOneIdentity(r: ReceiptExtraction): boolean {
+  return (
+    r.numero_servicio != null ||
+    r.periodo_actual != null ||
+    r.consumo_periodo_actual_kwh != null ||
+    r.importe_periodo_mxn != null ||
+    r.importe_total_a_pagar_mxn != null
+  )
+}
+
+/**
+ * Whether this reading is page 2 of a bill rather than a bill.
+ *
+ * History and nothing else. The history requirement is what keeps an
+ * unreadable photo — null everywhere — from qualifying and dissolving
+ * into whatever reading happens to be open.
+ */
+export function isContinuationPage(r: ReceiptExtraction): boolean {
+  return r.historial_bimestres_kwh.length > 0 && !hasPageOneIdentity(r)
+}
+
+/** The mirror: a stored reading that is page 1 still waiting for its
+ *  history. Only these accept a continuation page. */
+function awaitsHistory(r: ReceiptExtraction): boolean {
+  return r.historial_bimestres_kwh.length === 0 && hasPageOneIdentity(r)
+}
+
+/**
+ * Rejoin the two halves into the reading the customer actually sent.
+ *
+ * Rebuilt through `buildExtraction` rather than by copying fields
+ * across, so the average, the period count and `incluye_periodo_actual`
+ * are derived by the one function that derives them everywhere else —
+ * a hand-rolled merge is how a reading ends up with an average that
+ * doesn't match its own numbers.
+ *
+ * Passing through it also buys back something page 2 could not have on
+ * its own: `selectRecentHistorial` picks the year's rows against the
+ * bill's own end date, which only page 1 carries. Read alone, page 2
+ * fell back to the order the rows arrived in.
+ *
+ * The one thing it cannot recover is a row page 2's read already
+ * dropped — the history handed back in is the selected set, not the
+ * raw table.
+ */
+export function joinPages(
+  pageOne: ReceiptExtraction,
+  pageTwo: ReceiptExtraction,
+): ReceiptExtraction {
+  // Page 2's own "page 1 is missing" note is the one thing that must
+  // not survive: the half being joined in is its answer, and left in
+  // place it reaches the model through `formatReceiptNote` and has it
+  // ask for a page it is holding. `buildExtraction` re-raises it if it
+  // somehow still applies.
+  //
+  // Cut out by substring, not by splitting on the '; ' separator —
+  // that separator also appears INSIDE this warning, so splitting would
+  // hand back two fragments and match neither. Whole strings are also
+  // how `combineReadings` de-duplicates, for the same reason.
+  const strip = (a: string) =>
+    a
+      .replace(MISSING_PAGE_ONE_WARNING, '')
+      .replace(/\s*;\s*;\s*/g, '; ')
+      .replace(/^\s*;\s*|\s*;\s*$/g, '')
+      .trim()
+
+  const advertencias = [
+    ...new Set([strip(pageOne.advertencias), strip(pageTwo.advertencias)]),
+  ]
+    .filter(Boolean)
+    .join('; ')
+
+  return buildExtraction({
+    consumo_periodo_actual_kwh: pageOne.consumo_periodo_actual_kwh,
+    periodo_actual: pageOne.periodo_actual,
+    historial_bimestres_kwh: pageTwo.historial_bimestres_kwh,
+    historial_periodos: pageTwo.historial_bimestres_periodo,
+    historial_bimestres_importe_mxn: pageTwo.historial_bimestres_importe_mxn,
+    tarifa: pageOne.tarifa ?? pageTwo.tarifa,
+    numero_servicio: pageOne.numero_servicio,
+    ciudad: pageOne.ciudad ?? pageTwo.ciudad,
+    importe_periodo_mxn: pageOne.importe_periodo_mxn,
+    importe_dap_mxn: pageOne.importe_dap_mxn,
+    importe_total_a_pagar_mxn: pageOne.importe_total_a_pagar_mxn,
+    advertencias,
+  })
+}
+
+/**
+ * The newest stored reading a continuation page may complete, or -1.
+ *
+ * Newest first, because a customer working through several meters sends
+ * them in order: the page 2 that just landed belongs to the page 1 they
+ * photographed a minute ago, not to the meter they finished with three
+ * messages back.
+ */
+function pageOneAwaitingHistory(readings: readonly ReceiptExtraction[]): number {
+  for (let i = readings.length - 1; i >= 0; i--) {
+    if (awaitsHistory(readings[i])) return i
+  }
+  return -1
+}
+
 /**
  * Merge freshly-read bills into the state, replacing any that turn out
  * to be a meter already held.
@@ -287,6 +421,12 @@ export function combineReadings(
  * stored on earlier turns. A repeat of a known meter replaces the old
  * reading rather than adding to it: the newer photo is usually the
  * clearer one, and it is the reason the customer sent it again.
+ *
+ * The exception is a continuation page, which is not a bill at all: it
+ * completes one already stored instead of joining the count. With no
+ * half waiting for it, it falls through and is treated exactly as
+ * before — the safe direction, since the alternative is quoting a
+ * property on a history that belongs to a meter nobody priced.
  */
 export function mergeReadings(
   state: MeterState,
@@ -295,6 +435,13 @@ export function mergeReadings(
 ): MeterState {
   const readings = [...state.readings]
   for (const reading of incoming) {
+    if (isContinuationPage(reading)) {
+      const half = pageOneAwaitingHistory(readings)
+      if (half >= 0) {
+        readings[half] = joinPages(readings[half], reading)
+        continue
+      }
+    }
     const existing = readings.findIndex((r) => sameMeter(r, reading))
     if (existing >= 0) readings[existing] = reading
     else if (readings.length < MAX_METERS) readings.push(reading)

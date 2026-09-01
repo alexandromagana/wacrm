@@ -3,15 +3,22 @@ import {
   applyMeterConfirmation,
   combineReadings,
   emptyMeterState,
+  isContinuationPage,
   isMeterConfirmation,
   formatMeterGateNote,
+  joinPages,
   mergeReadings,
   parseMeterState,
   resolveMeterGate,
   sameMeter,
   type MeterState,
 } from './meters'
-import type { ReceiptExtraction } from './receipt'
+import {
+  buildExtraction,
+  MISSING_PAGE_ONE_WARNING,
+  type RawReceiptValues,
+  type ReceiptExtraction,
+} from './receipt'
 
 function bill(overrides: Partial<ReceiptExtraction> = {}): ReceiptExtraction {
   return {
@@ -41,6 +48,39 @@ function stateWith(
   overrides: Partial<MeterState> = {},
 ): MeterState {
   return { ...emptyMeterState(), readings, ...overrides }
+}
+
+/**
+ * A photo of page 1 alone — everything that names the meter and the
+ * bimester being charged, and no history table.
+ *
+ * Built through `buildExtraction` rather than by hand: these two
+ * helpers exist to exercise the derived fields (`promedio`,
+ * `cantidad_periodos_usados`, `incluye_periodo_actual`), and a
+ * hand-written literal would assert against numbers nothing derived.
+ */
+function pageOne(overrides: RawReceiptValues = {}): ReceiptExtraction {
+  return buildExtraction({
+    consumo_periodo_actual_kwh: 1000,
+    periodo_actual: '22 MAY 26 - 22 JUL 26',
+    tarifa: '1D',
+    numero_servicio: '782990401509',
+    ciudad: 'CANCUN',
+    importe_periodo_mxn: 4000,
+    importe_dap_mxn: 100,
+    importe_total_a_pagar_mxn: 4100,
+    ...overrides,
+  })
+}
+
+/** A photo of page 2 alone — the history table and nothing that says
+ *  which meter it belongs to. */
+function pageTwo(overrides: RawReceiptValues = {}): ReceiptExtraction {
+  return buildExtraction({
+    historial_bimestres_kwh: [900, 950, 1000, 1050, 1100],
+    historial_bimestres_importe_mxn: [3600, 3800, 4000, 4200, 4400],
+    ...overrides,
+  })
 }
 
 describe('sameMeter', () => {
@@ -229,6 +269,153 @@ describe('mergeReadings', () => {
       state = mergeReadings(state, [bill({ numero_servicio: `78299040150${i}` })])
     }
     expect(state.readings).toHaveLength(4)
+  })
+})
+
+describe('isContinuationPage', () => {
+  it('recognises a photo of the history page on its own', () => {
+    expect(isContinuationPage(pageTwo())).toBe(true)
+  })
+
+  it('does not call a whole bill a continuation', () => {
+    // The PDF path, and page 1 + page 2 read together in one turn.
+    expect(isContinuationPage(bill())).toBe(false)
+  })
+
+  it('does not call page 1 a continuation', () => {
+    expect(isContinuationPage(pageOne())).toBe(false)
+  })
+
+  it('needs a history, so an unreadable photo dissolves into nothing', () => {
+    // Null everywhere. Without the history requirement this would
+    // qualify and overwrite whichever bill happened to be open.
+    expect(isContinuationPage(buildExtraction({}))).toBe(false)
+  })
+
+  it('leaves a bill that read only its service number out of it', () => {
+    // History plus an identity is a bill whose current period was
+    // unreadable — a `missing_current_period` review, not a page 2.
+    expect(
+      isContinuationPage(pageTwo({ numero_servicio: '782990401509' })),
+    ).toBe(false)
+  })
+})
+
+describe('joinPages', () => {
+  it('rebuilds the bill the customer actually sent', () => {
+    const joined = joinPages(pageOne(), pageTwo())
+
+    expect(joined.numero_servicio).toBe('782990401509')
+    expect(joined.consumo_periodo_actual_kwh).toBe(1000)
+    expect(joined.historial_bimestres_kwh).toEqual([900, 950, 1000, 1050, 1100])
+    expect(joined.tarifa).toBe('1D')
+    expect(joined.ciudad).toBe('CANCUN')
+    expect(joined.costo_periodo_mxn).toBe(4100)
+  })
+
+  it('derives the average over both halves, not one of them', () => {
+    const joined = joinPages(pageOne(), pageTwo())
+    // (1000 + 900 + 950 + 1000 + 1050 + 1100) / 6
+    expect(joined.promedio_bimestral_kwh).toBe(1000)
+    expect(joined.cantidad_periodos_usados).toBe(6)
+    expect(joined.incluye_periodo_actual).toBe(true)
+  })
+
+  it('drops page 2’s complaint about the page that has now arrived', () => {
+    expect(pageTwo().advertencias).toContain(MISSING_PAGE_ONE_WARNING)
+    expect(joinPages(pageOne(), pageTwo()).advertencias).not.toContain(
+      MISSING_PAGE_ONE_WARNING,
+    )
+  })
+
+  it('keeps a warning that is still true', () => {
+    const joined = joinPages(
+      pageOne({ importe_total_a_pagar_mxn: 9000 }),
+      pageTwo(),
+    )
+    // The total no longer matches the period charge — real debt, and
+    // still worth telling whoever reviews the quote.
+    expect(joined.advertencias).toContain('adeudo')
+  })
+})
+
+describe('mergeReadings — a bill split across turns', () => {
+  it('completes the bill instead of inventing a second meter', () => {
+    // The conversation this exists for: page 1 at 16:44, the bot asks
+    // for the rest, page 2 at 16:45 — read alone, because page 1 was
+    // already spent.
+    const state = mergeReadings(stateWith([pageOne()]), [pageTwo()])
+
+    expect(state.readings).toHaveLength(1)
+    expect(state.readings[0].consumo_periodo_actual_kwh).toBe(1000)
+    expect(state.readings[0].historial_bimestres_kwh).toHaveLength(5)
+  })
+
+  it('quotes that customer instead of asking about meters they lack', () => {
+    const state = mergeReadings(stateWith([pageOne()]), [pageTwo()])
+    const gate = resolveMeterGate(state)
+
+    expect(gate.kind).toBe('ready')
+    expect(gate.count).toBe(1)
+  })
+
+  it('attaches page 2 to the half that is actually waiting for it', () => {
+    // Meter A is complete; B is the one mid-photograph.
+    const state = mergeReadings(
+      stateWith([bill(), pageOne({ numero_servicio: '782250505386' })]),
+      [pageTwo()],
+    )
+
+    expect(state.readings).toHaveLength(2)
+    expect(state.readings[0].historial_bimestres_kwh).toEqual(
+      bill().historial_bimestres_kwh,
+    )
+    expect(state.readings[1].numero_servicio).toBe('782250505386')
+    expect(state.readings[1].historial_bimestres_kwh).toHaveLength(5)
+  })
+
+  it('never overwrites a history already in hand', () => {
+    // Nothing is waiting for a page 2, so this one is not a second
+    // half — it is evidence of something else, and swallowing it would
+    // quote the property on a meter nobody priced.
+    const state = mergeReadings(stateWith([bill()]), [pageTwo()])
+
+    expect(state.readings).toHaveLength(2)
+    expect(state.readings[0].historial_bimestres_kwh).toEqual(
+      bill().historial_bimestres_kwh,
+    )
+  })
+
+  it('leaves the multi-meter path alone', () => {
+    // Whole bills, one per meter — how a multi-meter customer actually
+    // sends them. No continuation, no join, two meters.
+    const state = mergeReadings(stateWith([bill()]), [
+      bill({ numero_servicio: '782250505386' }),
+    ])
+
+    expect(state.readings).toHaveLength(2)
+    expect(resolveMeterGate(state).kind).toBe('awaiting_confirmation')
+  })
+
+  it('carries two meters through, page by page, in the order sent', () => {
+    let state = mergeReadings(emptyMeterState(), [pageOne()])
+    state = mergeReadings(state, [pageTwo()])
+    state = mergeReadings(state, [pageOne({ numero_servicio: '782250505386' })])
+    state = mergeReadings(state, [
+      pageTwo({ historial_bimestres_kwh: [400, 420, 440, 460, 480] }),
+    ])
+
+    expect(state.readings).toHaveLength(2)
+    expect(state.readings.map((r) => r.numero_servicio)).toEqual([
+      '782990401509',
+      '782250505386',
+    ])
+    expect(state.readings[0].historial_bimestres_kwh).toEqual([
+      900, 950, 1000, 1050, 1100,
+    ])
+    expect(state.readings[1].historial_bimestres_kwh).toEqual([
+      400, 420, 440, 460, 480,
+    ])
   })
 })
 
