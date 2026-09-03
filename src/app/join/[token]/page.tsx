@@ -207,7 +207,7 @@ export default function JoinPage() {
     try {
       await createClient().auth.signOut();
       // Hard reload so the new auth state propagates everywhere
-      // (middleware, AuthProvider). Preserves the invite token in
+      // (proxy, AuthProvider). Preserves the invite token in
       // the URL so the rebuilt page renders the signed-out CTA path.
       window.location.reload();
     } catch (err) {
