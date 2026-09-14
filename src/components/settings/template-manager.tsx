@@ -3,17 +3,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
-  Plus,
-  Trash2,
   Loader2,
-  RefreshCw,
   AlertCircle,
-  X,
   Pencil,
-  RotateCcw,
-  Upload,
   FolderOpen,
 } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  RefreshCw,
+  X,
+  RotateCcw,
+  Upload,
+} from '@/components/animated-icons';
 import { createClient } from '@/lib/supabase/client';
 import {
   uploadAccountMedia,

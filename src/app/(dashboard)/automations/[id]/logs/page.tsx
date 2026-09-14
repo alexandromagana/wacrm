@@ -3,13 +3,15 @@
 import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
+  Loader2,
+} from "lucide-react"
+import {
   ArrowLeft,
   Check,
-  Loader2,
   X,
   ChevronDown,
   ChevronRight,
-} from "lucide-react"
+} from "@/components/animated-icons"
 import { useTranslations } from "next-intl"
 
 import { createClient } from "@/lib/supabase/client"

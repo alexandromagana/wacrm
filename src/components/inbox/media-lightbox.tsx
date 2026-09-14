@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
-import { X, ExternalLink, ZoomIn, ZoomOut } from "lucide-react";
+import { ZoomIn, ZoomOut } from "lucide-react";
+import { X, ExternalLink } from "@/components/animated-icons";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 

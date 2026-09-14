@@ -8,21 +8,23 @@ import {
   KeyboardEvent,
 } from "react";
 import {
-  Send,
   LayoutTemplate,
-  Paperclip,
   Image as ImageIcon,
   Video,
   FileText,
   Mic,
   Square,
-  X,
   Loader2,
+  Zap,
+} from "lucide-react";
+import {
+  Send,
+  Paperclip,
+  X,
   Sparkles,
   Plus,
   MessageSquareDashed,
-  Zap,
-} from "lucide-react";
+} from "@/components/animated-icons";
 import { Button } from "@/components/ui/button";
 import { GatedButton } from "@/components/ui/gated-button";
 import {

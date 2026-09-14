@@ -28,12 +28,11 @@ import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
-  CheckCircle,
   Loader2,
   MailX,
   ShieldCheck,
-  UsersRound,
 } from 'lucide-react';
+import { CircleCheckBig, UsersRound } from '@/components/animated-icons';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -336,7 +335,7 @@ export default function JoinPage() {
                 </>
               ) : (
                 <>
-                  <CheckCircle className="size-4" />
+                  <CircleCheckBig className="size-4" />
                   Accept invitation
                 </>
               )}

@@ -1,10 +1,10 @@
+import type { ComponentType } from 'react';
 import {
   Crown,
   Shield,
   UserCog,
-  UserIcon,
-  type LucideIcon,
 } from 'lucide-react';
+import { UserIcon } from '@/components/animated-icons';
 
 import type { AccountRole } from '@/lib/auth/roles';
 import type { ChipVariant } from './settings-chip';
@@ -20,7 +20,12 @@ import type { ChipVariant } from './settings-chip';
  */
 export const ROLE_META: Record<
   AccountRole,
-  { icon: LucideIcon; label: string; variant: ChipVariant; className: string }
+  {
+    icon: ComponentType<{ className?: string }>;
+    label: string;
+    variant: ChipVariant;
+    className: string;
+  }
 > = {
   owner: {
     icon: Crown,

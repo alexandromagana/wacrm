@@ -21,12 +21,14 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { useTranslations } from 'next-intl';
 import {
   CircleAlert,
+  CornerDownRight,
+} from 'lucide-react';
+import {
   Plus,
   Trash2,
   ChevronDown,
   ChevronUp,
-  CornerDownRight,
-} from 'lucide-react';
+} from '@/components/animated-icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';

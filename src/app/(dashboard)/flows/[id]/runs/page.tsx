@@ -1,19 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   Loader2,
-  CircleCheck,
   CircleAlert,
-  Clock,
   UserPlus,
   PlayCircle,
   PauseCircle,
+} from "lucide-react";
+import {
+  ArrowLeft,
+  CircleCheck,
+  Clock,
   ChevronDown,
   ChevronRight,
-} from "lucide-react";
+} from "@/components/animated-icons";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -61,7 +63,11 @@ interface EventRow {
 
 const STATUS_META: Record<
   RunRow["status"],
-  { label: string; classes: string; icon: typeof Clock }
+  {
+    label: string;
+    classes: string;
+    icon: ComponentType<{ className?: string }>;
+  }
 > = {
   active: {
     label: "Active",

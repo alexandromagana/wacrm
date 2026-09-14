@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, Plus, Trash2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { Plus, Trash2 } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 interface CustomFieldsManagerProps {

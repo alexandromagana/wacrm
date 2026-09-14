@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Calculator, FileText, SlidersHorizontal, Sparkles } from 'lucide-react';
+import { Calculator, FileText } from 'lucide-react';
+import { SlidersHorizontal, Sparkles } from '@/components/animated-icons';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { GeneratePanel } from '@/components/quotes/generate-panel';
 import { ProjectTypesPanel } from '@/components/quotes/project-types-panel';

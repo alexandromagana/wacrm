@@ -1,6 +1,7 @@
 "use client";
 
-import { List, Reply } from "lucide-react";
+import { Reply } from "lucide-react";
+import { List } from "@/components/animated-icons";
 import { cn } from "@/lib/utils";
 import type { InteractiveMessagePayload } from "@/lib/whatsapp/interactive";
 

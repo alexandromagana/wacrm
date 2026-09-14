@@ -29,14 +29,12 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import {
-  Upload,
   FileText,
   Loader2,
-  CheckCircle,
-  XCircle,
   AlertTriangle,
   Tag,
 } from 'lucide-react';
+import { Upload, CircleCheckBig, CircleX } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 const DEFAULT_TAG_COLOR = '#3b82f6';
@@ -570,13 +568,13 @@ export function ImportModal({
               <div className="mt-3 flex flex-wrap gap-3">
                 {result.imported > 0 && (
                   <div className="text-primary flex items-center gap-1.5 text-sm">
-                    <CheckCircle className="size-4 shrink-0" />
+                    <CircleCheckBig className="size-4 shrink-0" />
                     {t('resultImported', { count: result.imported })}
                   </div>
                 )}
                 {result.tagsAssigned > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-cyan-400">
-                    <CheckCircle className="size-4 shrink-0" />
+                    <CircleCheckBig className="size-4 shrink-0" />
                     {t('resultTags', { count: result.tagsAssigned })}
                   </div>
                 )}
@@ -588,7 +586,7 @@ export function ImportModal({
                 )}
                 {result.failed > 0 && (
                   <div className="flex items-center gap-1.5 text-sm text-red-400">
-                    <XCircle className="size-4 shrink-0" />
+                    <CircleX className="size-4 shrink-0" />
                     {t('resultFailed', { count: result.failed })}
                   </div>
                 )}

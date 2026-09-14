@@ -40,6 +40,22 @@ const eslintConfig = defineConfig([
       "react-hooks/immutability": "warn",
     },
   },
+
+  // Animate UI registry code (`npx shadcn add @animate-ui/...`). Two
+  // compiler rules misread its upstream patterns: icon.tsx reads refs
+  // inside event handlers it builds during render, and slot.tsx memoizes a
+  // `motion.create()` per child type. Both are deliberate there. Switching
+  // the rules off for the folder, instead of editing the files, keeps them
+  // identical to the registry, so re-adding an icon can't bring the errors
+  // back.
+  {
+    name: "animate-ui/vendored",
+    files: ["src/components/animate-ui/**"],
+    rules: {
+      "react-hooks/refs": "off",
+      "react-hooks/static-components": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

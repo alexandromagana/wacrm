@@ -5,11 +5,8 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   Workflow,
-  Plus,
-  Trash2,
   Pencil,
   Loader2,
-  MessageSquare,
   PlayCircle,
   PauseCircle,
   Archive,
@@ -17,6 +14,7 @@ import {
   UserPlus,
   FileText,
 } from "lucide-react";
+import { Plus, Trash2, MessageSquare } from "@/components/animated-icons";
 
 import { useTranslations } from "next-intl";
 import { useCan } from "@/hooks/use-can";

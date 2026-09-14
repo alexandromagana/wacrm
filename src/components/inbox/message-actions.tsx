@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { CornerUpLeft, Copy, SmilePlus } from "lucide-react";
+import { CornerUpLeft, SmilePlus } from "lucide-react";
+import { Copy } from "@/components/animated-icons";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import {

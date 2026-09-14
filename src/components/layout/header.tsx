@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { Menu } from "@/components/animated-icons";
 import { useTranslations } from "next-intl";
 
 import { ModeToggle } from "@/components/layout/mode-toggle";

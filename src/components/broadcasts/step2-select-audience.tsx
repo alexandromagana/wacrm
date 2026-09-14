@@ -1,19 +1,27 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import {
+  useEffect,
+  useState,
+  useCallback,
+  useMemo,
+  type ComponentType,
+} from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { CustomField, Tag } from '@/types';
 import { Button } from '@/components/ui/button';
 import {
-  Users,
   Tags,
   Filter,
-  Upload,
   Loader2,
+} from 'lucide-react';
+import {
+  Users,
+  Upload,
   ArrowRight,
   ArrowLeft,
   X,
-} from 'lucide-react';
+} from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 type AudienceType = 'all' | 'tags' | 'custom_field' | 'csv';
@@ -58,7 +66,7 @@ export function Step2SelectAudience({
     type: AudienceType;
     label: string;
     description: string;
-    icon: typeof Users;
+    icon: ComponentType<{ className?: string }>;
   }[]>(() => [
     {
       type: 'all',
@@ -258,7 +266,7 @@ export function Step2SelectAudience({
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {audienceOptions.map((option: { type: AudienceType; label: string; description: string; icon: typeof Users }) => {
+        {audienceOptions.map((option: { type: AudienceType; label: string; description: string; icon: ComponentType<{ className?: string }> }) => {
           const isSelected = audience.type === option.type;
           const Icon = option.icon;
           return (

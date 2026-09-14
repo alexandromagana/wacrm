@@ -3,15 +3,13 @@
 import { useTranslations } from "next-intl";
 import {
   CalendarClock,
-  Check,
   Circle,
-  ExternalLink,
   FileText,
   Pencil,
   StickyNote,
   Wrench,
-  X,
 } from "lucide-react";
+import { Check, ExternalLink, X } from "@/components/animated-icons";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/currency";
 import { dealMilestones } from "@/lib/deals/milestones";

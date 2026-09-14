@@ -24,15 +24,17 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  DollarSign,
+  Loader2,
+  PanelsTopLeft,
+} from "lucide-react";
+import {
   Check,
   X,
   Trash2,
   MessageSquare,
-  DollarSign,
-  Link as LinkIcon,
-  Loader2,
-  PanelsTopLeft,
-} from "lucide-react";
+  LinkIcon,
+} from "@/components/animated-icons";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 

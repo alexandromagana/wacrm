@@ -28,10 +28,8 @@ import {
   Loader2,
   Mail,
   MailX,
-  Plus,
-  Trash2,
-  UsersRound,
 } from 'lucide-react';
+import { Plus, Trash2, UsersRound } from '@/components/animated-icons';
 
 import {
   Avatar,

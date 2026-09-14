@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, MessageSquare, Pencil, Plus, Trash2, Zap } from "lucide-react";
+import { Loader2, Pencil, Zap } from "lucide-react";
+import { MessageSquare, Plus, Trash2 } from "@/components/animated-icons";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";

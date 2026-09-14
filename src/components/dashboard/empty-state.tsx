@@ -1,4 +1,4 @@
-import { BarChart3 } from 'lucide-react'
+import { ChartColumn } from '@/components/animated-icons'
 import type { ComponentType } from 'react'
 import { cn } from '@/lib/utils'
 
@@ -13,7 +13,7 @@ import { useTranslations } from 'next-intl'
 export function EmptyState({
   title,
   hint,
-  icon: Icon = BarChart3,
+  icon: Icon = ChartColumn,
   className,
 }: {
   title?: string

@@ -4,19 +4,21 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import gamaEnergiaIcon from "../../../public/gama-energia-icon.png";
-import { useEffect } from "react";
+import { useEffect, type ComponentType } from "react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import {
   Crown,
+  Shield,
+  UserCog,
+} from "lucide-react";
+import {
   LogOut,
   Settings,
-  Shield,
   User,
-  UserCog,
   UsersRound,
   X,
-} from "lucide-react";
+} from "@/components/animated-icons";
 import type { AccountRole } from "@/lib/auth/roles";
 
 // Per-role chip metadata used in the sidebar's account strip + the
@@ -25,7 +27,11 @@ import type { AccountRole } from "@/lib/auth/roles";
 // wants to recolour "agent" rows, this is the one diff.
 const ROLE_CHIP: Record<
   AccountRole,
-  { icon: typeof Crown; labelKey: string; className: string }
+  {
+    icon: ComponentType<{ className?: string }>;
+    labelKey: string;
+    className: string;
+  }
 > = {
   owner: {
     icon: Crown,

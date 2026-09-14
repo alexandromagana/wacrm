@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, MessageSquare, Zap } from "lucide-react";
+import { Loader2, Zap } from "lucide-react";
+import { MessageSquare } from "@/components/animated-icons";
 import { useTranslations } from "next-intl";
 
 import {

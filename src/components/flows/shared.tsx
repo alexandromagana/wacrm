@@ -16,19 +16,18 @@
  * file .tsx future-proofs it for inline JSX in node-card renderers.
  */
 
+import type { ComponentType } from 'react';
 import {
   Flag,
   GitFork,
   Inbox,
   ListChecks,
   ListPlus,
-  MessageCircle,
-  Paperclip,
   PlayCircle,
   Tag,
   UserPlus,
-  Workflow,
 } from 'lucide-react';
+import { MessageCircle, Paperclip } from '@/components/animated-icons';
 
 import { cn } from '@/lib/utils';
 
@@ -90,7 +89,7 @@ export const NODE_META: Record<
   NodeType,
   {
     label: string;
-    icon: typeof Workflow;
+    icon: ComponentType<{ className?: string; size?: number }>;
     color: string;
     blurb: string;
     category: NodeCategory;

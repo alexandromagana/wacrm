@@ -3,16 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
-  CheckCircle2,
-  Download,
   FileText,
   Loader2,
+} from 'lucide-react';
+import {
+  CircleCheck,
+  Download,
   Plus,
   Sparkles,
   Trash2,
   Upload,
   X,
-} from 'lucide-react';
+} from '@/components/animated-icons';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
@@ -749,7 +751,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
         {result && (
           <div className="border-border bg-muted/30 space-y-3 rounded-lg border p-4">
             <div className="text-foreground flex items-center gap-2 text-sm font-medium">
-              <CheckCircle2 className="text-primary size-4" />
+              <CircleCheck className="text-primary size-4" />
               Cotización {result.folio} lista
             </div>
             {result.warning && (

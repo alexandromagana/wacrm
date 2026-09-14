@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, Loader2, Trash2, Upload } from 'lucide-react';
+import { FileText, Loader2 } from 'lucide-react';
+import { Trash2, Upload } from '@/components/animated-icons';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';

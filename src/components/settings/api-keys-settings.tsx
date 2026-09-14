@@ -17,7 +17,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, KeyRound, Loader2, Plus, Trash2 } from 'lucide-react';
+import { KeyRound, Loader2 } from 'lucide-react';
+import { Copy, Plus, Trash2 } from '@/components/animated-icons';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

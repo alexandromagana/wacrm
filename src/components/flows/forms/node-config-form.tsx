@@ -27,12 +27,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Loader2,
+} from "lucide-react";
+import {
   Paperclip,
   Plus,
   Trash2,
   Upload,
   X,
-} from "lucide-react";
+} from "@/components/animated-icons";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
 

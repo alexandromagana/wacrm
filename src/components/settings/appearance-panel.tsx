@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, Moon, Palette, SunMoon, Sun } from "lucide-react";
+import { Palette } from "lucide-react";
+import { Check, Moon, SunMoon, Sun } from "@/components/animated-icons";
 
 import { useTheme } from "@/hooks/use-theme";
 import { MODES, THEMES, type Mode, type ThemeId } from "@/lib/themes";

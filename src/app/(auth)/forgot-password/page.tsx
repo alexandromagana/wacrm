@@ -15,7 +15,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CheckCircle, ArrowLeft } from "lucide-react";
+import { CircleCheckBig, ArrowLeft } from "@/components/animated-icons";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
@@ -49,7 +49,7 @@ export default function ForgotPasswordPage() {
         <Card className="w-full max-w-md border-border bg-card">
           <CardHeader className="items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
+              <CircleCheckBig className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-foreground">
               Check your email

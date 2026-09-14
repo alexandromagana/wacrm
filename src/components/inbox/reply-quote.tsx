@@ -1,6 +1,6 @@
 "use client";
 
-import { X } from "lucide-react";
+import { X } from "@/components/animated-icons";
 import { cn } from "@/lib/utils";
 import type { Message } from "@/types";
 import { useTranslations } from "next-intl";

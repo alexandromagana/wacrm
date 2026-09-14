@@ -16,7 +16,8 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Copy, Loader2, MessageCircle, Sparkles } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { Copy, MessageCircle, Sparkles } from '@/components/animated-icons';
 
 import { Button, buttonVariants } from '@/components/ui/button';
 import {

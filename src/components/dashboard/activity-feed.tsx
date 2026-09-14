@@ -3,13 +3,12 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import {
-  MessageSquare,
   UserPlus,
   Briefcase,
-  Radio,
   Zap,
   Inbox,
 } from 'lucide-react'
+import { MessageSquare, Radio } from '@/components/animated-icons'
 import type { ComponentType } from 'react'
 import type { ActivityItem, ActivityKind } from '@/lib/dashboard/types'
 import { cn } from '@/lib/utils'

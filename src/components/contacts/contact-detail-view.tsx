@@ -37,17 +37,19 @@ import {
   Phone,
   Mail,
   Building2,
-  Copy,
-  Check,
   Loader2,
-  Plus,
-  Trash2,
   Save,
-  X,
   DollarSign,
   LayoutTemplate,
-  MessageSquare,
 } from 'lucide-react';
+import {
+  Copy,
+  Check,
+  Plus,
+  Trash2,
+  X,
+  MessageSquare,
+} from '@/components/animated-icons';
 import { useRouter } from 'next/navigation';
 import { useTranslations } from 'next-intl';
 

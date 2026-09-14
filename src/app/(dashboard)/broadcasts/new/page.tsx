@@ -11,7 +11,7 @@ import { Step2SelectAudience } from '@/components/broadcasts/step2-select-audien
 import { Step3Personalize } from '@/components/broadcasts/step3-personalize';
 import { Step4ScheduleSend } from '@/components/broadcasts/step4-schedule-send';
 import { useBroadcastSending, BroadcastRiskError } from '@/hooks/use-broadcast-sending';
-import { Check } from 'lucide-react';
+import { Check } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 import { Button } from '@/components/ui/button';
 import {

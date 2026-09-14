@@ -1,18 +1,15 @@
+import type { ComponentType } from 'react';
 import {
-  Bell,
   Coins,
   FileText,
   KeyRound,
   LayoutGrid,
   Palette,
-  PlugZap,
   Shield,
   Tags,
-  User,
-  UsersRound,
   Zap,
-  type LucideIcon,
 } from 'lucide-react';
+import { Bell, PlugZap, User, UsersRound } from '@/components/animated-icons';
 
 /**
  * Settings information architecture for the redesigned page.
@@ -45,7 +42,7 @@ export const DEFAULT_SECTION: SettingsSection = 'overview';
 export interface SectionMeta {
   id: SettingsSection;
   label: string;
-  icon: LucideIcon;
+  icon: ComponentType<{ className?: string }>;
   group: 'top' | 'account' | 'workspace';
 }
 

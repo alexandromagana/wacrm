@@ -6,36 +6,39 @@ import {
   useEffect,
   useRef,
   useState,
+  type ComponentType,
   type ReactNode,
 } from "react"
 import { useRouter } from "next/navigation"
 import { useTranslations } from "next-intl"
 import { toast } from "sonner"
 import {
-  ArrowLeft,
-  ChevronDown,
-  Plus,
-  Trash2,
   GripVertical,
-  MessageSquare,
   FileText,
   Tag,
   TagIcon,
   UserCheck,
   PencilLine,
   Briefcase,
-  MoveRight,
   Hourglass,
   GitBranch,
   Webhook,
   CircleSlash,
   Zap,
   Loader2,
+  MousePointerClick,
+} from "lucide-react"
+import {
+  ArrowLeft,
+  ChevronDown,
+  Plus,
+  Trash2,
+  MessageSquare,
+  MoveRight,
   ArrowDown,
   ArrowUp,
-  MousePointerClick,
   List,
-} from "lucide-react"
+} from "@/components/animated-icons"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -94,7 +97,7 @@ export interface BuilderInitial {
 
 interface StepMeta {
   label: string
-  icon: typeof Zap
+  icon: ComponentType<{ className?: string }>
   /** Left-border accent color per spec. */
   border: string
 }
