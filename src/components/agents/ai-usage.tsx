@@ -1,8 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+} from 'react';
 import { toast } from 'sonner';
-import { BarChart3, Bot, PencilLine } from 'lucide-react';
+import { PencilLine } from 'lucide-react';
+import { ChartColumn, Bot } from '@/components/animated-icons';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import {
@@ -105,7 +112,7 @@ export function AiUsageCard() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <CardTitle className="flex items-center gap-2 text-base">
-              <BarChart3 className="h-4 w-4 text-primary" /> Token usage
+              <ChartColumn className="h-4 w-4 text-primary" /> Token usage
             </CardTitle>
             <CardDescription>
               Tokens spent on your provider key by drafts and the auto-reply
@@ -134,7 +141,7 @@ export function AiUsageCard() {
           <Skeleton className="h-[220px] w-full" />
         ) : !hasSpend ? (
           <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
-            <BarChart3 className="h-8 w-8 opacity-40" />
+            <ChartColumn className="h-8 w-8 opacity-40" />
             <p>No AI usage in the last {data.window_days} days yet.</p>
             <p className="text-xs">
               This fills in as the assistant drafts and auto-replies.
@@ -220,7 +227,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  icon?: typeof Bot;
+  icon?: ComponentType<{ className?: string }>;
 }) {
   return (
     <div className="rounded-md border border-border p-3">

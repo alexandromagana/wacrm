@@ -1,7 +1,8 @@
 "use client";
 
 import type { Deal, PipelineStage } from "@/types";
-import { Calendar, Check, PanelsTopLeft, Wrench, X } from "lucide-react";
+import { Calendar, PanelsTopLeft, Wrench } from "lucide-react";
+import { Check, X } from "@/components/animated-icons";
 import { formatCurrency } from "@/lib/currency";
 import { nextDealMilestone } from "@/lib/deals/milestones";
 import { useTranslations } from "next-intl";

@@ -6,11 +6,10 @@ import {
   DollarSign,
   TrendingUp,
   Target,
-  BarChart3,
   Trophy,
-  XCircle,
   Info,
 } from "lucide-react";
+import { ChartColumn, CircleX } from "@/components/animated-icons";
 import {
   Tooltip,
   TooltipContent,
@@ -99,7 +98,7 @@ export function PipelineAnalytics({ stages, deals }: PipelineAnalyticsProps) {
     <TooltipProvider>
       <div className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card/60 p-4 sm:grid-cols-3 xl:grid-cols-6">
         <Metric
-          icon={<BarChart3 className="h-4 w-4 text-muted-foreground" />}
+          icon={<ChartColumn className="h-4 w-4 text-muted-foreground" />}
           label={t("totalDeals")}
           value={String(stats.totalCount)}
           tooltip={t("totalDealsTooltip")}
@@ -134,7 +133,7 @@ export function PipelineAnalytics({ stages, deals }: PipelineAnalyticsProps) {
           t={t}
         />
         <Metric
-          icon={<XCircle className="h-4 w-4 text-red-400" />}
+          icon={<CircleX className="h-4 w-4 text-red-400" />}
           label={t("lostThisMonth")}
           value={String(stats.lostThisMonth)}
           tooltip={t("lostThisMonthTooltip")}

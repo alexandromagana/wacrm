@@ -17,7 +17,8 @@
  * concept). User can switch to List to address them.
  */
 
-import { CircleAlert, CircleCheck } from "lucide-react";
+import { CircleAlert } from "lucide-react";
+import { CircleCheck } from "@/components/animated-icons";
 import { useTranslations } from "next-intl";
 import { cn } from "@/lib/utils";
 import type { ValidationIssue } from "@/lib/flows/validate";

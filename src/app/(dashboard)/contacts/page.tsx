@@ -40,20 +40,22 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import {
+  Pencil,
+  Loader2,
+  Filter,
+} from 'lucide-react';
+import {
   Search,
   Plus,
   Upload,
-  MoreHorizontal,
-  Pencil,
+  Ellipsis,
   Trash2,
-  Loader2,
   Users,
   ChevronLeft,
   ChevronRight,
   SlidersHorizontal,
-  Filter,
   X,
-} from 'lucide-react';
+} from '@/components/animated-icons';
 import { ContactForm } from '@/components/contacts/contact-form';
 import { ContactDetailView } from '@/components/contacts/contact-detail-view';
 import { ImportModal } from '@/components/contacts/import-modal';
@@ -865,7 +867,7 @@ export default function ContactsPage() {
                           />
                         }
                       >
-                        <MoreHorizontal className="size-4" />
+                        <Ellipsis className="size-4" />
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"

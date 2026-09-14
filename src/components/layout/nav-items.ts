@@ -1,16 +1,19 @@
+import type { ComponentType } from "react";
+import {
+  Calculator,
+  GitBranch,
+  Workflow,
+  Zap,
+} from "lucide-react";
 import {
   Bell,
   Bot,
-  Calculator,
-  GitBranch,
   LayoutDashboard,
   MessageSquare,
   Radio,
   Settings,
   Users,
-  Workflow,
-  Zap,
-} from "lucide-react";
+} from "@/components/animated-icons";
 
 /**
  * The primary navigation catalog, shared by the two nav surfaces:
@@ -23,7 +26,7 @@ import {
 export interface NavItem {
   href: string;
   labelKey: string;
-  icon: typeof LayoutDashboard;
+  icon: ComponentType<{ className?: string }>;
   /**
    * When true, the nav row renders a small "Beta" chip after the label
    * (the rail, having no room for one, folds it into the tooltip).

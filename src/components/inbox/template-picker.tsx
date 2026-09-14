@@ -23,11 +23,10 @@ import {
 import { Badge } from "@/components/ui/badge";
 import {
   AlertTriangle,
-  ArrowLeft,
-  ChevronRight,
   LayoutTemplate,
   Loader2,
 } from "lucide-react";
+import { ArrowLeft, ChevronRight } from "@/components/animated-icons";
 import { extractVariableIndices } from "@/lib/whatsapp/template-validators";
 import { useTranslations } from "next-intl";
 

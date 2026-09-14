@@ -7,7 +7,12 @@ import { useTranslations } from "next-intl";
 import gamaEnergiaIcon from "../../../public/gama-energia-icon.png";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
-import { LogOut, Settings, User, UsersRound } from "lucide-react";
+import {
+  LogOut,
+  Settings,
+  User,
+  UsersRound,
+} from "@/components/animated-icons";
 import {
   bottomNavItems,
   isNavItemActive,

@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState, type ReactNode } from 'react';
-import { ChevronRight, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
+import { ChevronRight } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 import { createClient } from '@/lib/supabase/client';

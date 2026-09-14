@@ -5,11 +5,10 @@ import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
 import { formatCurrency } from '@/lib/currency'
 import {
-  MessageSquare,
   UserPlus,
   DollarSign,
-  Send,
 } from 'lucide-react'
+import { MessageSquare, Send } from '@/components/animated-icons'
 
 import {
   loadActivity,

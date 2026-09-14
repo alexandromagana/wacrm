@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Sparkles, CheckCircle2, Trash2, Eye, EyeOff } from 'lucide-react';
+import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { Sparkles, CircleCheck, Trash2 } from '@/components/animated-icons';
 import { useAuth } from '@/hooks/use-auth';
 import { canEditSettings } from '@/lib/auth/roles';
 import { Button } from '@/components/ui/button';
@@ -358,7 +359,7 @@ export function AiConfig() {
                   {testing ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   ) : (
-                    <CheckCircle2 className="mr-2 h-4 w-4" />
+                    <CircleCheck className="mr-2 h-4 w-4" />
                   )}
                   {t('testKey')}
                 </Button>

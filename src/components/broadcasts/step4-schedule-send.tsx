@@ -14,7 +14,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { ArrowLeft, Send, Loader2, Users, Save } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
+import { ArrowLeft, Send, Users } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 interface AudienceConfig {

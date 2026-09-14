@@ -16,7 +16,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { CheckCircle, UsersRound } from "lucide-react";
+import { CircleCheckBig, UsersRound } from "@/components/animated-icons";
 
 // `useSearchParams` opts the component out of static prerendering
 // unless wrapped in Suspense — same pattern as /login.
@@ -97,7 +97,7 @@ function SignupPageInner() {
         <Card className="w-full max-w-md border-border bg-card">
           <CardHeader className="items-center text-center">
             <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-              <CheckCircle className="h-6 w-6 text-primary" />
+              <CircleCheckBig className="h-6 w-6 text-primary" />
             </div>
             <CardTitle className="text-xl text-foreground">
               Check your email

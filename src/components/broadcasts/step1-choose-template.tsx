@@ -4,7 +4,8 @@ import { useEffect, useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { MessageTemplate } from '@/types';
 import { Button } from '@/components/ui/button';
-import { Loader2, FileText, ArrowRight } from 'lucide-react';
+import { Loader2, FileText } from 'lucide-react';
+import { ArrowRight } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
 const categoryColors: Record<string, string> = {

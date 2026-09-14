@@ -16,14 +16,11 @@ import { DealForm } from "@/components/pipelines/deal-form";
 import {
   Phone,
   Mail,
-  Copy,
-  Check,
-  User,
   Tag as TagIcon,
   DollarSign,
   StickyNote,
-  Plus,
 } from "lucide-react";
+import { Copy, Check, User, Plus } from "@/components/animated-icons";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";

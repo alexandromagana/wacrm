@@ -24,16 +24,15 @@
 
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft,
   CircleDot,
   History,
   Loader2,
   PauseCircle,
   PlayCircle,
   Save,
-  Trash2,
   Workflow,
 } from "lucide-react";
+import { ArrowLeft, Trash2 } from "@/components/animated-icons";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Upload, Trash2, Mail, CircleAlert } from 'lucide-react';
+import { Loader2, Mail, CircleAlert } from 'lucide-react';
+import { Upload, Trash2 } from '@/components/animated-icons';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';

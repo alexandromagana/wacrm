@@ -20,19 +20,21 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
-  ArrowLeft,
   Loader2,
+  Eye,
+  AlertCircle,
+  Filter,
+} from 'lucide-react';
+import {
+  ArrowLeft,
   Users,
   Send,
   CheckCheck,
-  Eye,
-  AlertCircle,
   MessageCircle,
-  Filter,
   Download,
   ChevronDown,
   Trash2,
-} from 'lucide-react';
+} from '@/components/animated-icons';
 import { toast } from 'sonner';
 import {
   getBroadcastStatus,

@@ -5,15 +5,17 @@ import { toast } from 'sonner';
 import {
   Eye,
   EyeOff,
-  Copy,
-  CheckCircle2,
-  XCircle,
   Loader2,
-  ExternalLink,
   Zap,
   AlertTriangle,
-  RotateCcw,
 } from 'lucide-react';
+import {
+  Copy,
+  CircleCheck,
+  CircleX,
+  ExternalLink,
+  RotateCcw,
+} from '@/components/animated-icons';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { useTranslations } from 'next-intl';
@@ -435,9 +437,9 @@ export function WhatsAppConfig() {
         <Alert className="bg-card border-border">
           <div className="flex items-center gap-2">
             {connectionStatus === 'connected' ? (
-              <CheckCircle2 className="size-4 text-primary" />
+              <CircleCheck className="size-4 text-primary" />
             ) : (
-              <XCircle className="size-4 text-red-500" />
+              <CircleX className="size-4 text-red-500" />
             )}
             <AlertTitle className="text-foreground mb-0">
               {connectionStatus === 'connected' ? t('credentialsValid') : t('notConnected')}
@@ -467,7 +469,7 @@ export function WhatsAppConfig() {
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="flex items-center gap-2">
                 {isRegistered ? (
-                  <CheckCircle2 className="size-4 text-emerald-400" />
+                  <CircleCheck className="size-4 text-emerald-400" />
                 ) : (
                   <AlertTriangle className="size-4 text-amber-400" />
                 )}
@@ -532,9 +534,9 @@ export function WhatsAppConfig() {
                   {Object.entries(registrationProbe.checks).map(([k, v]) => (
                     <li key={k} className="flex items-center gap-1.5">
                       {v === true ? (
-                        <CheckCircle2 className="size-3 text-emerald-400 shrink-0" />
+                        <CircleCheck className="size-3 text-emerald-400 shrink-0" />
                       ) : v === false ? (
-                        <XCircle className="size-3 text-red-400 shrink-0" />
+                        <CircleX className="size-3 text-red-400 shrink-0" />
                       ) : (
                         <span className="size-3 rounded-full border border-border shrink-0" />
                       )}

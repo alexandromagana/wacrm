@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Bot, RotateCcw, Send, Loader2, UserCircle2, ArrowRight } from 'lucide-react';
+import { Loader2, UserCircle2 } from 'lucide-react';
+import { Bot, RotateCcw, Send, ArrowRight } from '@/components/animated-icons';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 

@@ -1,24 +1,26 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ComponentType } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
   Zap,
-  Plus,
-  MoreVertical,
-  Copy,
   Pencil,
-  Trash2,
   FileText,
+  Loader2,
+  FolderOpen,
+} from "lucide-react"
+import {
+  Plus,
+  EllipsisVertical,
+  Copy,
+  Trash2,
   MessageCircle,
   Clock,
   Users,
   PhoneCall,
-  Loader2,
-  FolderOpen,
   Check,
-} from "lucide-react"
+} from "@/components/animated-icons"
 
 import { createClient } from "@/lib/supabase/client"
 import { useCan } from "@/hooks/use-can"
@@ -68,7 +70,10 @@ const TEMPLATE_ORDER: TemplateSlug[] = [
   "follow_up_reminder",
 ]
 
-const TEMPLATE_ICON: Record<TemplateSlug, typeof Zap> = {
+const TEMPLATE_ICON: Record<
+  TemplateSlug,
+  ComponentType<{ className?: string }>
+> = {
   welcome_message: MessageCircle,
   out_of_office: Clock,
   lead_qualifier: Users,
@@ -443,7 +448,7 @@ function AutomationCard({
               aria-label="Open menu"
               className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground data-[popup-open]:bg-muted"
             >
-              <MoreVertical className="h-4 w-4" />
+              <EllipsisVertical className="h-4 w-4" />
             </DropdownMenuTrigger>
             {/* w-auto overrides the shared default of `w-(--anchor-width)`:
                 the anchor here is a 32px icon button, which otherwise

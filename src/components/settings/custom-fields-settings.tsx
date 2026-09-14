@@ -1,6 +1,7 @@
 'use client';
 
-import { Shield, SlidersHorizontal } from 'lucide-react';
+import { Shield } from 'lucide-react';
+import { SlidersHorizontal } from '@/components/animated-icons';
 
 import {
   Card,

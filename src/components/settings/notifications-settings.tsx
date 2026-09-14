@@ -9,7 +9,8 @@ import {
 } from 'react';
 import { useTranslations } from 'next-intl';
 import { toast } from 'sonner';
-import { Bell, Info, Loader2, Smartphone, Trash2, Volume2 } from 'lucide-react';
+import { Info, Loader2, Smartphone } from 'lucide-react';
+import { Bell, Trash2, Volume2 } from '@/components/animated-icons';
 
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';

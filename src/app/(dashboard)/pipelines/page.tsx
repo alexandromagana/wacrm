@@ -24,7 +24,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch, Plus, ChevronDown, Settings } from "lucide-react";
+import { GitBranch } from "lucide-react";
+import { Plus, ChevronDown, Settings } from "@/components/animated-icons";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";

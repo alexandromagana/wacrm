@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { MessageSquare } from '@/components/animated-icons'
 import type { ConversationsSeriesPoint } from '@/lib/dashboard/types'
 import { EmptyState } from './empty-state'
 import { Skeleton } from './skeleton'

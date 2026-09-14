@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Plus, Tag as TagIcon, X } from 'lucide-react';
+import { Loader2, Tag as TagIcon } from 'lucide-react';
+import { Plus, X } from '@/components/animated-icons';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';

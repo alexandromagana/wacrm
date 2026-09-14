@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Bot, Sparkles, Settings2, BarChart3 } from 'lucide-react';
+import { Settings2 } from 'lucide-react';
+import { Bot, Sparkles, ChartColumn } from '@/components/animated-icons';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AiPlayground } from '@/components/agents/ai-playground';
 import { AiUsageCard } from '@/components/agents/ai-usage';
@@ -64,7 +65,7 @@ export default function AgentsPage() {
             </TabsTrigger>
             {canViewUsage && (
               <TabsTrigger value="usage">
-                <BarChart3 className="mr-1.5 h-4 w-4" /> Usage
+                <ChartColumn className="mr-1.5 h-4 w-4" /> Usage
               </TabsTrigger>
             )}
           </TabsList>

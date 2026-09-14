@@ -4,17 +4,19 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/lib/utils";
 import type { Message, MessageReaction } from "@/types";
 import {
-  Clock,
-  Check,
-  CheckCheck,
-  XCircle,
   FileText,
-  MapPin,
   LayoutTemplate,
   ImageOff,
   CornerDownLeft,
-  Sparkles,
 } from "lucide-react";
+import {
+  Clock,
+  Check,
+  CheckCheck,
+  CircleX,
+  MapPin,
+  Sparkles,
+} from "@/components/animated-icons";
 import { format } from "date-fns";
 import { ReplyQuote } from "./reply-quote";
 import { MessageReactions } from "./message-reactions";
@@ -69,7 +71,7 @@ function StatusIcon({
               : t("failedGeneric")
           }
         >
-          <XCircle className="h-3 w-3 text-red-400" />
+          <CircleX className="h-3 w-3 text-red-400" />
         </span>
       );
     default:

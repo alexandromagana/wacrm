@@ -20,16 +20,18 @@ import type {
   InteractiveMessagePayload,
 } from "@/types";
 import {
+  UserPlus,
+} from "lucide-react";
+import {
   MessageSquare,
   ChevronDown,
-  UserPlus,
   Check,
   Clock,
   ArrowLeft,
   RefreshCw,
   PanelRightOpen,
   PanelRightClose,
-} from "lucide-react";
+} from "@/components/animated-icons";
 import { format, isToday, isYesterday } from "date-fns";
 import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";

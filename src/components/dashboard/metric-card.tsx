@@ -1,4 +1,5 @@
-import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
+import { Minus } from 'lucide-react'
+import { ArrowDown, ArrowUp } from '@/components/animated-icons'
 import type { ComponentType } from 'react'
 import { heroValueSize } from '@/lib/stat-type'
 import { cn } from '@/lib/utils'
