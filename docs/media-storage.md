@@ -15,6 +15,12 @@ Los públicos lo son porque Meta descarga por URL lo que mandamos. `inbound-medi
 no tiene esa necesidad y guarda recibos de CFE (nombre, dirección, número de
 servicio), así que solo lo leen los miembros de la cuenta.
 
+Público quiere decir que un link conocido abre, no que se pueda listar. La
+política `SELECT` de cada bucket es solo para miembros y su carpeta
+`account-<id>` (migración 050); una política `SELECT` que revise únicamente el
+`bucket_id` deja que cualquiera con la llave pública enumere cotizaciones y
+recibos.
+
 ## Archivos de clientes (`inbound-media`)
 
 Ruta: `account-<account_id>/<media_id de Meta>`. El mensaje sigue guardando
