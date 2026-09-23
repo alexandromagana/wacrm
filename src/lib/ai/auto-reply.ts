@@ -30,6 +30,12 @@ import {
   type MeterState,
 } from './meters'
 import { sendQuoteProposal } from './quote-pdf'
+import { readPackageContext, sendPackageSheet } from './package-pdf'
+import {
+  detectPanelRequest,
+  planPackageReply,
+  type PackageReply,
+} from './package-request'
 import {
   customerTurnText,
   mentionsTypedConsumption,
@@ -528,15 +534,36 @@ export async function dispatchInboundToAiReply(
       })
     }
 
+    // A number of panels asked for instead of a bill ("cotízame 12
+    // paneles"): the package sheet, if the model agrees it is a request
+    // for a quote — `package-request.ts` explains the two keys. Never on
+    // a turn that brought a bill: that turn is about the bill, and its
+    // note already carries the real numbers.
+    const requestedPanels = hasReceipt ? null : detectPanelRequest(customerTurn)
+    let packageReply: PackageReply | null = null
+    if (requestedPanels != null) {
+      const onFile = await readPackageContext(db, { accountId, contactId })
+      packageReply = planPackageReply(requestedPanels, {
+        // A batch in hand is a bill this thread already read, even before
+        // its average has reached the contact card.
+        billOnFile: onFile.billOnFile || meterState.readings.length > 0,
+        sentPackagePanels: onFile.sentPackagePanels,
+      })
+      messages.push({ role: 'user', content: packageReply.note })
+    }
+
     // A consumption typed out instead of a bill. The account's prompt
     // once treated it as a reading, and the bot answered with a panel
     // count and no document behind it — the proposal needs the tariff,
     // the history and the pesos, and only the bill carries those. Only
     // on a thread with no bill in hand: a turn that brought one, or a
     // batch still open, already has its own note and the real numbers.
+    // Nor on a turn that asked for panels by count: that customer asked
+    // for a package, and the sheet already asks for the bill.
     if (
       !hasReceipt &&
       meterState.readings.length === 0 &&
+      requestedPanels == null &&
       mentionsTypedConsumption(customerTurn)
     ) {
       messages.push({ role: 'user', content: TYPED_CONSUMPTION_NOTE })
@@ -564,6 +591,7 @@ export async function dispatchInboundToAiReply(
       holdQuote,
       holdReason,
       consumptionVerdict,
+      packagePanels,
       usage,
     } = await generateReply({
       config,
@@ -637,6 +665,21 @@ export async function dispatchInboundToAiReply(
         detail: holdReason,
       })
       receiptExtraction = null
+    }
+
+    // The package sheet's second key: the model says the customer asked
+    // for a quote of exactly the package code resolved. A marker for
+    // anything else — no request this turn, a text-only turn, another
+    // count — is the model guessing, and is dropped.
+    const packageTier =
+      packageReply?.mode === 'sheet' &&
+      packagePanels === packageReply.tier.panels
+        ? packageReply.tier
+        : null
+    if (packagePanels != null && !packageTier) {
+      console.log(
+        `[ai auto-reply] package marker [PAQUETE: ${packagePanels}] ignored on ${conversationId} (${packageReply?.mode ?? 'no panel request'})`,
+      )
     }
 
     // Persist the batch before the send: if the proposal or the reply
@@ -856,6 +899,24 @@ export async function dispatchInboundToAiReply(
           meterState = parkQuote(meterState, { reason: 'missing_amount' })
           await saveMeterState(db, conversationId, meterState)
         }
+      }
+    }
+
+    // The package sheet, after the reply that states its price. Never on
+    // a turn that carried a full proposal: that one is built on the
+    // customer's own bill, and two documents would disagree.
+    if (packageTier && !receiptExtraction) {
+      const outcome = await sendPackageSheet(db, {
+        accountId,
+        userId: configOwnerUserId,
+        conversationId,
+        contactId,
+        tier: packageTier,
+      })
+      if (outcome.kind === 'sent') {
+        console.log(
+          `[ai auto-reply] package sheet ${outcome.folio} sent (${outcome.panels} panels) on ${conversationId}`,
+        )
       }
     }
 

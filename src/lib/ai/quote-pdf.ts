@@ -65,16 +65,31 @@ export type SkipReason =
   | 'same_tier'
 
 /** The panel count recorded for a contact, or null if none. */
-async function readSentPanels(
+function readSentPanels(
   db: SupabaseClient,
   accountId: string,
   contactId: string,
+): Promise<number | null> {
+  return readContactNumberField(db, accountId, contactId, PROPUESTA_FIELD_NAME)
+}
+
+/**
+ * A numeric custom field on a contact, or null when the account never
+ * created the field or this contact has no value for it. Shared with the
+ * package sheet, which keeps its own record of what it sent and also
+ * needs to know whether a bill was ever read for this contact.
+ */
+export async function readContactNumberField(
+  db: SupabaseClient,
+  accountId: string,
+  contactId: string,
+  fieldName: string,
 ): Promise<number | null> {
   const { data: field } = await db
     .from('custom_fields')
     .select('id')
     .eq('account_id', accountId)
-    .eq('field_name', PROPUESTA_FIELD_NAME)
+    .eq('field_name', fieldName)
     .maybeSingle()
   if (!field?.id) return null
 
@@ -159,7 +174,7 @@ async function defaultBoardPosition(
  *
  * Never throws — a bookkeeping miss must not cost the customer their PDF.
  */
-async function recordQuoteOnDeal(
+export async function recordQuoteOnDeal(
   db: SupabaseClient,
   args: {
     accountId: string

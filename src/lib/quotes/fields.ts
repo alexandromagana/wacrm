@@ -36,7 +36,7 @@ const PAYBACK_NOTA = 'de ahí, todo lo que produce tu techo es ganancia.'
  * rather than a tier field because every tier in the table ships the
  * same hardware; the day one doesn't, this belongs on `SolarTier`.
  */
-const MICROINVERSORES = 'Hoymiles'
+export const MICROINVERSORES = 'Hoymiles'
 
 export type FieldKey =
   | 'nombre'

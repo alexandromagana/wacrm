@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   extractReceipts: vi.fn(),
   saveReceiptData: vi.fn(),
   sendQuoteProposal: vi.fn(),
+  readPackageContext: vi.fn(),
+  sendPackageSheet: vi.fn(),
   markReceiptMediaRead: vi.fn(),
   state: {
     conv: null as Record<string, unknown> | null,
@@ -52,6 +54,10 @@ vi.mock('./receipt', () => ({
   METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
+vi.mock('./package-pdf', () => ({
+  readPackageContext: h.readPackageContext,
+  sendPackageSheet: h.sendPackageSheet,
+}))
 vi.mock('./inbound-buffer', () => ({
   markReceiptMediaRead: h.markReceiptMediaRead,
 }))
@@ -177,6 +183,15 @@ beforeEach(() => {
   h.sendQuoteProposal.mockResolvedValue({
     kind: 'skipped',
     reason: 'not_quotable',
+  })
+  h.readPackageContext.mockResolvedValue({
+    billOnFile: false,
+    sentPackagePanels: null,
+  })
+  h.sendPackageSheet.mockResolvedValue({
+    kind: 'sent',
+    panels: 12,
+    folio: 'GE-2026-TEST',
   })
 })
 
@@ -1304,5 +1319,134 @@ describe('dispatchInboundToAiReply — a consumption typed instead of a bill', (
     await dispatchInboundToAiReply(ARGS)
 
     expect(lastNote()).not.toContain('escribió su consumo en kWh')
+  })
+})
+
+describe('dispatchInboundToAiReply — a package asked for by panel count', () => {
+  const lastNote = () =>
+    (h.generateReply.mock.calls[0][0].messages as { content: string }[]).at(-1)!
+      .content
+
+  /** The customer's turn, and what the model answers to it. */
+  function turn(customer: string, reply: Record<string, unknown> = {}) {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: customer },
+    ])
+    h.generateReply.mockResolvedValue({
+      text: 'El paquete de 12 paneles queda en $106,900. Te llega tu cotización.',
+      handoff: false,
+      leadStatus: null,
+      packagePanels: null,
+      ...reply,
+    })
+  }
+
+  it('sends the sheet after the reply when both keys agree', async () => {
+    turn('Quiero cotización de 12 paneles', { packagePanels: 12 })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('[PAQUETE: 12]')
+    expect(h.sendPackageSheet).toHaveBeenCalledTimes(1)
+    expect(h.sendPackageSheet.mock.calls[0][1]).toMatchObject({
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      tier: { panels: 12, priceMxn: 106_900 },
+    })
+    // The price in text first, the document after it.
+    expect(h.engineSendText.mock.invocationCallOrder[0]).toBeLessThan(
+      h.sendPackageSheet.mock.invocationCallOrder[0],
+    )
+  })
+
+  it('rounds an odd count up to the package the note offered', async () => {
+    turn('cuánto sale con 13 paneles?', { packagePanels: 14 })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('Pidió 13, que no es un paquete')
+    expect(h.sendPackageSheet.mock.calls[0][1].tier.panels).toBe(14)
+  })
+
+  it('sends nothing when the model reads it as a mention, not a request', async () => {
+    turn('Mi vecino puso 12 paneles y le fue bien')
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('[PAQUETE: 12]')
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('drops a marker nobody asked for', async () => {
+    turn('Hola, ¿qué tal?', { packagePanels: 12 })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.readPackageContext).not.toHaveBeenCalled()
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('drops a marker for a different package than the one resolved', async () => {
+    turn('Quiero cotización de 12 paneles', { packagePanels: 16 })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('answers in text only when the contact already sent a bill', async () => {
+    h.readPackageContext.mockResolvedValue({
+      billOnFile: true,
+      sentPackagePanels: null,
+    })
+    turn('¿Y cuánto sale con 16 paneles?', { packagePanels: 16 })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('NO envía ningún archivo')
+    expect(lastNote()).not.toContain('[PAQUETE')
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('hands off past the table instead of quoting', async () => {
+    turn('Necesito cotización de 60 paneles para mi bodega', {
+      text: 'Un asesor te prepara la cotización a la medida.',
+      handoff: true,
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('[[HANDOFF]]')
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('leaves a turn that brought a bill to the receipt note', async () => {
+    turn('Aquí va mi recibo, quiero 12 paneles', { packagePanels: 12 })
+    mockBills({
+      consumo_periodo_actual_kwh: 1674,
+      periodo_actual: null,
+      historial_bimestres_kwh: [],
+      cantidad_periodos_usados: 1,
+      promedio_bimestral_kwh: 1674,
+      tarifa: null,
+      advertencias: '',
+    })
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      receiptMediaIds: ['media-1'],
+      accessToken: 'meta-token',
+    })
+
+    expect(lastNote()).toBe('[NOTA: promedio 1674]')
+    expect(h.readPackageContext).not.toHaveBeenCalled()
+    expect(h.sendPackageSheet).not.toHaveBeenCalled()
+  })
+
+  it('takes the panel count over a kWh figure in the same turn', async () => {
+    turn('Gasto 1800 kWh, cotízame 12 paneles', { packagePanels: 12 })
+    await dispatchInboundToAiReply(ARGS)
+
+    const notes = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).map((m) => m.content)
+    expect(notes.some((n) => n.includes('escribió su consumo en kWh'))).toBe(
+      false,
+    )
+    expect(h.sendPackageSheet).toHaveBeenCalledTimes(1)
   })
 })

@@ -1,0 +1,151 @@
+{
+  "_comment": "Field map for the package sheet — the one-page, price-only quote for a customer who asks for a number of panels without a bill (Figma frame 'P arena — Cotización por paquete'). Same format as template.json. Coordinates are Figma units from the frame's SVG export with live text (svgOutlineText: false): `x` is the tspan's x and `baseline` its y. The two sentence fields are whole lines drawn by code because pdf-lib cannot wrap and each carries a figure mid-sentence; they get a maxWidth so a long figure shrinks the line instead of running off the page.",
+  "_comment_align": "Right-aligned fields store the RIGHT edge in `x`: the folio and the date sit in a right-aligned header block that ends at 756.",
+  "template": "quotes/package-template.pdf",
+  "fonts": {
+    "archivoRegular": "fonts/Archivo-Regular.ttf",
+    "archivoMedium": "fonts/Archivo-Medium.ttf",
+    "archivoSemiBold": "fonts/Archivo-SemiBold.ttf",
+    "archivoBold": "fonts/Archivo-Bold.ttf",
+    "plexMono": "fonts/IBMPlexMono-Regular.ttf"
+  },
+  "fields": {
+    "folio": {
+      "page": 0,
+      "x": 756,
+      "baseline": 61.9375,
+      "size": 10.5,
+      "font": "plexMono",
+      "color": "#12241A",
+      "align": "right"
+    },
+    "fecha": {
+      "page": 0,
+      "x": 756,
+      "baseline": 81.9375,
+      "size": 10.5,
+      "font": "plexMono",
+      "color": "#12241A",
+      "align": "right"
+    },
+    "paneles": {
+      "page": 0,
+      "x": 84,
+      "baseline": 284.38,
+      "size": 70,
+      "font": "archivoMedium",
+      "color": "#FFFFFF",
+      "align": "left"
+    },
+    "precio": {
+      "page": 0,
+      "x": 316,
+      "baseline": 254.372,
+      "size": 58,
+      "font": "archivoMedium",
+      "color": "#093F1F",
+      "align": "left"
+    },
+    "kwp": {
+      "page": 0,
+      "x": 211,
+      "baseline": 416.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    },
+    "kwhGenerados": {
+      "page": 0,
+      "x": 408,
+      "baseline": 416.024,
+      "size": 36,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left"
+    },
+    "consumoFrase": {
+      "page": 0,
+      "x": 60,
+      "baseline": 463.006,
+      "size": 9,
+      "font": "archivoRegular",
+      "color": "#5C6E62",
+      "align": "left",
+      "maxWidth": 696,
+      "minSize": 8
+    },
+    "mensualidad12": {
+      "page": 0,
+      "x": 60,
+      "baseline": 551.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left",
+      "maxWidth": 132,
+      "minSize": 20,
+      "row": "mensualidades"
+    },
+    "mensualidad24": {
+      "page": 0,
+      "x": 199.4,
+      "baseline": 551.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left",
+      "maxWidth": 132,
+      "minSize": 20,
+      "row": "mensualidades"
+    },
+    "mensualidad36": {
+      "page": 0,
+      "x": 338.8,
+      "baseline": 551.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left",
+      "maxWidth": 132,
+      "minSize": 20,
+      "row": "mensualidades"
+    },
+    "mensualidad48": {
+      "page": 0,
+      "x": 478.2,
+      "baseline": 551.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left",
+      "maxWidth": 132,
+      "minSize": 20,
+      "row": "mensualidades"
+    },
+    "mensualidad60": {
+      "page": 0,
+      "x": 617.6,
+      "baseline": 551.85,
+      "size": 25,
+      "font": "archivoMedium",
+      "color": "#108040",
+      "align": "left",
+      "maxWidth": 132,
+      "minSize": 20,
+      "row": "mensualidades"
+    },
+    "engancheFrase": {
+      "page": 0,
+      "x": 60,
+      "baseline": 607.507,
+      "size": 10.5,
+      "font": "archivoRegular",
+      "color": "#5C6E62",
+      "align": "left",
+      "maxWidth": 696,
+      "minSize": 9
+    }
+  },
+  "pages": [{ "width": 816, "height": 1056 }]
+}

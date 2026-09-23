@@ -3,9 +3,11 @@ import { join } from 'node:path';
 import { PDFDocument, rgb } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import template from './template.json';
+import packageTemplate from './package-template.json';
 import { fitRowSize, placeText, type Align, type FieldBox } from './layout';
 import { prepareFont, measureText, type TextFont } from './text-font';
 import type { FieldKey } from './fields';
+import type { PackageFieldKey } from './package-fields';
 
 // ============================================================
 // Draws the resolved quote values onto the branded template.
@@ -31,7 +33,21 @@ interface FieldSpec {
   row?: string;
 }
 
-const FIELDS = template.fields as Record<FieldKey, FieldSpec>;
+/**
+ * One branded template and where its text lands. Two exist: the full
+ * proposal (template.json) and the one-page package sheet
+ * (package-template.json). Same fonts, same field format, so one
+ * drawing routine serves both.
+ */
+interface TemplateSpec<K extends string> {
+  template: string;
+  fonts: Record<FontKey, string>;
+  pages: { width: number; height: number }[];
+  fields: Record<K, FieldSpec>;
+}
+
+const PROPOSAL = template as TemplateSpec<FieldKey>;
+const PACKAGE = packageTemplate as TemplateSpec<PackageFieldKey>;
 
 /**
  * Assets live under public/, which the Dockerfile copies wholesale, and
@@ -45,28 +61,32 @@ function assetPath(relative: string): string {
 }
 
 /**
- * Template and font bytes, read once per process. We cache the BYTES,
- * not a PDFDocument: pdf-lib mutates the document as it draws, so every
- * render must load its own copy.
+ * Template and font bytes, read once per process and per template. We
+ * cache the BYTES, not a PDFDocument: pdf-lib mutates the document as it
+ * draws, so every render must load its own copy.
  */
-let assetsPromise: Promise<{
-  templateBytes: Buffer;
-  fonts: Record<FontKey, Buffer>;
-}> | null = null;
+const assetsPromises = new Map<
+  string,
+  Promise<{ templateBytes: Buffer; fonts: Record<FontKey, Buffer> }>
+>();
 
-function loadAssets() {
-  assetsPromise ??= (async () => {
-    const names = Object.keys(template.fonts) as FontKey[];
-    const [templateBytes, ...fontBytes] = await Promise.all([
-      readFile(assetPath(template.template)),
-      ...names.map((n) => readFile(assetPath(template.fonts[n]))),
-    ]);
-    const fonts = Object.fromEntries(
-      names.map((n, i) => [n, fontBytes[i]])
-    ) as Record<FontKey, Buffer>;
-    return { templateBytes, fonts };
-  })();
-  return assetsPromise;
+function loadAssets<K extends string>(spec: TemplateSpec<K>) {
+  let promise = assetsPromises.get(spec.template);
+  if (!promise) {
+    promise = (async () => {
+      const names = Object.keys(spec.fonts) as FontKey[];
+      const [templateBytes, ...fontBytes] = await Promise.all([
+        readFile(assetPath(spec.template)),
+        ...names.map((n) => readFile(assetPath(spec.fonts[n]))),
+      ]);
+      const fonts = Object.fromEntries(
+        names.map((n, i) => [n, fontBytes[i]])
+      ) as Record<FontKey, Buffer>;
+      return { templateBytes, fonts };
+    })();
+    assetsPromises.set(spec.template, promise);
+  }
+  return promise;
 }
 
 function parseColor(hex: string) {
@@ -95,22 +115,41 @@ export interface RenderedQuote {
 }
 
 /**
- * Fill the template with `values` and return the PDF bytes. Throws on
- * any failure — callers decide whether a missing proposal is worth
+ * Fill the full proposal with `values` and return the PDF bytes. Throws
+ * on any failure — callers decide whether a missing proposal is worth
  * failing the whole conversation over (it isn't).
  */
 export async function renderQuotePdf(
   values: Record<FieldKey, string>
 ): Promise<RenderedQuote> {
-  const { templateBytes, fonts } = await loadAssets();
+  return renderTemplatePdf(PROPOSAL, values, 'Propuesta | Gama Energía');
+}
+
+/**
+ * Fill the one-page package sheet — the price-only quote for a customer
+ * who asked for a number of panels — and return the PDF bytes. Throws
+ * like `renderQuotePdf`.
+ */
+export async function renderPackagePdf(
+  values: Record<PackageFieldKey, string>
+): Promise<RenderedQuote> {
+  return renderTemplatePdf(PACKAGE, values, 'Cotización | Gama Energía');
+}
+
+async function renderTemplatePdf<K extends string>(
+  tpl: TemplateSpec<K>,
+  values: Record<K, string>,
+  title: string
+): Promise<RenderedQuote> {
+  const { templateBytes, fonts } = await loadAssets(tpl);
 
   const pdf = await PDFDocument.load(templateBytes);
   pdf.registerFontkit(fontkit);
 
   const pages = pdf.getPages();
-  if (pages.length !== template.pages.length) {
+  if (pages.length !== tpl.pages.length) {
     throw new Error(
-      `template has ${pages.length} pages, expected ${template.pages.length}`
+      `template has ${pages.length} pages, expected ${tpl.pages.length}`
     );
   }
   // A silent re-export at a different size would scatter every field
@@ -120,7 +159,7 @@ export async function renderQuotePdf(
   // either reject the annex or wave through a rotated re-export.
   for (const [i, page] of pages.entries()) {
     const { width, height } = page.getSize();
-    const expected = template.pages[i];
+    const expected = tpl.pages[i];
     if (
       Math.round(width) !== expected.width ||
       Math.round(height) !== expected.height
@@ -159,7 +198,7 @@ export async function renderQuotePdf(
   // different sizes. Blank fields are excluded from the calculation but
   // not from the group — a row is defined by the design, not by which
   // of its values happen to be filled today.
-  const entries = Object.entries(FIELDS) as [FieldKey, FieldSpec][];
+  const entries = Object.entries(tpl.fields) as [K, FieldSpec][];
   const rowSizes = new Map<string, number>();
   for (const row of new Set(entries.map(([, s]) => s.row).filter(Boolean))) {
     const members = entries.filter(([, s]) => s.row === row);
@@ -183,7 +222,7 @@ export async function renderQuotePdf(
     const placement = placeText({
       box,
       text,
-      pageHeight: template.pages[spec.page].height,
+      pageHeight: tpl.pages[spec.page].height,
       measure: (t, size) => measureText(tf, t, size),
       startSize: spec.row ? rowSizes.get(spec.row) : undefined,
     });
@@ -209,7 +248,7 @@ export async function renderQuotePdf(
     }
   }
 
-  pdf.setTitle('Propuesta | Gama Energía');
+  pdf.setTitle(title);
   pdf.setProducer('wacrm');
   pdf.setCreationDate(new Date());
 

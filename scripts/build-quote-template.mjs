@@ -1,9 +1,16 @@
 // Prep step: turn the raw Figma export into the runtime quote template.
 //
 //   node scripts/build-quote-template.mjs
+//   node scripts/build-quote-template.mjs --package
 //
 // Source lives in design/ (Figma exports, tens of MB, never shipped); the
 // built template lands in public/quotes/, which the Dockerfile copies whole.
+//
+// `--package` builds the one-page package sheet instead (frame "P arena —
+// Cotización por paquete"): the price-only quote the bot sends when someone
+// asks for a number of panels without a bill. It has no cover photo, so it
+// skips the rasterisation below and only checks the page size. Everything
+// else in this header — the opacity-0 rule especially — applies to it too.
 //
 // Re-run this whenever the design changes in Figma. Two jobs:
 //
@@ -51,18 +58,29 @@ import { PDFDocument } from 'pdf-lib'
 //     const o=await PDFDocument.create();o.addPage((await o.copyPages(s,[1]))[0]);
 //     await fs.writeFile("/tmp/p2.pdf",await o.save())})'
 //   qlmanage -t -s 1600 -o /tmp /tmp/p2.pdf && open /tmp/p2.pdf.png
-const SRC = process.argv[2] ?? 'design/Bot _Template_Update.pdf'
-const OUT = process.argv[3] ?? 'public/quotes/template.pdf'
+const PACKAGE = process.argv[2] === '--package'
+const args = PACKAGE ? process.argv.slice(3) : process.argv.slice(2)
+const SRC =
+  args[0] ??
+  (PACKAGE
+    ? 'design/P arena — Cotización por paquete.pdf'
+    : 'design/Bot _Template_Update.pdf')
+const OUT =
+  args[1] ??
+  (PACKAGE ? 'public/quotes/package-template.pdf' : 'public/quotes/template.pdf')
 
-// Must stay in step with `pages` in src/lib/quotes/template.json — the
-// renderer refuses to draw on a template whose pages are not these sizes.
-const EXPECTED_PAGES = [
-  { width: 816, height: 1056 },
-  { width: 816, height: 1056 },
-  { width: 816, height: 1056 },
-  { width: 816, height: 1056 },
-  { width: 1056, height: 816 }, // anexo de financiamiento, horizontal
-]
+// Must stay in step with `pages` in src/lib/quotes/template.json (or
+// package-template.json) — the renderer refuses to draw on a template whose
+// pages are not these sizes.
+const EXPECTED_PAGES = PACKAGE
+  ? [{ width: 816, height: 1056 }]
+  : [
+      { width: 816, height: 1056 },
+      { width: 816, height: 1056 },
+      { width: 816, height: 1056 },
+      { width: 816, height: 1056 },
+      { width: 1056, height: 816 }, // anexo de financiamiento, horizontal
+    ]
 const COVER_W = EXPECTED_PAGES[0].width
 const COVER_H = EXPECTED_PAGES[0].height
 const COVER_QUALITY = 85
@@ -89,6 +107,32 @@ for (const [i, p] of pages.entries()) {
         'portrait one turned on its side — the renderer refuses rotated pages.',
     )
   }
+}
+
+async function writeTemplate(out, title) {
+  out.setTitle(title)
+  out.setProducer('wacrm')
+
+  const bytes = await out.save({ useObjectStreams: true })
+  await writeFile(OUT, bytes)
+
+  const before = (await readFile(SRC)).length
+  console.log(
+    `${OUT}: ${(bytes.length / 1048576).toFixed(2)} MB ` +
+      `(from ${(before / 1048576).toFixed(2)} MB), ${out.getPageCount()} pages`,
+  )
+  for (const [i, p] of out.getPages().entries()) {
+    const { width, height } = p.getSize()
+    console.log(`  page ${i + 1}: ${width} x ${height}`)
+  }
+}
+
+// The package sheet has no photo to flatten: its one page goes across as-is.
+if (PACKAGE) {
+  const out = await PDFDocument.create()
+  for (const p of await out.copyPages(src, [0])) out.addPage(p)
+  await writeTemplate(out, 'Cotización — Gama Energía')
+  process.exit(0)
 }
 
 // qlmanage renders page 1 only, which is exactly the page we want to flatten.
@@ -118,21 +162,7 @@ try {
   const rest = pages.map((_, i) => i).slice(1)
   for (const p of await out.copyPages(src, rest)) out.addPage(p)
 
-  out.setTitle('Propuesta — Gama Energía')
-  out.setProducer('wacrm')
-
-  const bytes = await out.save({ useObjectStreams: true })
-  await writeFile(OUT, bytes)
-
-  const before = (await readFile(SRC)).length
-  console.log(
-    `${OUT}: ${(bytes.length / 1048576).toFixed(2)} MB ` +
-      `(from ${(before / 1048576).toFixed(2)} MB), ${out.getPageCount()} pages`,
-  )
-  for (const [i, p] of out.getPages().entries()) {
-    const { width, height } = p.getSize()
-    console.log(`  page ${i + 1}: ${width} x ${height}`)
-  }
+  await writeTemplate(out, 'Propuesta — Gama Energía')
 } finally {
   rmSync(tmp, { recursive: true, force: true })
 }
