@@ -1,7 +1,13 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { supabaseAdmin } from '@/lib/ai/admin-client'
 import { decrypt } from '@/lib/whatsapp/encryption'
+import {
+  fetchInboundMediaFromMeta,
+  isValidMediaId,
+  readInboundMedia,
+  storeInboundMedia,
+} from '@/lib/storage/inbound-media'
 
 export async function GET(
   request: Request,
@@ -15,6 +21,10 @@ export async function GET(
         { error: 'Media ID is required' },
         { status: 400 }
       )
+    }
+    // The id becomes part of a storage path below.
+    if (!isValidMediaId(mediaId)) {
+      return NextResponse.json({ error: 'Invalid media ID' }, { status: 400 })
     }
 
     const supabase = await createClient()
@@ -48,7 +58,25 @@ export async function GET(
       )
     }
 
-    // Fetch and decrypt WhatsApp config
+    // Our own copy first. Everything the webhook archived is served from
+    // here, for good, without a round trip to Meta. Read through the
+    // caller's session so the bucket's policy scopes it to their account.
+    const archived = await readInboundMedia({ db: supabase, accountId, mediaId })
+    if (archived) {
+      return new Response(archived, {
+        status: 200,
+        headers: {
+          'Content-Type': archived.type || 'application/octet-stream',
+          // `private`: a customer's document behind a login must never
+          // sit in a shared cache. A media id never changes bytes.
+          'Cache-Control': 'private, max-age=31536000, immutable',
+        },
+      })
+    }
+
+    // No copy yet — the file arrived before inbound media was archived,
+    // or the webhook's copy failed. Only Meta has it now, and only until
+    // 7 days after it arrived.
     const { data: config, error: configError } = await supabase
       .from('whatsapp_config')
       .select('*')
@@ -64,20 +92,34 @@ export async function GET(
 
     const accessToken = decrypt(config.access_token)
 
-    // Get the download URL from Meta
-    const mediaInfo = await getMediaUrl({ mediaId, accessToken })
-
-    // Download the binary data
-    const { buffer, contentType } = await downloadMedia({
-      downloadUrl: mediaInfo.url,
+    const { bytes, contentType } = await fetchInboundMediaFromMeta({
+      mediaId,
       accessToken,
     })
 
-    return new Response(new Uint8Array(buffer), {
+    // Keep what we just fetched, so this is the last time the file
+    // depends on Meta. After the response: the viewer shouldn't wait on
+    // the upload, and a failed copy costs nothing the next view can't
+    // retry. Service role because the bucket has no write policy.
+    after(async () => {
+      try {
+        await storeInboundMedia({
+          db: supabaseAdmin(),
+          accountId,
+          mediaId,
+          bytes,
+          contentType,
+        })
+      } catch (err) {
+        console.error(`[whatsapp media] archive of ${mediaId} failed:`, err)
+      }
+    })
+
+    return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
-        'Content-Type': contentType || mediaInfo.mimeType || 'application/octet-stream',
-        'Cache-Control': 'public, max-age=86400',
+        'Content-Type': contentType,
+        'Cache-Control': 'private, max-age=86400',
       },
     })
   } catch (error) {
