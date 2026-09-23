@@ -419,6 +419,63 @@ describe('mergeReadings — a bill split across turns', () => {
   })
 })
 
+describe('mergeReadings — a clearer photo of page 1', () => {
+  // The retake the bot asks for when the amounts would not read. The
+  // customer sends that page and only that page, and replacing the
+  // stored bill with it threw the history away.
+  const blurry = () =>
+    bill({
+      importe_periodo_mxn: null,
+      importe_dap_mxn: null,
+      costo_periodo_mxn: null,
+      advertencias: 'Fac. del Periodo y DAP no se alcanzan a leer.',
+    })
+
+  it('keeps the history and picks up the amount it was missing', () => {
+    const state = mergeReadings(stateWith([blurry()]), [pageOne()])
+
+    expect(state.readings).toHaveLength(1)
+    const r = state.readings[0]
+    expect(r.historial_bimestres_kwh).toEqual([900, 950, 1000, 1050, 1100])
+    expect(r.historial_bimestres_importe_mxn).toEqual([3600, 3800, 4000, 4200, 4400])
+    expect(r.cantidad_periodos_usados).toBe(6)
+    expect(r.promedio_bimestral_kwh).toBe(1000)
+    expect(r.costo_periodo_mxn).toBe(4100)
+  })
+
+  it('drops the warning about the photo it replaced', () => {
+    // Left in, the model is told the amount is unreadable on the very
+    // turn it finally read.
+    const state = mergeReadings(stateWith([blurry()]), [pageOne()])
+    expect(state.readings[0].advertencias).not.toContain('no se alcanzan a leer')
+  })
+
+  it('recognises the same bimester however the retake punctuated it', () => {
+    const state = mergeReadings(stateWith([blurry()]), [
+      pageOne({ periodo_actual: 'del 22 MAY 26 al 22 JUL 26' }),
+    ])
+    expect(state.readings[0].historial_bimestres_kwh).toHaveLength(5)
+  })
+
+  it('keeps a page-1 figure the retake still could not read', () => {
+    const state = mergeReadings(stateWith([blurry()]), [
+      pageOne({ consumo_periodo_actual_kwh: null }),
+    ])
+    expect(state.readings[0].consumo_periodo_actual_kwh).toBe(1000)
+    expect(state.readings[0].incluye_periodo_actual).toBe(true)
+  })
+
+  it('starts over on a later bill of the same meter', () => {
+    // A different bimester is a different bill; its history is not the
+    // stored one, and borrowing it would average two years together.
+    const state = mergeReadings(stateWith([blurry()]), [
+      pageOne({ periodo_actual: '22 JUL 26 - 22 SEP 26' }),
+    ])
+    expect(state.readings).toHaveLength(1)
+    expect(state.readings[0].historial_bimestres_kwh).toEqual([])
+  })
+})
+
 describe('resolveMeterGate', () => {
   it('quotes a single bill immediately — the ordinary customer', () => {
     const gate = resolveMeterGate(stateWith([bill()]))

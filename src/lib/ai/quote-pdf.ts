@@ -51,7 +51,15 @@ export type SkipReason =
    * with a question and never a proposal.
    */
   | 'needs_review'
-  /** No readable peso amount, so the comparison cards would be blank. */
+  /**
+   * The kWh priced cleanly but the bill's peso amount ("Fac. del
+   * Periodo") never read — a blurry phone photo, usually. Split out of
+   * `no_financials` because it is the one blank-cards case the customer
+   * can fix with a clearer photo, so the caller parks the quote and the
+   * bot asks for one instead of quoting in text with nothing behind it.
+   */
+  | 'missing_amount'
+  /** A peso amount too small for the system to ever pay for itself. */
   | 'no_financials'
   /** Same tier already delivered — the document would be identical. */
   | 'same_tier'
@@ -249,7 +257,8 @@ async function recordQuoteOnDeal(
  *
  * Skips silently when the reading cannot carry a document:
  *   - not quotable (unreadable, one period only, or above the table)
- *   - no peso amount, which would leave the comparison cards empty
+ *   - no readable peso amount, or one the system never pays back —
+ *     either way the comparison cards would be empty
  *   - the same tier was already delivered, so the PDF would be a
  *     byte-for-byte duplicate down to the folio
  */
@@ -305,16 +314,19 @@ export async function sendQuoteProposal(
       return { kind: 'skipped', reason: 'not_quotable' }
     }
 
-    const financials = buildFinancials({
-      costoBimestralMxn: projectionBaseCost({
-        costoPeriodoMxn: extraction.costo_periodo_mxn,
-        historialImporteMxn: extraction.historial_bimestres_importe_mxn,
-      }),
-      tier: quote.tier,
+    const costoBimestralMxn = projectionBaseCost({
+      costoPeriodoMxn: extraction.costo_periodo_mxn,
+      historialImporteMxn: extraction.historial_bimestres_importe_mxn,
     })
     // Half the document is the "with panels vs without" comparison. A
     // proposal with those cards blank reads as broken, so we would
-    // rather send nothing and let the bot quote in text.
+    // rather send nothing — and `formatReceiptNote` has already told the
+    // model this turn carries no document, so it asks for a clearer
+    // photo instead of promising one.
+    if (costoBimestralMxn == null) {
+      return { kind: 'skipped', reason: 'missing_amount' }
+    }
+    const financials = buildFinancials({ costoBimestralMxn, tier: quote.tier })
     if (!financials) return { kind: 'skipped', reason: 'no_financials' }
 
     const alreadySent = await readSentPanels(db, accountId, contactId)

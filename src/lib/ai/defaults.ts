@@ -163,6 +163,11 @@ export function buildSystemPrompt(args: {
   if (mode === 'auto_reply') {
     parts.push(
       `You are replying automatically with no human in the loop. If you cannot confidently and safely help — the customer explicitly asks for a human, is upset or complaining, or the request needs information you do not have — hand off: write one short message telling the customer a teammate will continue the conversation (use any handoff wording the business instructions specify), then end your reply with ${HANDOFF_SENTINEL}. The marker is stripped before sending; the message before it IS sent to the customer. If no farewell makes sense, reply with exactly ${HANDOFF_SENTINEL}. A human agent will then take over. Prefer handing off over guessing.`,
+      // Stated here rather than per turn because it holds for every
+      // tenant: the reply is text and only text. A quote template that
+      // ends "te comparto el PDF" was followed on a turn with no
+      // document, then repeated when the customer asked where it was.
+      'Your reply is sent as text only: you cannot send, attach, or share files — documents, PDFs, images — and nothing you write makes one go out. Never tell the customer you are sending or sharing a file, or that one is on its way, unless a [NOTA DEL SISTEMA] on this same turn says the system is sending it. If the customer asks for a file that is not coming, say honestly what is still needed for it, or hand off — even when the business instructions give you a template that mentions sending one.',
     )
   }
 

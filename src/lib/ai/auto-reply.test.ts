@@ -47,7 +47,8 @@ vi.mock('./receipt', () => ({
     r: { promedio_bimestral_kwh: number | null },
     hold: { reason: string },
   ) => `[NOTA RETOMA: promedio ${r.promedio_bimestral_kwh} motivo ${hold.reason}]`,
-  formatStalledQuoteNote: () => '[NOTA COTIZACION ESTANCADA]',
+  formatStalledQuoteNote: (reason?: string) =>
+    `[NOTA COTIZACION ESTANCADA${reason ? ` motivo ${reason}` : ''}]`,
   METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
@@ -1149,9 +1150,159 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     const note = (
       h.generateReply.mock.calls[0][0].messages as { content: string }[]
     ).at(-1)!.content
-    expect(note).toBe('[NOTA COTIZACION ESTANCADA]')
+    expect(note).toBe('[NOTA COTIZACION ESTANCADA motivo anomalous_history]')
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
     expect(h.engineSendText).toHaveBeenCalled()
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  // ----------------------------------------------------------------
+  // Fernando's thread: the kWh read, the peso amount did not, and the
+  // bot promised a PDF twice without one ever going out.
+  // ----------------------------------------------------------------
+
+  it('parks the quote when the amount never read, so "¿y el PDF?" has an answer', async () => {
+    mockBills(cleanBill)
+    h.sendQuoteProposal.mockResolvedValue({
+      kind: 'skipped',
+      reason: 'missing_amount',
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.state.updatePayload?.ai_meter_state).toMatchObject({
+      hold: { reason: 'missing_amount', askedCount: 1 },
+    })
+  })
+
+  it('brings the parked quote back when the customer asks for the PDF', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'missing_amount',
+      askedCount: 1,
+    })
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Quisiera ver el pdf antes' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toBe('[NOTA RETOMA: promedio 1036 motivo missing_amount]')
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+  })
+
+  it('hands a photo that never comes to a person, saying what is left to do', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'missing_amount',
+      askedCount: 3,
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    const note = (
+      h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    ).at(-1)!.content
+    expect(note).toBe('[NOTA COTIZACION ESTANCADA motivo missing_amount]')
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      "peso amount never read",
+    )
+  })
+})
+
+// ------------------------------------------------------------------
+// LaMarris's thread: asked for her bill, she answered "Gaste 1674 kw en
+// el último recibo", and the bot quoted 12 panels with no document — a
+// typed figure carries no tariff, no history and no pesos, and the
+// proposal needs all three.
+// ------------------------------------------------------------------
+describe('dispatchInboundToAiReply — a consumption typed instead of a bill', () => {
+  const lastNote = () =>
+    (h.generateReply.mock.calls[0][0].messages as { content: string }[]).at(-1)!
+      .content
+
+  it('tells the model not to quote from it and to ask for the bill', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Gaste 1674 kw en el último recibo' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('escribió su consumo en kWh')
+    expect(lastNote()).toContain('NO des número de paneles')
+  })
+
+  it('finds the figure anywhere in the customer’s burst', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'assistant', content: '¿Me compartes tu recibo de CFE?' },
+      { role: 'user', content: 'Gaste 1674 kw en el último recibo' },
+      { role: 'user', content: '¿Cuántos paneles serían?' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).toContain('escribió su consumo en kWh')
+  })
+
+  it('ignores a figure from a turn the bot already answered', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Gaste 1674 kw en el último recibo' },
+      { role: 'assistant', content: '¿Me mandas tu recibo?' },
+      { role: 'user', content: 'Ok, al rato' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).not.toContain('escribió su consumo en kWh')
+  })
+
+  it('leaves a turn that brought the bill to the receipt note', async () => {
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: 'Aquí va, gasto como 1674 kw' },
+    ])
+    mockBills({
+      consumo_periodo_actual_kwh: 1674,
+      periodo_actual: null,
+      historial_bimestres_kwh: [],
+      cantidad_periodos_usados: 1,
+      promedio_bimestral_kwh: 1674,
+      tarifa: null,
+      advertencias: '',
+    })
+    await dispatchInboundToAiReply({
+      ...ARGS,
+      receiptMediaIds: ['media-1'],
+      accessToken: 'meta-token',
+    })
+
+    expect(lastNote()).toBe('[NOTA: promedio 1674]')
+  })
+
+  it('stays out of a thread whose bill is already in hand', async () => {
+    h.state.conv!.ai_meter_state = {
+      expected: null,
+      readings: [
+        {
+          consumo_periodo_actual_kwh: 1486,
+          periodo_actual: '25 NOV 25 - 23 ENE 26',
+          historial_bimestres_kwh: [1920, 2637, 2107, 1640, 1325],
+          historial_bimestres_periodo: [null, null, null, null, null],
+          cantidad_periodos_usados: 6,
+          promedio_bimestral_kwh: 1853,
+          incluye_periodo_actual: true,
+          periodos_promediados_kwh: [1486, 1920, 2637, 2107, 1640, 1325],
+          historial_bimestres_importe_mxn: [],
+          costo_periodo_mxn: null,
+          advertencias: '',
+        },
+      ],
+      readMediaIds: ['media-1'],
+      askedCount: 0,
+      hold: null,
+      updatedAt: new Date().toISOString(),
+    }
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'user', content: '¿Y si subo a 2000 kWh?' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(lastNote()).not.toContain('escribió su consumo en kWh')
   })
 })

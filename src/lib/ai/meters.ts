@@ -6,6 +6,7 @@ import {
   type QuoteHold,
   type ReceiptExtraction,
 } from './receipt'
+import { parsePeriodoLabel } from './receipt-periods'
 import { resolveQuote } from '@/lib/quotes/pricing'
 import { buildFinancials, projectionBaseCost } from '@/lib/quotes/finance'
 import { formatMxn, formatPaybackDuration } from '@/lib/quotes/fields'
@@ -412,6 +413,65 @@ function pageOneAwaitingHistory(readings: readonly ReceiptExtraction[]): number 
   return -1
 }
 
+/** Whether two period labels name the same bimester, however each read
+ *  happened to punctuate it. */
+function sameBillingPeriod(a: string | null, b: string | null): boolean {
+  if (a == null || b == null) return false
+  if (a === b) return true
+  const pa = parsePeriodoLabel(a)
+  const pb = parsePeriodoLabel(b)
+  return pa != null && pb != null && pa.end.getTime() === pb.end.getTime()
+}
+
+/**
+ * The same bill photographed again, laid over the reading it retakes.
+ *
+ * A repeat of a known meter replaces the stored reading — the newer
+ * photo is usually the clearer one. But a retake is rarely the whole
+ * bill: when the amounts would not read, the bot asks for a clearer
+ * page 1, and the customer sends exactly that page. Replacing outright
+ * threw away the history page 2 had already given us, the average fell
+ * to a single period, and the bot asked for a page it had been holding
+ * a minute earlier.
+ *
+ * So a page-1 retake keeps the stored history, and only when both
+ * readings name the same billing period — that is what makes them one
+ * bill rather than the same meter a bimester later. Page-1 fields the
+ * retake still could not read fall back to the stored ones, for the
+ * same reason. Rebuilt through `buildExtraction`, like `joinPages`. The
+ * warnings are the retake's alone: the old ones described the photo
+ * being replaced, and a stale "no se alcanza a leer el importe" would
+ * have the bot ask for the amount it just read.
+ */
+function retakeReading(
+  stored: ReceiptExtraction,
+  incoming: ReceiptExtraction,
+): ReceiptExtraction {
+  if (
+    incoming.historial_bimestres_kwh.length > 0 ||
+    stored.historial_bimestres_kwh.length === 0 ||
+    !sameBillingPeriod(stored.periodo_actual, incoming.periodo_actual)
+  ) {
+    return incoming
+  }
+  return buildExtraction({
+    consumo_periodo_actual_kwh:
+      incoming.consumo_periodo_actual_kwh ?? stored.consumo_periodo_actual_kwh,
+    periodo_actual: incoming.periodo_actual,
+    historial_bimestres_kwh: stored.historial_bimestres_kwh,
+    historial_periodos: stored.historial_bimestres_periodo,
+    historial_bimestres_importe_mxn: stored.historial_bimestres_importe_mxn,
+    tarifa: incoming.tarifa ?? stored.tarifa,
+    numero_servicio: incoming.numero_servicio ?? stored.numero_servicio,
+    ciudad: incoming.ciudad ?? stored.ciudad,
+    importe_periodo_mxn: incoming.importe_periodo_mxn ?? stored.importe_periodo_mxn,
+    importe_dap_mxn: incoming.importe_dap_mxn ?? stored.importe_dap_mxn,
+    importe_total_a_pagar_mxn:
+      incoming.importe_total_a_pagar_mxn ?? stored.importe_total_a_pagar_mxn,
+    advertencias: incoming.advertencias,
+  })
+}
+
 /**
  * Merge freshly-read bills into the state, replacing any that turn out
  * to be a meter already held.
@@ -420,7 +480,9 @@ function pageOneAwaitingHistory(readings: readonly ReceiptExtraction[]): number 
  * they are never deduped against each other — only against what was
  * stored on earlier turns. A repeat of a known meter replaces the old
  * reading rather than adding to it: the newer photo is usually the
- * clearer one, and it is the reason the customer sent it again.
+ * clearer one, and it is the reason the customer sent it again. A
+ * retake of page 1 alone keeps the history already read (see
+ * `retakeReading`).
  *
  * The exception is a continuation page, which is not a bill at all: it
  * completes one already stored instead of joining the count. With no
@@ -443,7 +505,7 @@ export function mergeReadings(
       }
     }
     const existing = readings.findIndex((r) => sameMeter(r, reading))
-    if (existing >= 0) readings[existing] = reading
+    if (existing >= 0) readings[existing] = retakeReading(readings[existing], reading)
     else if (readings.length < MAX_METERS) readings.push(reading)
   }
   return {
