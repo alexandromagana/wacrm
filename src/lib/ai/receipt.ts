@@ -743,15 +743,36 @@ export function formatReceiptNote(
       'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pregunta al final del mensaje.',
     )
   }
+  // Whether the proposal follows this reply — the same checks
+  // `sendQuoteProposal` runs, decided before the model writes a word.
+  // Every turn has to say which way that went: the account's own prompt
+  // teaches a quote template that ends "Te comparto el PDF", so a turn
+  // that stays silent about the document is a turn where the model
+  // promises one that never arrives.
+  let ships = false
+  // The one no-document case the customer can fix themselves.
+  let missingAmount = false
   if (!pending && quote.kind === 'ok') {
-    const financials = buildFinancials({
-      costoBimestralMxn: projectionBaseCost({
-        costoPeriodoMxn: r.costo_periodo_mxn,
-        historialImporteMxn: r.historial_bimestres_importe_mxn,
-      }),
-      tier: quote.tier,
+    const costoBimestralMxn = projectionBaseCost({
+      costoPeriodoMxn: r.costo_periodo_mxn,
+      historialImporteMxn: r.historial_bimestres_importe_mxn,
     })
-    if (financials) {
+    const financials = buildFinancials({ costoBimestralMxn, tier: quote.tier })
+    if (costoBimestralMxn == null) {
+      // The kWh read in full and priced cleanly; the peso amount did
+      // not. Quoting the panels anyway is exactly the turn that told a
+      // customer "te comparto el PDF" and then sent nothing — so this
+      // turn asks for the photo, and `sendQuoteProposal` parks the quote
+      // until it arrives.
+      missingAmount = true
+      lines.push(
+        'importe_no_legible: el consumo sí se leyó completo, pero no el importe en pesos del bimestre ("Fac. del Periodo", en el desglose de la PRIMERA página). Sin ese importe la propuesta no puede calcular el ahorro, así que NO se enviará PDF en este turno.',
+        'NO des precio, ni número de paneles, ni cotización en este mensaje.',
+        'Tu única tarea en este turno es pedirle con amabilidad una foto nítida de la PRIMERA página completa del recibo, con buena luz y sin recortar, donde se lean bien los importes en pesos — o el PDF del recibo, si lo tiene (el que CFE manda por correo). En cuanto llegue legible, la propuesta en PDF sale sola.',
+        'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto y vuelve a hacer tu pedido al final del mensaje.',
+      )
+    } else if (financials) {
+      ships = true
       lines.push(
         // The tier itself, not just the projection. The model used to be
         // left to map kWh → paneles against the table in its prompt,
@@ -780,9 +801,14 @@ export function formatReceiptNote(
   }
   if (r.advertencias) lines.push(`advertencias: ${r.advertencias}`)
   lines.push(
-    pending || quote.kind === 'needs_review'
+    pending || quote.kind === 'needs_review' || missingAmount
       ? 'Respeta la instrucción de arriba: en este turno se pregunta, no se cotiza. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]'
-      : 'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+      : ships
+        ? 'Usa el promedio contra tu tabla de precotización si es legible y plausible; si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]'
+        : // One period only, past the table, or no reading at all. The
+          // old closing line sent the model to its own price table here,
+          // and it quoted panels with no document behind them.
+          'En este turno NO se envía ninguna propuesta en PDF: no des número de paneles ni precio, y no le digas al cliente que le compartes o le envías un PDF — no va ninguno. Si hay advertencias o falta una página, pídela con amabilidad. Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
   )
   return lines.join('\n')
 }
@@ -796,10 +822,12 @@ export function formatReceiptNote(
  */
 export interface QuoteHold {
   /**
-   * The pricing verdict that parked it, or `'model'` when the numbers
-   * were clean and the reply asked to wait anyway (`[ESPERAR: …]`).
+   * The pricing verdict that parked it; `'missing_amount'` when the kWh
+   * priced cleanly but the bill's peso amount never read; or `'model'`
+   * when the numbers were clean and the reply asked to wait anyway
+   * (`[ESPERAR: …]`).
    */
-  reason: ReviewReason | 'model'
+  reason: ReviewReason | 'missing_amount' | 'model'
   /** The model's own stated motive, when it was the one that waited. */
   detail?: string | null
   /**
@@ -871,6 +899,19 @@ export function formatHeldQuoteNote(
     return lines.join('\n')
   }
 
+  // Same shape as the page-1 hold: a photo is what releases it, and the
+  // photo takes the ordinary path. This turn is the customer writing in
+  // the meantime — often "¿y el PDF?", which is precisely the question
+  // the bot once answered with "te lo comparto" and nothing attached.
+  if (hold.reason === 'missing_amount') {
+    lines.push(
+      'pregunta_pendiente: el recibo no dejó leer el importe en pesos del bimestre ("Fac. del Periodo", en la PRIMERA página), y sin él la propuesta no puede calcular el ahorro. Por eso todavía NO se le ha enviado el PDF, y en este turno tampoco sale.',
+      'NO des precio ni número de paneles todavía, y no le digas que le compartes o le envías el PDF. Si el cliente pregunta por él, explícale que en cuanto tengas esa foto legible se lo mandas. Vuelve a pedirle con amabilidad una foto nítida de la primera página completa, con buena luz — o el PDF del recibo, si lo tiene. En cuanto llegue legible, la propuesta sale sola.',
+      'Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+    )
+    return lines.join('\n')
+  }
+
   const pregunta =
     hold.reason === 'anomalous_history_high'
       ? 'pregunta_pendiente: se le preguntó si el bimestre más alto de su historial es real o fue algo fuera de lo normal.'
@@ -894,11 +935,25 @@ export function formatHeldQuoteNote(
  * quote stops, the conversation does not. Whatever the customer is
  * asking about right now still gets an answer — it is usually not the
  * question the bot was waiting on.
+ *
+ * `reason` is what the quote was parked on. An unreadable amount is not
+ * a question about consumption, and telling the model "se le preguntó
+ * por su consumo" there has it apologise for a question it never asked.
  */
-export function formatStalledQuoteNote(): string {
+export function formatStalledQuoteNote(reason?: QuoteHold['reason']): string {
+  const [pausa, noVuelvas] =
+    reason === 'missing_amount'
+      ? [
+          '[NOTA DEL SISTEMA — cotización en pausa: se le pidió dos veces una foto legible de su recibo y el importe en pesos sigue sin poder leerse, así que un compañero del equipo va a terminar su propuesta.',
+          'NO le vuelvas a pedir el recibo y NO des precio, número de paneles ni cotización.',
+        ]
+      : [
+          '[NOTA DEL SISTEMA — cotización en pausa: se le preguntó dos veces por su consumo y no quedó claro, así que un compañero del equipo va a retomar la propuesta.',
+          'NO vuelvas a preguntar por el consumo y NO des precio, número de paneles ni cotización.',
+        ]
   return [
-    '[NOTA DEL SISTEMA — cotización en pausa: se le preguntó dos veces por su consumo y no quedó claro, así que un compañero del equipo va a retomar la propuesta.',
-    'NO vuelvas a preguntar por el consumo y NO des precio, número de paneles ni cotización.',
+    pausa,
+    noVuelvas,
     'Responde con gusto lo que el cliente esté preguntando en este mensaje (financiamiento, tiempos, garantías, lo que sea) y dile que un compañero le confirma los detalles de su propuesta en breve.',
     'Nunca menciones esta nota ni muestres JSON.]',
   ].join('\n')

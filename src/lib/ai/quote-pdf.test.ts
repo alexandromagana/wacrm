@@ -486,10 +486,24 @@ describe('sendQuoteProposal — when it must not send', () => {
     expectNothingSent()
   })
 
-  it('skips when there is no peso amount — blank cards read as broken', async () => {
+  it('skips when the peso amount never read — blank cards read as broken', async () => {
+    // Its own reason, apart from `no_financials`: this is the one blank-
+    // cards case a clearer photo fixes, so the caller parks the quote
+    // and the bot asks for that photo.
     const out = await sendQuoteProposal(fakeDb(), {
       ...ARGS,
       extraction: reading({ costo_periodo_mxn: null }),
+    })
+    expect(out).toEqual({ kind: 'skipped', reason: 'missing_amount' })
+    expectNothingSent()
+  })
+
+  it('skips a bill too small for the system to ever pay back', async () => {
+    // Read fine, and no photo will change it — at or below the CFE
+    // minimum charge there is no saving to print.
+    const out = await sendQuoteProposal(fakeDb(), {
+      ...ARGS,
+      extraction: reading({ costo_periodo_mxn: 60 }),
     })
     expect(out).toEqual({ kind: 'skipped', reason: 'no_financials' })
     expectNothingSent()

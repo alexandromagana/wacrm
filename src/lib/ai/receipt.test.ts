@@ -6,6 +6,7 @@ import {
   isPlausibleAverage,
   formatHeldQuoteNote,
   formatReceiptNote,
+  formatStalledQuoteNote,
   inferPropertyType,
   saveReceiptData,
   CONSUMO_FIELD_NAME,
@@ -702,6 +703,74 @@ describe('formatReceiptNote — one decision, not two', () => {
   })
 })
 
+// ------------------------------------------------------------------
+// Fernando's bill: two phone photos, every kWh legible and a clean
+// 1,853 kWh year — 12 panels — but "Fac. del Periodo" too blurry to
+// read. The note said nothing about the document, the model reached for
+// the account's quote template ("Te comparto el PDF con todos los
+// detalles"), and the PDF was skipped for want of a peso amount. When he
+// asked to see it, the bot promised it again.
+// ------------------------------------------------------------------
+const fernando = () =>
+  extraction({
+    consumo_periodo_actual_kwh: 1486,
+    periodo_actual: '25 NOV 25 - 23 ENE 26',
+    historial_bimestres_kwh: [1920, 2637, 2107, 1640, 1325],
+    cantidad_periodos_usados: 6,
+    promedio_bimestral_kwh: 1853,
+    importe_total_a_pagar_mxn: 5756,
+    historial_bimestres_importe_mxn: [7781, 9453, 9037, 3735, 4829],
+    costo_periodo_mxn: null,
+    tarifa: '1',
+    advertencias: 'Fac. del Periodo y DAP no se alcanzan a leer.',
+  })
+
+describe('formatReceiptNote — never a promise without a document', () => {
+  it('asks for a clearer page 1 when only the amount failed to read', () => {
+    const note = formatReceiptNote(fernando())
+    expect(note).toContain('importe_no_legible')
+    expect(note).toContain('NO se enviará PDF')
+    expect(note).toContain('PRIMERA página')
+    expect(note).toContain('NO des precio, ni número de paneles')
+  })
+
+  it('hands over no panel count and no shipping promise to repeat', () => {
+    const note = formatReceiptNote(fernando())
+    expect(note).not.toContain('sistema_cotizado')
+    expect(note).not.toContain('SE ENVÍA automáticamente')
+    expect(note).not.toContain('[ESPERAR')
+    // The line that sent the model to its own price table — and from
+    // there to the template that promises a PDF.
+    expect(note).not.toContain('Usa el promedio contra tu tabla')
+  })
+
+  it('says no document goes out on every other turn that sends none', () => {
+    const onePeriod = formatReceiptNote(
+      extraction({
+        consumo_periodo_actual_kwh: 1450,
+        cantidad_periodos_usados: 1,
+        promedio_bimestral_kwh: 1450,
+      }),
+    )
+    const unreadable = formatReceiptNote(
+      extraction({ advertencias: 'la imagen no es un recibo de CFE' }),
+    )
+    for (const note of [onePeriod, unreadable]) {
+      expect(note).toContain('NO se envía ninguna propuesta en PDF')
+      expect(note).toContain('no des número de paneles ni precio')
+      expect(note).not.toContain('Usa el promedio contra tu tabla')
+    }
+  })
+
+  it('still says a priced bill with its amount is on its way', () => {
+    const note = formatReceiptNote({ ...fernando(), costo_periodo_mxn: 5988 })
+    expect(note).toContain('sistema_cotizado: 12 paneles')
+    expect(note).toContain('SE ENVÍA automáticamente')
+    expect(note).not.toContain('importe_no_legible')
+    expect(note).not.toContain('NO se envía ninguna propuesta')
+  })
+})
+
 describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
   const held = () =>
     extraction({
@@ -775,6 +844,22 @@ describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
     expect(note).not.toContain('[CONSUMO:')
   })
 
+  it('answers "¿y el PDF?" with what is missing, not with a promise', () => {
+    // Fernando's second message was "Quisiera ver el pdf antes". With
+    // nothing in context the bot answered "te comparto el PDF" and
+    // attached nothing.
+    const note = formatHeldQuoteNote(fernando(), {
+      reason: 'missing_amount',
+      askedCount: 1,
+    })!
+    expect(note).toContain('importe en pesos')
+    expect(note).toContain('todavía NO se le ha enviado el PDF')
+    expect(note).toContain('no le digas que le compartes o le envías el PDF')
+    expect(note).toContain('NO des precio ni número de paneles')
+    // A photo releases this hold, not a verdict.
+    expect(note).not.toContain('[CONSUMO:')
+  })
+
   it('returns null for a reading that stopped being priceable', () => {
     expect(
       formatHeldQuoteNote(extraction({ promedio_bimestral_kwh: null }), {
@@ -782,6 +867,20 @@ describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
         askedCount: 1,
       }),
     ).toBeNull()
+  })
+})
+
+describe('formatStalledQuoteNote', () => {
+  it('drops the photo request, not a consumption question, when the amount never read', () => {
+    const note = formatStalledQuoteNote('missing_amount')
+    expect(note).toContain('foto legible')
+    expect(note).toContain('NO le vuelvas a pedir el recibo')
+    expect(note).not.toContain('por su consumo')
+  })
+
+  it('keeps the consumption wording for the holds that asked about it', () => {
+    expect(formatStalledQuoteNote('anomalous_history')).toContain('por su consumo')
+    expect(formatStalledQuoteNote()).toContain('por su consumo')
   })
 })
 

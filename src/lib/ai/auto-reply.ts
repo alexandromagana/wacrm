@@ -30,6 +30,11 @@ import {
   type MeterState,
 } from './meters'
 import { sendQuoteProposal } from './quote-pdf'
+import {
+  customerTurnText,
+  mentionsTypedConsumption,
+  TYPED_CONSUMPTION_NOTE,
+} from './typed-consumption'
 import { logAiUsage } from './usage'
 import { latestUserMessage } from './query'
 import { markReceiptMediaRead } from './inbound-buffer'
@@ -290,6 +295,10 @@ export async function dispatchInboundToAiReply(
     // something the customer actually typed.
     const last = messages[messages.length - 1]
     const inboundText = last?.role === 'user' ? last.content : ''
+    // The whole of the customer's turn, for the same reason: a burst
+    // arrives as several rows, and a consumption typed out in chat is
+    // rarely in the last one.
+    const customerTurn = customerTurnText(messages)
     // Image-only turns have no text rows yet — the receipt note below
     // becomes the turn. Without either, there's nothing to reply to.
     if (messages.length === 0 && !hasReceipt) return
@@ -341,6 +350,10 @@ export async function dispatchInboundToAiReply(
     // That question, asked twice and still unanswered. Same bound as
     // the meter gate, and the same conclusion.
     let holdHandoff = false
+    // What that stalled hold was waiting on. An amount that never read
+    // hands the person a different job — generate the PDF — from a
+    // history nobody explained.
+    let stalledHold: QuoteHold['reason'] | null = null
 
     // The conversation's open batch of meters, if any. An ordinary
     // single-receipt customer parses to an empty batch and never writes
@@ -462,11 +475,12 @@ export async function dispatchInboundToAiReply(
             // stopped pricing between turns. Either way there is
             // nothing left for the bot to release, and a customer with
             // a quote nobody sent is exactly who a person should call.
+            stalledHold = meterState.hold.reason
             meterState = releaseQuote(meterState)
             holdHandoff = true
             messages.push({
               role: 'user',
-              content: formatStalledQuoteNote(),
+              content: formatStalledQuoteNote(stalledHold),
             })
           }
         }
@@ -512,6 +526,20 @@ export async function dispatchInboundToAiReply(
         role: 'user',
         content: formatStalledMeterNote(meterState.readings.length),
       })
+    }
+
+    // A consumption typed out instead of a bill. The account's prompt
+    // once treated it as a reading, and the bot answered with a panel
+    // count and no document behind it — the proposal needs the tariff,
+    // the history and the pesos, and only the bill carries those. Only
+    // on a thread with no bill in hand: a turn that brought one, or a
+    // batch still open, already has its own note and the real numbers.
+    if (
+      !hasReceipt &&
+      meterState.readings.length === 0 &&
+      mentionsTypedConsumption(customerTurn)
+    ) {
+      messages.push({ role: 'user', content: TYPED_CONSUMPTION_NOTE })
     }
 
     // Ground the reply in the account's knowledge base (best-effort).
@@ -817,6 +845,16 @@ export async function dispatchInboundToAiReply(
         if (outcome.reason === 'needs_review' && outcome.review) {
           meterState = parkQuote(meterState, { reason: outcome.review })
           await saveMeterState(db, conversationId, meterState)
+        } else if (outcome.reason === 'missing_amount') {
+          // The same promise, for a photo whose amount never read. The
+          // reply above already asked for a clearer one. Parked, the
+          // customer's next message — "¿y el PDF?" — lands on a note
+          // that knows why the document is late, instead of on a model
+          // with nothing in context that answered "te lo comparto" and
+          // attached nothing; and the ask bound hands it to a person
+          // if the photo never comes.
+          meterState = parkQuote(meterState, { reason: 'missing_amount' })
+          await saveMeterState(db, conversationId, meterState)
         }
       }
     }
@@ -849,7 +887,9 @@ export async function dispatchInboundToAiReply(
           reason: meterStillStalled
             ? 'meter_gate'
             : holdHandoff
-              ? 'quote_review'
+              ? stalledHold === 'missing_amount'
+                ? 'quote_missing_amount'
+                : 'quote_review'
               : handoff
                 ? 'model_requested'
                 : 'cap_reached',

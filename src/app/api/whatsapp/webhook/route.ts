@@ -2,6 +2,7 @@ import { NextResponse, after } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
 import { getMediaUrl } from '@/lib/whatsapp/meta-api'
+import { archiveInboundMedia } from '@/lib/storage/inbound-media'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -662,7 +663,7 @@ async function processMessage(
   }
 
   // Parse message content based on type
-  const { contentText, mediaUrl, mediaType, interactiveReplyId } =
+  const { contentText, mediaUrl, mediaId, mediaType, interactiveReplyId } =
     await parseMessageContent(message, accessToken)
 
   // Resolve swipe-reply context if present. A missing parent is fine —
@@ -826,6 +827,28 @@ async function processMessage(
     }
   } catch (err) {
     console.error('[webhook] push notification failed:', err)
+  }
+
+  // ============================================================
+  // Keep the file.
+  //
+  // Meta deletes inbound media 7 days after it arrives, and the inbox
+  // used to hold nothing but Meta's id — every receipt a customer sent
+  // stopped opening a week later. Copied into our own storage here, the
+  // media proxy serves it from there for good (migration 049).
+  //
+  // After the push on purpose: copying a large video takes seconds and
+  // the notification shouldn't wait on it. Awaited for the same reason
+  // as the push, and never throws — a copy that fails here is retried
+  // by the proxy the first time someone opens the message.
+  // ============================================================
+  if (mediaUrl && mediaId) {
+    await archiveInboundMedia({
+      db: supabaseAdmin(),
+      accountId,
+      mediaId,
+      accessToken,
+    })
   }
 
   // ============================================================
@@ -993,6 +1016,9 @@ async function parseMessageContent(
 ): Promise<{
   contentText: string | null
   mediaUrl: string | null
+  /** Meta's id for the attached file — what gets archived once the
+   *  message row exists. Null for messages without media. */
+  mediaId: string | null
   mediaType: string | null
   /**
    * For interactive button / list replies: the stable id of the tapped
@@ -1027,6 +1053,7 @@ async function parseMessageContent(
   const empty = {
     contentText: null,
     mediaUrl: null,
+    mediaId: null,
     mediaType: null,
     interactiveReplyId: null,
   }
@@ -1041,6 +1068,7 @@ async function parseMessageContent(
           ...empty,
           contentText: message.image.caption || null,
           mediaUrl: await verifyAndBuildUrl(message.image.id),
+          mediaId: message.image.id,
           mediaType: message.image.mime_type,
         }
       }
@@ -1052,6 +1080,7 @@ async function parseMessageContent(
           ...empty,
           contentText: message.video.caption || null,
           mediaUrl: await verifyAndBuildUrl(message.video.id),
+          mediaId: message.video.id,
           mediaType: message.video.mime_type,
         }
       }
@@ -1064,6 +1093,7 @@ async function parseMessageContent(
           contentText:
             message.document.caption || message.document.filename || null,
           mediaUrl: await verifyAndBuildUrl(message.document.id),
+          mediaId: message.document.id,
           mediaType: message.document.mime_type,
         }
       }
@@ -1074,6 +1104,7 @@ async function parseMessageContent(
         return {
           ...empty,
           mediaUrl: await verifyAndBuildUrl(message.audio.id),
+          mediaId: message.audio.id,
           mediaType: message.audio.mime_type,
         }
       }
@@ -1087,6 +1118,7 @@ async function parseMessageContent(
         return {
           ...empty,
           mediaUrl: await verifyAndBuildUrl(message.sticker.id),
+          mediaId: message.sticker.id,
           mediaType: message.sticker.mime_type,
         }
       }
