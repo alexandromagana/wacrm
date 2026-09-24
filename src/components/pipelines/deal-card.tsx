@@ -5,11 +5,21 @@ import { Calendar, PanelsTopLeft, Wrench } from "lucide-react";
 import { Check, X } from "@/components/animated-icons";
 import { formatCurrency } from "@/lib/currency";
 import { nextDealMilestone } from "@/lib/deals/milestones";
+import {
+  formatMonth,
+  isCarriedOver,
+  monthKeyOf,
+  statusAsOfMonthEnd,
+  type MonthRange,
+} from "@/lib/deals/month";
+import { useLostReasonLabel } from "./lost-reason-label";
 import { useTranslations } from "next-intl";
 
 interface DealCardProps {
   deal: Deal;
   stage: PipelineStage | null;
+  /** The month on screen; without it the card shows the deal as it is now. */
+  range?: MonthRange;
   onEdit: (deal: Deal) => void;
   isOverlay?: boolean;
 }
@@ -28,8 +38,9 @@ function initials(name?: string, fallback?: string) {
   return source.charAt(0).toUpperCase();
 }
 
-export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
+export function DealCard({ deal, stage, range, onEdit, isOverlay }: DealCardProps) {
   const t = useTranslations("Pipelines.card");
+  const lostReasonLabel = useLostReasonLabel();
   const contactLabel = deal.contact?.name || deal.contact?.phone || t("noContact");
   const assigneeLabel = deal.assignee?.full_name || null;
 
@@ -37,6 +48,18 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
   const milestone = next
     ? { kind: next.kind, label: formatDate(next.date) }
     : null;
+
+  // Browsing a past month the deal shows as it stood then; a close that
+  // came later gets a chip saying when.
+  const status = range ? statusAsOfMonthEnd(deal, range) : (deal.status ?? "open");
+  const closedLater =
+    status === "open" && deal.status && deal.status !== "open" && deal.closed_at
+      ? { status: deal.status, month: formatMonth(monthKeyOf(new Date(deal.closed_at)), "short") }
+      : null;
+  const carriedFrom =
+    range && isCarriedOver(deal, range)
+      ? formatMonth(monthKeyOf(new Date(deal.created_at)), "short")
+      : null;
 
   return (
     <button
@@ -65,19 +88,39 @@ export function DealCard({ deal, stage, onEdit, isOverlay }: DealCardProps) {
         <h4 className="flex-1 text-sm font-semibold leading-snug text-foreground break-words">
           {deal.title}
         </h4>
-        {deal.status === "won" && (
+        {status === "won" && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
             <Check className="h-3 w-3" />
             {t("won")}
           </span>
         )}
-        {deal.status === "lost" && (
+        {status === "lost" && (
           <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">
             <X className="h-3 w-3" />
             {t("lost")}
           </span>
         )}
       </div>
+
+      {(carriedFrom || closedLater || (status === "lost" && deal.lost_reason)) && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1">
+          {carriedFrom && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {t("carriedFrom", { month: carriedFrom })}
+            </span>
+          )}
+          {closedLater && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+              {t(closedLater.status === "won" ? "wonIn" : "lostIn", { month: closedLater.month })}
+            </span>
+          )}
+          {status === "lost" && deal.lost_reason && (
+            <span className="truncate rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-400">
+              {lostReasonLabel(deal.lost_reason)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Contact row */}
       <div className="mt-2 flex items-center gap-2">
