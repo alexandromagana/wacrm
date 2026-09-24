@@ -150,6 +150,7 @@ Key pages:
 - [Environment variables](https://wacrm.tech/docs/environment-variables)
 - [Deploy on Hostinger](https://wacrm.tech/docs/deployment-hostinger)
 - [Architecture](https://wacrm.tech/docs/architecture)
+- [Local CRM auditor](./docs/crm-auditor.md)
 - [Troubleshooting](https://wacrm.tech/docs/troubleshooting)
 
 ## Stack
