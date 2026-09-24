@@ -65,6 +65,7 @@ import {
 import { deleteAccountMedia } from "@/lib/storage/upload-media";
 import { TemplatePicker, type TemplateSendValues } from "./template-picker";
 import { AiThreadBanner } from "./ai-thread-banner";
+import { CloseSuggestionBanner } from "./close-suggestion-banner";
 import { buildReplyPreview } from "./reply-quote";
 import { toast } from "sonner";
 
@@ -1247,6 +1248,12 @@ export function MessageThread({
           </div>
         )}
       </div>
+
+      {/* The lifecycle sweep flagged this chat as ready to close. */}
+      <CloseSuggestionBanner
+        conversation={conversation}
+        onClosed={() => onStatusChange(conversation.id, "closed")}
+      />
 
       {/* AI auto-reply banner — take over an active bot, or resume it
           after a handoff. Renders nothing unless the account has

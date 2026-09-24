@@ -13,7 +13,11 @@ import type { Conversation } from "@/types";
  * filtered view, so they don't change as you narrow the list down.
  */
 
-export type StatTileFilter = "all" | "unread" | "open" | "pending";
+/**
+ * `active` is open + pending (the inbox default); `suggested` counts the
+ * chats the lifecycle sweep flagged as ready to close.
+ */
+export type StatTileFilter = "active" | "unread" | "pending" | "suggested";
 
 interface InboxStatTilesProps {
   conversations: Conversation[];
@@ -29,22 +33,25 @@ export function InboxStatTiles({
   labels,
 }: InboxStatTilesProps) {
   const counts = useMemo(() => {
+    let active = 0;
     let unread = 0;
-    let open = 0;
     let pending = 0;
+    let suggested = 0;
     for (const c of conversations) {
       if (c.unread_count > 0) unread += 1;
-      if (c.status === "open") open += 1;
-      else if (c.status === "pending") pending += 1;
+      if (c.status === "closed") continue;
+      active += 1;
+      if (c.status === "pending") pending += 1;
+      if (c.close_suggested_at) suggested += 1;
     }
-    return { all: conversations.length, unread, open, pending };
+    return { active, unread, pending, suggested };
   }, [conversations]);
 
   const tiles: { key: StatTileFilter; dot: string }[] = [
-    { key: "all", dot: "bg-muted-foreground" },
+    { key: "active", dot: "bg-sky-400" },
     { key: "unread", dot: "bg-primary" },
-    { key: "open", dot: "bg-sky-400" },
     { key: "pending", dot: "bg-amber-400" },
+    { key: "suggested", dot: "bg-muted-foreground" },
   ];
 
   return (

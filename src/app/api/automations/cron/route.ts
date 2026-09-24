@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
 import { resumePendingExecution } from '@/lib/automations/engine'
 import type { AutomationContext } from '@/lib/automations/engine'
+import { maybeRunLifecycleSweep } from '@/lib/lifecycle/sweep'
 
 /**
  * Drain due `automation_pending_executions` rows. Meant to be hit
@@ -13,6 +14,12 @@ import type { AutomationContext } from '@/lib/automations/engine'
  * overlapping invocations don't double-process rows. Best-effort
  * only; expensive SELECT ... FOR UPDATE is avoided in favor of a
  * two-step UPDATE-by-id.
+ *
+ * Each call also offers the lifecycle sweep a turn (src/lib/lifecycle/
+ * sweep.ts). It is off unless LIFECYCLE_SWEEP is set, throttles itself
+ * to one run per window, and runs after the response so the pinger's
+ * timeout never cuts it short. Piggybacking here means no second cron
+ * job to set up.
  */
 export async function GET(request: Request) {
   const expected = process.env.AUTOMATION_CRON_SECRET
@@ -23,6 +30,13 @@ export async function GET(request: Request) {
   if (supplied !== expected) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+
+  // Before the early return below: most calls find nothing due.
+  after(() =>
+    maybeRunLifecycleSweep().catch((err) => {
+      console.error('[lifecycle] sweep crashed:', err)
+    }),
+  )
 
   const admin = supabaseAdmin()
   const { data: due, error } = await admin

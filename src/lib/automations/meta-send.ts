@@ -245,14 +245,19 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     throw new Error(`sent to Meta but DB insert failed: ${msgErr.message}`)
   }
 
+  // A template is the bot nudging someone who went quiet (follow-ups,
+  // receipt reminders). Bumping last_message_at floated every silent
+  // prospect back to the top of the inbox after each nudge, so only the
+  // preview changes; the chat keeps its place until someone writes.
+  // Text sends answer a live conversation and still move it up.
+  const now = new Date().toISOString()
   await db
     .from('conversations')
-    .update({
-      last_message_text:
-        input.kind === 'template' ? `[template:${input.templateName}]` : input.text,
-      last_message_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
+    .update(
+      input.kind === 'template'
+        ? { last_message_text: `[template:${input.templateName}]`, updated_at: now }
+        : { last_message_text: input.text, last_message_at: now, updated_at: now },
+    )
     .eq('id', input.conversationId)
 
   return { whatsapp_message_id: waMessageId }

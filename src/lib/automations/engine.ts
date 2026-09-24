@@ -686,6 +686,9 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
         .eq('id', deal.id)
         .eq('account_id', args.automation.account_id)
       if (moveErr) throw new Error(`deal move failed: ${moveErr.message}`)
+      // A straight DB update: it does NOT fire `deal_stage_changed`, and
+      // moving onto a won stage wins the deal via the deals trigger
+      // (migration 052) without firing `deal_won` either.
       return `deal ${deal.id} moved to stage ${cfg.stage_id}`
     }
 
@@ -716,9 +719,15 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 
     case 'close_conversation': {
       if (!args.contactId) throw new Error('close_conversation needs a contact')
+      // Not an `auto_*` reason: those belong to the lifecycle sweep and
+      // reopen the contact's deal when the chat reopens.
       await db
         .from('conversations')
-        .update({ status: 'closed', updated_at: new Date().toISOString() })
+        .update({
+          status: 'closed',
+          close_reason: 'automation',
+          updated_at: new Date().toISOString(),
+        })
         .eq('account_id', args.automation.account_id)
         .eq('contact_id', args.contactId)
       return 'conversation closed'
@@ -790,9 +799,9 @@ export function triggerMatches(automation: Automation, ctx: AutomationContext | 
   }
 
   // Same catch-all shape as tag_added: no stage configured means "any
-  // move on this board". Fires wherever the deal was moved from — the
-  // Kanban, the move_deal step, or the API — because all three land on
-  // the same route.
+  // move on this board". Fires for moves made through the deals API —
+  // the Kanban and the deal sheet. The move_deal step writes the row
+  // directly and does not fire it.
   if (automation.trigger_type === 'deal_stage_changed') {
     const cfg = automation.trigger_config as DealStageChangedTriggerConfig
     if (!cfg?.stage_id) return true
@@ -931,6 +940,16 @@ interface InterpolationContact {
  * automation's config rather than in code so it can be written in the
  * account's own language.
  */
+/**
+ * First word of a contact's name, or `fallback` when there is none —
+ * `{{contact.first_name|fallback}}` outside a template string. Meta
+ * rejects an empty template parameter, so senders always pass one.
+ */
+export function firstNameOr(name: string | null | undefined, fallback: string): string {
+  const first = (name ?? '').trim().split(/\s+/)[0] ?? ''
+  return first || fallback
+}
+
 export function interpolate(
   s: string,
   args: ExecuteArgs,
@@ -946,8 +965,7 @@ export function interpolate(
       } else if (ns === 'vars' && prop) {
         value = String(args.context.vars?.[prop] ?? '')
       } else if (ns === 'contact' && contact) {
-        const full = (contact.name ?? '').trim()
-        value = prop === 'first_name' ? full.split(/\s+/)[0] ?? '' : full
+        value = prop === 'first_name' ? firstNameOr(contact.name, '') : (contact.name ?? '').trim()
       }
       return value.trim() || (fallback ?? '').trim()
     },
