@@ -50,6 +50,7 @@ describe('parseGeneration', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage: null,
     })
   })
@@ -64,6 +65,7 @@ describe('parseGeneration', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage: null,
     })
     expect(parseGeneration('Let me get a human [[HANDOFF]]')).toEqual({
@@ -75,6 +77,7 @@ describe('parseGeneration', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage: null,
     })
   })
@@ -90,6 +93,7 @@ describe('parseGeneration', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage,
     })
   })
@@ -225,6 +229,35 @@ describe('parseGeneration — consumption verdict', () => {
   })
 })
 
+describe('parseGeneration — package marker', () => {
+  it('reads the package and strips the marker', () => {
+    const res = parseGeneration(
+      'El paquete de 12 paneles queda en $106,900. Te llega tu cotización. [PAQUETE: 12]',
+    )
+    expect(res.text).toBe(
+      'El paquete de 12 paneles queda en $106,900. Te llega tu cotización.',
+    )
+    expect(res.packagePanels).toBe(12)
+  })
+
+  it('takes the English spelling and loose spacing', () => {
+    expect(parseGeneration('Ok [ package : 14 ]').packagePanels).toBe(14)
+  })
+
+  it('still parses a count past the table, for the caller to reject', () => {
+    // The send is decided by comparing against the package code resolved;
+    // dropping a big number here would only hide a model that guessed.
+    expect(parseGeneration('Ok [PAQUETE: 120]').packagePanels).toBe(120)
+  })
+
+  it('stays null on ordinary replies and on a zero', () => {
+    expect(parseGeneration('¿Cuántos paneles buscas?').packagePanels).toBeNull()
+    const zero = parseGeneration('Ok [PAQUETE: 0]')
+    expect(zero.packagePanels).toBeNull()
+    expect(zero.text).toBe('Ok')
+  })
+})
+
 describe('generateReply — OpenAI', () => {
   it('calls the chat completions endpoint and returns the reply', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
@@ -250,6 +283,7 @@ describe('generateReply — OpenAI', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage: { promptTokens: 42, completionTokens: 8, totalTokens: 50 },
     })
     const [url, opts] = fetchMock.mock.calls[0]
@@ -371,6 +405,7 @@ describe('generateReply — Anthropic', () => {
       holdQuote: false,
       holdReason: null,
       consumptionVerdict: null,
+      packagePanels: null,
       usage: { promptTokens: 30, completionTokens: 6, totalTokens: 36 },
     })
     const [url, opts] = fetchMock.mock.calls[0]

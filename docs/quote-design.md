@@ -14,6 +14,7 @@ Cómo se llena, el contrato de datos y las validaciones están en
 | 📄 sólo diseño | Formato de Cotización 2026 | Figma **Design** · `0rDUmRnUWSDgfmXtVjALD4` |
 | 📄 sólo diseño | Anexo de financiamiento Nuvolt | Figma **Design** · `0rDUmRnUWSDgfmXtVjALD4`, hoja `F arena` |
 | 📄 sólo diseño | Anexo de financiamiento, horizontal | Figma **Design** · `0rDUmRnUWSDgfmXtVjALD4`, hoja `FH arena` |
+| 📄 sólo diseño | Cotización por paquete (hoja sola) | Figma **Design** · `0rDUmRnUWSDgfmXtVjALD4`, hoja `P arena`; ejemplo lleno en `★ Ejemplo · Paquete 12 paneles` |
 
 Los exports viven en `design/` — SVG por hoja más el PDF completo
 (`Bot _Template_Update.pdf`). Esa carpeta está en `.gitignore` a propósito: son
@@ -89,6 +90,33 @@ actualiza solo.
 
 ---
 
+**La cotización por paquete es para quien pide paneles, no para quien manda
+recibo.** Hay clientes que llegan con «cotízame 12 paneles». `P arena` es una
+sola hoja carta con el paquete, su precio llave en mano, los datos del sistema,
+las mensualidades de Nuvolt, el seguro y lo que incluye. No tiene nada que
+necesite el recibo, así que no hay cifras en rojo, ni ahorro, ni retorno. Su
+cierre le pide el recibo para confirmar que el paquete le alcanza.
+
+El bot la manda solo cuando coinciden dos cosas: el código encuentra un número
+de paneles en el mensaje (`src/lib/ai/package-request.ts`) y el modelo confirma
+con `[PAQUETE: N]` que el cliente está pidiendo precio. Como en la propuesta, el
+precio va en el PDF y nunca en el chat. Un número que no es paquete sube al
+paquete de arriba (13 → 14). Arriba de 40 paneles pasa la conversación a un
+asesor. Un consumo escrito en kWh gana siempre: aunque venga con un número de
+paneles, se pide el recibo y no sale hoja. Tampoco sale mientras haya un
+recibo en proceso. Contarla como cotización enviada (tarjeta en el tablero y
+etiqueta «Quote sent») lo hace `src/lib/ai/package-pdf.ts`.
+
+El prompt de la cuenta (`ai_configs.system_prompt`) tiene un candado: sin
+recibo no hay precio. Tiene una excepción solo para cuando la nota del sistema
+confirma que sale la cotización por paquete. Si algún día se quita la
+función, hay que quitar también esa excepción.
+
+Dos detalles del arte que el código necesita: la nota del enganche va en dos
+textos (un renglón variable y «De contado…» fijo) y la frase de consumo es un
+solo renglón. pdf-lib no parte renglones, así que ningún campo puede ocupar
+dos.
+
 ## Al cambiar el diseño en Figma
 
 1. Exportar el PDF completo a `design/`.
@@ -102,3 +130,12 @@ actualiza solo.
 5. Si cambiaron las tasas de Nuvolt, cambian **los dos lados**: el arte en
    Figma y `PLANES` en `src/lib/quotes/financing.ts`. `financing.test.ts` las
    fija justamente para que no se desincronicen.
+
+Para la hoja por paquete (`P arena`) es lo mismo, con su propio template:
+exportar el frame a `design/P arena — Cotización por paquete.pdf`, correr
+`node scripts/build-quote-template.mjs --package` (escribe
+`public/quotes/package-template.pdf`) y, si se movieron campos, actualizar
+`src/lib/quotes/package-template.json`. Sus coordenadas salen de exportar el
+frame como SVG **con el texto vivo**: el export normal convierte el texto en
+trazos y no deja `tspan`. `package-fields.test.ts` renderiza la hoja real para
+detectar un template de tamaño equivocado.

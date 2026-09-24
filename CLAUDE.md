@@ -15,6 +15,9 @@ Rules:
 El PDF que recibe el cliente lo arma `src/lib/quotes/`, dibujando sobre el
 template de `public/quotes/template.pdf` que produce
 `scripts/build-quote-template.mjs` a partir del export de Figma en `design/`.
+La hoja sola de cotización por paquete (para quien pide «N paneles» sin recibo)
+usa el mismo camino con su propio template, `public/quotes/package-template.pdf`
+(`--package` en el script).
 
 Antes de tocar ese módulo o el diseño:
 

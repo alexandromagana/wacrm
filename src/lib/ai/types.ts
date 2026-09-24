@@ -105,6 +105,14 @@ export interface GenerateResult {
    *  (`[CONSUMO: …]`), or null when it hasn't answered it yet. Releases
    *  or buries the parked proposal. */
   consumptionVerdict: ConsumptionVerdict | null
+  /**
+   * The package the reply confirmed to a customer who asked for a number
+   * of panels (the `[PAQUETE: N]` marker), or null. The model's half of
+   * the package sheet: code sends the PDF only when this matches the
+   * package it resolved from the customer's own words
+   * (`src/lib/ai/package-request.ts`), so neither can send it alone.
+   */
+  packagePanels: number | null
   /** Provider token usage for this call, or null when unavailable. */
   usage: AiUsage | null
 }

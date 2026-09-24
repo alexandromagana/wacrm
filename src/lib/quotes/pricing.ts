@@ -236,6 +236,24 @@ export function lookupSolarTier(
   return tiers.find((t) => value >= t.minKwh && value <= t.maxKwh) ?? null
 }
 
+/**
+ * The package for a customer who asks by panel count instead of sending
+ * a bill: the smallest tier with at least that many panels, or null past
+ * the table (bespoke design — a person quotes it).
+ *
+ * Packages step in pairs, 4 to 40, so an odd or in-between request
+ * rounds UP: 13 prices the 14-panel system, never the 12, because a
+ * sheet short of what the customer asked for reads as a bait price. A
+ * request under the smallest package gets the smallest package.
+ */
+export function tierForPanels(
+  panels: number,
+  tiers: readonly SolarTier[] = SOLAR_TIERS,
+): SolarTier | null {
+  if (!Number.isFinite(panels) || panels <= 0) return null
+  return tiers.find((t) => t.panels >= panels) ?? null
+}
+
 export type QuoteResolution =
   /** Quotable: state these numbers, attach the PDF. */
   | { kind: 'ok'; kwh: number; tier: SolarTier }

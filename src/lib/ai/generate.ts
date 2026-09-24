@@ -125,6 +125,15 @@ const CONSUMO_LABELS: Record<string, ConsumptionVerdict> = {
 }
 
 /**
+ * Package marker: the reply confirmed a package to a customer who asked
+ * for a number of panels, so the package sheet may follow it
+ * ("[PAQUETE: 12]"). Up to three digits so a hallucinated "[PAQUETE:
+ * 120]" still parses — and then fails to match the package code
+ * resolved, which is the check that actually decides the send.
+ */
+const PACKAGE_MARKER_RE = /\[\s*(?:PAQUETE|PACKAGE)\s*:\s*(\d{1,3})\s*\]/gi
+
+/**
  * Split the raw model output into `{ text, handoff, leadStatus, usage }`.
  * The sentinel can appear alone or trailing a partial reply; either way
  * we treat the turn as a handoff and strip the marker from any remaining
@@ -143,6 +152,7 @@ export function parseGeneration(
   let holdQuote = false
   let holdReason: string | null = null
   let consumptionVerdict: ConsumptionVerdict | null = null
+  let packagePanels: number | null = null
   const text = raw
     .split(HANDOFF_SENTINEL)
     .join('')
@@ -180,6 +190,11 @@ export function parseGeneration(
       consumptionVerdict = CONSUMO_LABELS[key] ?? consumptionVerdict
       return ''
     })
+    .replace(PACKAGE_MARKER_RE, (_marker, count: string) => {
+      const parsed = Number(count)
+      if (parsed >= 1) packagePanels = parsed
+      return ''
+    })
     .trim()
   return {
     text,
@@ -190,6 +205,7 @@ export function parseGeneration(
     holdQuote,
     holdReason,
     consumptionVerdict,
+    packagePanels,
     usage,
   }
 }

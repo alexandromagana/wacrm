@@ -4,6 +4,7 @@ import {
   MAX_QUOTABLE_KWH,
   WATTS_PER_PANEL,
   lookupSolarTier,
+  tierForPanels,
   resolveQuote,
   findAnomalousPeriod,
   findAnomalousHighPeriod,
@@ -307,5 +308,37 @@ describe('renderPricingTableForPrompt', () => {
     }
     expect(table).toContain('Escala a Alejandro')
     expect(table.split('\n')).toHaveLength(SOLAR_TIERS.length + 3)
+  })
+})
+
+describe('tierForPanels — a package asked for by count', () => {
+  it('returns the package itself for a package count', () => {
+    expect(tierForPanels(12)?.panels).toBe(12)
+    expect(tierForPanels(4)?.panels).toBe(4)
+    expect(tierForPanels(40)?.panels).toBe(40)
+  })
+
+  it('rounds an odd or in-between count UP to the next package', () => {
+    // Never down: a sheet short of what the customer asked for reads as
+    // a bait price.
+    expect(tierForPanels(13)?.panels).toBe(14)
+    expect(tierForPanels(5)?.panels).toBe(6)
+    expect(tierForPanels(39)?.panels).toBe(40)
+  })
+
+  it('gives the smallest package to a request under it', () => {
+    expect(tierForPanels(1)?.panels).toBe(4)
+    expect(tierForPanels(3)?.panels).toBe(4)
+  })
+
+  it('returns null past the table — a person quotes those', () => {
+    expect(tierForPanels(41)).toBeNull()
+    expect(tierForPanels(100)).toBeNull()
+  })
+
+  it('returns null for counts no customer means', () => {
+    expect(tierForPanels(0)).toBeNull()
+    expect(tierForPanels(-2)).toBeNull()
+    expect(tierForPanels(Number.NaN)).toBeNull()
   })
 })
