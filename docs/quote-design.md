@@ -99,12 +99,18 @@ cierre le pide el recibo para confirmar que el paquete le alcanza.
 
 El bot la manda solo cuando coinciden dos cosas: el código encuentra un número
 de paneles en el mensaje (`src/lib/ai/package-request.ts`) y el modelo confirma
-con `[PAQUETE: N]` que el cliente está pidiendo precio. Un número que no es
-paquete sube al paquete de arriba (13 → 14). Arriba de 40 paneles pasa la
-conversación a un asesor. Si el contacto ya mandó recibo, el precio va solo en
-texto: su propuesta se arma con su consumo real. Contarla como cotización
-enviada (tarjeta en el tablero y etiqueta «Quote sent») lo hace
-`src/lib/ai/package-pdf.ts`.
+con `[PAQUETE: N]` que el cliente está pidiendo precio. Como en la propuesta, el
+precio va en el PDF y nunca en el chat. Un número que no es paquete sube al
+paquete de arriba (13 → 14). Arriba de 40 paneles pasa la conversación a un
+asesor. Un consumo escrito en kWh gana siempre: aunque venga con un número de
+paneles, se pide el recibo y no sale hoja. Tampoco sale mientras haya un
+recibo en proceso. Contarla como cotización enviada (tarjeta en el tablero y
+etiqueta «Quote sent») lo hace `src/lib/ai/package-pdf.ts`.
+
+El prompt de la cuenta (`ai_configs.system_prompt`) tiene un candado: sin
+recibo no hay precio. Tiene una excepción solo para cuando la nota del sistema
+confirma que sale la cotización por paquete. Si algún día se quita la
+función, hay que quitar también esa excepción.
 
 Dos detalles del arte que el código necesita: la nota del enganche va en dos
 textos (un renglón variable y «De contado…» fijo) y la frase de consumo es un

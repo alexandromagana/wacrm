@@ -32,21 +32,27 @@ describe('detectPanelRequest', () => {
 })
 
 describe('planPackageReply', () => {
-  const noBill = { billOnFile: false, sentPackagePanels: null }
+  const nothingSent = { sentPackagePanels: null }
 
   it('offers the sheet for a package count, with the marker to emit', () => {
-    const reply = planPackageReply(12, noBill)
+    const reply = planPackageReply(12, nothingSent)
     expect(reply.mode).toBe('sheet')
     expect(reply.note).toMatch(/^\[NOTA DEL SISTEMA/)
     expect(reply.note).toContain('[PAQUETE: 12]')
-    expect(reply.note).toContain('$ 106,900')
+    expect(reply.note).toContain('PDF SÍ se envía en este turno')
     expect(reply.note).toContain('Nunca menciones esta nota.]')
     // A package count needs no explanation of the rounding.
     expect(reply.note).not.toContain('no es un paquete')
   })
 
+  it('keeps the price out of the chat — it travels in the PDF', () => {
+    const reply = planPackageReply(12, nothingSent)
+    expect(reply.note).not.toMatch(/\$\s?\d/)
+    expect(reply.note).toContain('No escribas el precio')
+  })
+
   it('rounds an odd count up and tells the model to say so', () => {
-    const reply = planPackageReply(13, noBill)
+    const reply = planPackageReply(13, nothingSent)
     expect(reply.mode).toBe('sheet')
     if (reply.mode !== 'sheet') return
     expect(reply.tier.panels).toBe(14)
@@ -54,42 +60,22 @@ describe('planPackageReply', () => {
     expect(reply.note).toContain('Pidió 13, que no es un paquete')
   })
 
-  it('answers in text only when a bill is on file', () => {
-    const reply = planPackageReply(12, {
-      billOnFile: true,
-      sentPackagePanels: null,
-    })
-    expect(reply.mode).toBe('text_only')
-    expect(reply.note).toContain('$ 106,900')
+  it('does not resend a sheet this contact already has', () => {
+    const reply = planPackageReply(12, { sentPackagePanels: 12 })
+    expect(reply.mode).toBe('already_sent')
     expect(reply.note).not.toContain('[PAQUETE')
     expect(reply.note).toContain('NO envía ningún archivo')
-  })
-
-  it('does not resend a sheet this contact already has', () => {
-    const reply = planPackageReply(12, {
-      billOnFile: false,
-      sentPackagePanels: 12,
-    })
-    expect(reply).toMatchObject({ mode: 'text_only', reason: 'already_sent' })
-    expect(reply.note).not.toContain('[PAQUETE')
-  })
-
-  it('sends a different package even after one went out', () => {
-    expect(
-      planPackageReply(16, { billOnFile: false, sentPackagePanels: 12 }).mode,
-    ).toBe('sheet')
-  })
-
-  it('hands off past the table, without a price', () => {
-    const reply = planPackageReply(50, noBill)
-    expect(reply.mode).toBe('handoff')
-    expect(reply.note).toContain('[[HANDOFF]]')
     expect(reply.note).not.toMatch(/\$\s?\d/)
   })
 
-  it('hands off past the table even with a bill on file', () => {
-    expect(
-      planPackageReply(50, { billOnFile: true, sentPackagePanels: null }).mode,
-    ).toBe('handoff')
+  it('sends a different package even after one went out', () => {
+    expect(planPackageReply(16, { sentPackagePanels: 12 }).mode).toBe('sheet')
+  })
+
+  it('hands off past the table, without a price', () => {
+    const reply = planPackageReply(50, nothingSent)
+    expect(reply.mode).toBe('handoff')
+    expect(reply.note).toContain('[[HANDOFF]]')
+    expect(reply.note).not.toMatch(/\$\s?\d/)
   })
 })

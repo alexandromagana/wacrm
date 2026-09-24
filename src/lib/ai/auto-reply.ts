@@ -30,7 +30,7 @@ import {
   type MeterState,
 } from './meters'
 import { sendQuoteProposal } from './quote-pdf'
-import { readPackageContext, sendPackageSheet } from './package-pdf'
+import { readSentPackagePanels, sendPackageSheet } from './package-pdf'
 import {
   detectPanelRequest,
   planPackageReply,
@@ -534,38 +534,40 @@ export async function dispatchInboundToAiReply(
       })
     }
 
-    // A number of panels asked for instead of a bill ("cotízame 12
-    // paneles"): the package sheet, if the model agrees it is a request
-    // for a quote — `package-request.ts` explains the two keys. Never on
-    // a turn that brought a bill: that turn is about the bill, and its
-    // note already carries the real numbers.
-    const requestedPanels = hasReceipt ? null : detectPanelRequest(customerTurn)
-    let packageReply: PackageReply | null = null
-    if (requestedPanels != null) {
-      const onFile = await readPackageContext(db, { accountId, contactId })
-      packageReply = planPackageReply(requestedPanels, {
-        // A batch in hand is a bill this thread already read, even before
-        // its average has reached the contact card.
-        billOnFile: onFile.billOnFile || meterState.readings.length > 0,
-        sentPackagePanels: onFile.sentPackagePanels,
-      })
-      messages.push({ role: 'user', content: packageReply.note })
-    }
-
     // A consumption typed out instead of a bill. The account's prompt
     // once treated it as a reading, and the bot answered with a panel
     // count and no document behind it — the proposal needs the tariff,
     // the history and the pesos, and only the bill carries those. Only
     // on a thread with no bill in hand: a turn that brought one, or a
     // batch still open, already has its own note and the real numbers.
-    // Nor on a turn that asked for panels by count: that customer asked
-    // for a package, and the sheet already asks for the bill.
-    if (
+    const typedConsumption =
       !hasReceipt &&
       meterState.readings.length === 0 &&
-      requestedPanels == null &&
       mentionsTypedConsumption(customerTurn)
-    ) {
+
+    // A number of panels asked for instead of a bill ("cotízame 12
+    // paneles"): the package sheet, if the model agrees it is a request
+    // for a quote — `package-request.ts` explains the two keys. Not on a
+    // turn with a bill in play: one that brought a bill, or a batch still
+    // being read or held, is about that bill. And not on a turn that
+    // typed a consumption: "gasto 1674 kWh, ¿serían 12 paneles?" is
+    // someone sizing a system, and the bill is what sizes it.
+    const requestedPanels =
+      hasReceipt || meterState.readings.length > 0 || typedConsumption
+        ? null
+        : detectPanelRequest(customerTurn)
+    let packageReply: PackageReply | null = null
+    if (requestedPanels != null) {
+      packageReply = planPackageReply(requestedPanels, {
+        sentPackagePanels: await readSentPackagePanels(db, {
+          accountId,
+          contactId,
+        }),
+      })
+      messages.push({ role: 'user', content: packageReply.note })
+    }
+
+    if (typedConsumption) {
       messages.push({ role: 'user', content: TYPED_CONSUMPTION_NOTE })
     }
 

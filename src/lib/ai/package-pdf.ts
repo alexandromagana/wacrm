@@ -6,12 +6,8 @@ import { renderPackagePdf } from '@/lib/quotes/render'
 import { uploadServerMedia } from '@/lib/storage/upload-server'
 import { engineSendMedia } from '@/lib/flows/meta-send'
 import { applyQuoteSentTag } from './lead-status'
-import { CONSUMO_FIELD_NAME, upsertField } from './receipt'
-import {
-  PROPUESTA_FIELD_NAME,
-  readContactNumberField,
-  recordQuoteOnDeal,
-} from './quote-pdf'
+import { upsertField } from './receipt'
+import { readContactNumberField, recordQuoteOnDeal } from './quote-pdf'
 
 // ============================================================
 // Sending the package sheet: the one-page, price-only quote for a
@@ -34,26 +30,17 @@ const BUCKET = 'chat-media'
  */
 export const PAQUETE_FIELD_NAME = 'Hoja de paquete enviada (paneles)'
 
-/**
- * What the contact card says about this customer, for deciding what a
- * panel request gets. A bill ever read (its average is saved on the
- * contact) or a proposal ever sent means their quote is built on their
- * own consumption, and a generic package sheet would contradict it.
- */
-export async function readPackageContext(
+/** The package whose sheet this contact last received, or null. */
+export function readSentPackagePanels(
   db: SupabaseClient,
   args: { accountId: string; contactId: string },
-): Promise<{ billOnFile: boolean; sentPackagePanels: number | null }> {
-  const { accountId, contactId } = args
-  const [consumo, propuesta, paquete] = await Promise.all([
-    readContactNumberField(db, accountId, contactId, CONSUMO_FIELD_NAME),
-    readContactNumberField(db, accountId, contactId, PROPUESTA_FIELD_NAME),
-    readContactNumberField(db, accountId, contactId, PAQUETE_FIELD_NAME),
-  ])
-  return {
-    billOnFile: consumo != null || propuesta != null,
-    sentPackagePanels: paquete,
-  }
+): Promise<number | null> {
+  return readContactNumberField(
+    db,
+    args.accountId,
+    args.contactId,
+    PAQUETE_FIELD_NAME,
+  )
 }
 
 export type PackageSendOutcome =

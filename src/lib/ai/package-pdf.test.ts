@@ -19,16 +19,14 @@ vi.mock('@/lib/storage/upload-server', () => ({
 vi.mock('@/lib/flows/meta-send', () => ({ engineSendMedia: h.engineSendMedia }))
 vi.mock('./receipt', () => ({
   upsertField: h.upsertField,
-  CONSUMO_FIELD_NAME: 'Consumo promedio (kWh)',
 }))
 vi.mock('./lead-status', () => ({ applyQuoteSentTag: h.applyQuoteSentTag }))
 
 import {
   PAQUETE_FIELD_NAME,
-  readPackageContext,
+  readSentPackagePanels,
   sendPackageSheet,
 } from './package-pdf'
-import { PROPUESTA_FIELD_NAME } from './quote-pdf'
 import { tierForPanels } from '@/lib/quotes/pricing'
 
 /**
@@ -166,29 +164,13 @@ describe('sendPackageSheet', () => {
   })
 })
 
-describe('readPackageContext', () => {
-  it('reports a clean contact as no bill and nothing sent', async () => {
-    expect(await readPackageContext(fakeDb(), ARGS)).toEqual({
-      billOnFile: false,
-      sentPackagePanels: null,
-    })
+describe('readSentPackagePanels', () => {
+  it('is null for a contact who never got a sheet', async () => {
+    expect(await readSentPackagePanels(fakeDb(), ARGS)).toBeNull()
   })
 
-  it('counts a bill ever read as a bill on file', async () => {
-    const db = fakeDb({ 'Consumo promedio (kWh)': '1853' })
-    expect((await readPackageContext(db, ARGS)).billOnFile).toBe(true)
-  })
-
-  it('counts a proposal ever sent as a bill on file', async () => {
-    const db = fakeDb({ [PROPUESTA_FIELD_NAME]: '14' })
-    expect((await readPackageContext(db, ARGS)).billOnFile).toBe(true)
-  })
-
-  it('returns the package sheet already sent', async () => {
+  it('returns the package whose sheet went out', async () => {
     const db = fakeDb({ [PAQUETE_FIELD_NAME]: '12' })
-    expect(await readPackageContext(db, ARGS)).toEqual({
-      billOnFile: false,
-      sentPackagePanels: 12,
-    })
+    expect(await readSentPackagePanels(db, ARGS)).toBe(12)
   })
 })
