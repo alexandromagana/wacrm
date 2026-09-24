@@ -4,6 +4,7 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import type { AutomationTriggerType } from '@/types'
 import { pickDealFields } from '@/lib/deals/writable'
+import { parseManualLostReason } from '@/lib/deals/lost-reasons'
 
 type Params = { params: Promise<{ dealId: string }> }
 
@@ -12,6 +13,7 @@ const DEAL_STATUSES = new Set(['open', 'won', 'lost'])
 /**
  * PATCH /api/deals/[dealId]  (agent+)
  *   body: any subset of the writable deal fields, plus optional `status`
+ *         and, with `status: 'lost'`, an optional `lost_reason`
  *
  * The single write path for an existing deal. Dragging a card on the
  * board, editing the sheet, and marking won/lost all land here, which
@@ -42,6 +44,17 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
     }
 
+    // The reason only means something on a lost deal; the DB trigger
+    // clears it on any other status anyway.
+    let lostReason: string | null = null
+    if (status === 'lost') {
+      const parsed = parseManualLostReason((body as Record<string, unknown>).lost_reason)
+      if (parsed === undefined) {
+        return NextResponse.json({ error: 'Invalid lost_reason' }, { status: 400 })
+      }
+      lostReason = parsed
+    }
+
     // Read the "before" state so we know which triggers the write earns.
     // Scoped by account_id: RLS covers this too, but the comparison
     // below drives outbound messages, so the row must be provably ours.
@@ -70,13 +83,19 @@ export async function PATCH(request: Request, { params }: Params) {
 
     const patch: Record<string, unknown> = { ...fields }
     if (status !== null) patch.status = status
+    if (status === 'lost') patch.lost_reason = lostReason
 
-    const { error } = await supabase
+    // Read the row back: the deals trigger (migration 052) can change
+    // more than we sent — dragging into the won stage wins the deal,
+    // marking it won moves it there — and those count as transitions.
+    const { data: updated, error } = await supabase
       .from('deals')
       .update(patch)
       .eq('id', dealId)
       .eq('account_id', accountId)
-    if (error) {
+      .select('stage_id, status, closed_at, lost_reason, stage_changed_at')
+      .single()
+    if (error || !updated) {
       console.error('[deals] update failed:', error)
       return NextResponse.json({ error: 'Failed to update deal' }, { status: 500 })
     }
@@ -84,12 +103,8 @@ export async function PATCH(request: Request, { params }: Params) {
     // Only genuine transitions fire. Re-saving the sheet without
     // touching the stage, or dropping a card back where it started,
     // must not restart a follow-up sequence.
-    const movedTo =
-      typeof fields.stage_id === 'string' && fields.stage_id !== before.stage_id
-        ? fields.stage_id
-        : null
-    const becameStatus =
-      status !== null && status !== before.status ? status : null
+    const movedTo = updated.stage_id !== before.stage_id ? updated.stage_id : null
+    const becameStatus = updated.status !== before.status ? updated.status : null
 
     if (movedTo || becameStatus) {
       const triggers: AutomationTriggerType[] = []
@@ -116,7 +131,9 @@ export async function PATCH(request: Request, { params }: Params) {
       })
     }
 
-    return NextResponse.json({ success: true })
+    // The row as the trigger left it, so the board can show a drop on
+    // the won stage as won without reloading.
+    return NextResponse.json({ success: true, deal: updated })
   } catch (err) {
     return toErrorResponse(err)
   }

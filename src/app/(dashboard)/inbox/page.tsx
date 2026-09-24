@@ -294,17 +294,26 @@ export default function InboxPage() {
         // knownConvIdsRef for why a closure flag inside the updater would
         // always read false here.
         if (knownConvIdsRef.current.has(newMsg.conversation_id)) {
+          // Same rules as the server: an automation template (a nudge to
+          // someone who went quiet) doesn't count as activity, and only
+          // the customer's own messages are unread.
+          const isAutomationTemplate =
+            newMsg.sender_type === "bot" && newMsg.content_type === "template";
           setConversations((prev) =>
             prev.map((c) =>
               c.id === newMsg.conversation_id
                 ? {
                     ...c,
                     last_message_text: newMsg.content_text ?? "",
-                    last_message_at: newMsg.created_at,
+                    last_message_at: isAutomationTemplate
+                      ? c.last_message_at
+                      : newMsg.created_at,
                     unread_count:
                       activeConversation?.id === newMsg.conversation_id
                         ? 0
-                        : c.unread_count + 1,
+                        : newMsg.sender_type === "customer"
+                          ? c.unread_count + 1
+                          : c.unread_count,
                   }
                 : c,
             ),

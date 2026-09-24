@@ -20,7 +20,7 @@ vi.mock('@/lib/flows/meta-send', () => ({
 }))
 vi.mock('./admin-client', () => ({ supabaseAdmin: h.supabaseAdmin }))
 
-import { engineSendTemplate } from './meta-send'
+import { engineSendTemplate, engineSendText } from './meta-send'
 
 /** A row that satisfies `isMessageTemplate` and carries a media header —
  *  the case Meta rejects when the components are not built from it. */
@@ -35,6 +35,9 @@ const TEMPLATE_ROW = {
   buttons: [{ type: 'QUICK_REPLY', text: '¡Nada, vamos!' }],
 }
 
+/** Every `.update()` payload, by table, for the current test. */
+let updates: Array<{ table: string; payload: Record<string, unknown> }> = []
+
 /**
  * Fake covering the tables `sendViaMeta` touches. `templateRow` is what
  * the message_templates lookup resolves to — null models a template
@@ -44,7 +47,10 @@ function fakeDb(templateRow: unknown = TEMPLATE_ROW) {
   const chain = (table: string) => {
     const c: Record<string, unknown> = {
       select: () => c,
-      update: () => c,
+      update: (payload: Record<string, unknown>) => {
+        updates.push({ table, payload })
+        return c
+      },
       insert: () => c,
       eq: () => c,
       maybeSingle: () => {
@@ -79,8 +85,10 @@ const ARGS = {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  updates = []
   h.decrypt.mockReturnValue('token')
   h.sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' })
+  h.sendTextMessage.mockResolvedValue({ messageId: 'wamid.2' })
   h.supabaseAdmin.mockReturnValue(fakeDb())
 })
 
@@ -123,5 +131,35 @@ describe('engineSendTemplate — template components', () => {
 
     await expect(engineSendTemplate(ARGS)).rejects.toThrow(/malformed/)
     expect(h.sendTemplateMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('conversation ordering', () => {
+  const conversationUpdate = () =>
+    updates.find((u) => u.table === 'conversations')?.payload
+
+  it('keeps a chat in place when the bot sends a template', async () => {
+    // Follow-ups and receipt reminders go to people who stopped
+    // answering; bumping last_message_at floated every one of them back
+    // to the top of the inbox.
+    await engineSendTemplate(ARGS)
+
+    expect(conversationUpdate()).toMatchObject({
+      last_message_text: '[template:seguimiento_coti]',
+    })
+    expect(conversationUpdate()).not.toHaveProperty('last_message_at')
+  })
+
+  it('still moves a chat up for a text reply', async () => {
+    await engineSendText({
+      accountId: 'acct-1',
+      userId: 'user-1',
+      conversationId: 'conv-1',
+      contactId: 'contact-1',
+      text: 'Hola',
+    })
+
+    expect(conversationUpdate()).toMatchObject({ last_message_text: 'Hola' })
+    expect(conversationUpdate()).toHaveProperty('last_message_at')
   })
 })

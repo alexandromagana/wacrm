@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Pipeline, PipelineStage, Deal } from "@/types";
 import { PipelineBoard } from "@/components/pipelines/pipeline-board";
@@ -24,27 +25,47 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GitBranch } from "lucide-react";
-import { Plus, ChevronDown, Settings } from "@/components/animated-icons";
+import { CalendarDays, GitBranch } from "lucide-react";
+import {
+  Plus,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+} from "@/components/animated-icons";
 import { toast } from "sonner";
 import { useCan } from "@/hooks/use-can";
 import { useAuth } from "@/hooks/use-auth";
 import { GatedButton } from "@/components/ui/gated-button";
 import { useTranslations } from "next-intl";
+import {
+  formatMonth,
+  isMonthKey,
+  monthKeyOf,
+  monthRange,
+  monthsBetween,
+  shiftMonth,
+  type MonthKey,
+  type MonthRange,
+} from "@/lib/deals/month";
 
 // Pipeline creation is admin-class (settings-tier write under
 // the new RLS); deal creation is operational and only requires
 // agent+. The two CTAs gate on different `useCan` capabilities,
 // not on different copy.
 
-// Spec-defined seed — name and color per the product spec.
+// Spec-defined seed — name and color per the product spec. `is_won` /
+// `auto_close` match what migration 052 backfilled on existing boards.
 const SPEC_DEFAULT_STAGES = [
-  { name: "New Lead", color: "#3b82f6", position: 0 }, // blue
-  { name: "Qualified", color: "#eab308", position: 1 }, // yellow
-  { name: "Proposal Sent", color: "#f97316", position: 2 }, // orange
-  { name: "Negotiation", color: "#8b5cf6", position: 3 }, // purple
-  { name: "Won", color: "#22c55e", position: 4 }, // green
+  { name: "New Lead", color: "#3b82f6", position: 0, is_won: false, auto_close: true }, // blue
+  { name: "Qualified", color: "#eab308", position: 1, is_won: false, auto_close: true }, // yellow
+  { name: "Proposal Sent", color: "#f97316", position: 2, is_won: false, auto_close: true }, // orange
+  { name: "Negotiation", color: "#8b5cf6", position: 3, is_won: false, auto_close: false }, // purple
+  { name: "Won", color: "#22c55e", position: 4, is_won: true, auto_close: false }, // green
 ];
+
+const DEAL_SELECT =
+  "*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)";
 
 export default function PipelinesPage() {
   const t = useTranslations("Pipelines.page");
@@ -52,6 +73,18 @@ export default function PipelinesPage() {
   const canEditSettings = useCan("edit-settings");
   const canCreateDeals = useCan("send-messages");
   const { accountId } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // The board shows one month (src/lib/deals/month.ts), kept in the URL
+  // so a reload or a shared link lands on the same month.
+  const currentMonth = monthKeyOf(new Date());
+  const monthParam = searchParams.get("month");
+  const month: MonthKey =
+    isMonthKey(monthParam) && monthParam <= currentMonth ? monthParam : currentMonth;
+  const range = useMemo(() => monthRange(month), [month]);
+  const isPastMonth = month < currentMonth;
+  const [firstMonth, setFirstMonth] = useState<MonthKey>(currentMonth);
 
   const [pipelines, setPipelines] = useState<Pipeline[]>([]);
   const [selectedPipelineId, setSelectedPipelineId] = useState<string>("");
@@ -98,14 +131,33 @@ export default function PipelinesPage() {
     [supabase],
   );
 
+  // Deals alive during the month: created before it ended, and still
+  // open or closed on/after it began. Same rule as `isAliveDuring`.
+  // ISO strings end in `Z` — a `+hh:mm` offset would break `or()`.
   const loadDeals = useCallback(
+    async (pipelineId: string, monthRange: MonthRange) => {
+      const { data } = await supabase
+        .from("deals")
+        .select(DEAL_SELECT)
+        .eq("pipeline_id", pipelineId)
+        .lt("created_at", monthRange.endIso)
+        .or(`status.eq.open,closed_at.gte.${monthRange.startIso}`)
+        .order("created_at", { ascending: false });
+      return (data ?? []) as Deal[];
+    },
+    [supabase],
+  );
+
+  const loadFirstMonth = useCallback(
     async (pipelineId: string) => {
       const { data } = await supabase
         .from("deals")
-        .select("*, contact:contacts(*), assignee:profiles!deals_assigned_to_fkey(*)")
+        .select("created_at")
         .eq("pipeline_id", pipelineId)
-        .order("created_at", { ascending: false });
-      return (data ?? []) as Deal[];
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      return data?.created_at ? monthKeyOf(new Date(data.created_at)) : null;
     },
     [supabase],
   );
@@ -132,9 +184,7 @@ export default function PipelinesPage() {
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
       pipeline_id: pipeline.id,
-      name: s.name,
-      color: s.color,
-      position: s.position,
+      ...s,
     }));
     await supabase.from("pipeline_stages").insert(stagesPayload);
 
@@ -184,18 +234,37 @@ export default function PipelinesPage() {
     }
     let cancelled = false;
     (async () => {
-      const [s, d] = await Promise.all([
+      const [s, d, first] = await Promise.all([
         loadStages(selectedPipelineId),
-        loadDeals(selectedPipelineId),
+        loadDeals(selectedPipelineId, range),
+        loadFirstMonth(selectedPipelineId),
       ]);
       if (cancelled) return;
       setStages(s);
       setDeals(d);
+      setFirstMonth(first ?? currentMonth);
     })();
     return () => {
       cancelled = true;
     };
-  }, [selectedPipelineId, loadStages, loadDeals]);
+  }, [selectedPipelineId, range, currentMonth, loadStages, loadDeals, loadFirstMonth]);
+
+  const setMonth = useCallback(
+    (key: MonthKey) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (key === currentMonth) params.delete("month");
+      else params.set("month", key);
+      const query = params.toString();
+      router.replace(query ? `/pipelines?${query}` : "/pipelines", { scroll: false });
+    },
+    [router, searchParams, currentMonth],
+  );
+
+  // Newest first; always offers the current month even on an empty board.
+  const monthOptions = useMemo(
+    () => monthsBetween(firstMonth < currentMonth ? firstMonth : currentMonth, currentMonth),
+    [firstMonth, currentMonth],
+  );
 
   const refreshPipelines = useCallback(async () => {
     const list = await loadPipelines();
@@ -212,8 +281,8 @@ export default function PipelinesPage() {
 
   const refreshDeals = useCallback(async () => {
     if (!selectedPipelineId) return;
-    setDeals(await loadDeals(selectedPipelineId));
-  }, [loadDeals, selectedPipelineId]);
+    setDeals(await loadDeals(selectedPipelineId, range));
+  }, [loadDeals, selectedPipelineId, range]);
 
   const handleDealMoved = useCallback(
     async (dealId: string, newStageId: string) => {
@@ -232,6 +301,18 @@ export default function PipelinesPage() {
       if (!res.ok) {
         toast.error(t("toastFailedMoveDeal"));
         refreshDeals();
+        return;
+      }
+      // The server can change more than the stage: dropping a card on
+      // the won stage wins the deal (migration 052). Take its word.
+      const json = (await res.json().catch(() => null)) as
+        | { deal?: Partial<Deal> }
+        | null;
+      if (json?.deal) {
+        const patch = json.deal;
+        setDeals((prev) =>
+          prev.map((d) => (d.id === dealId ? { ...d, ...patch } : d)),
+        );
       }
     },
     [refreshDeals, t],
@@ -286,9 +367,7 @@ export default function PipelinesPage() {
 
     const stagesPayload = SPEC_DEFAULT_STAGES.map((s) => ({
       pipeline_id: pipeline.id,
-      name: s.name,
-      color: s.color,
-      position: s.position,
+      ...s,
     }));
     await supabase.from("pipeline_stages").insert(stagesPayload);
 
@@ -369,6 +448,58 @@ export default function PipelinesPage() {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Month selector */}
+          <div className="flex items-center rounded-lg border border-border bg-card">
+            <button
+              type="button"
+              aria-label={t("previousMonth")}
+              disabled={month <= monthOptions[monthOptions.length - 1]}
+              onClick={() => setMonth(shiftMonth(month, -1))}
+              className="rounded-l-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger className="inline-flex items-center gap-2 border-x border-border px-3 py-2 text-sm text-foreground transition-colors hover:bg-muted data-[popup-open]:bg-muted">
+                <CalendarDays className="h-4 w-4 text-primary" />
+                <span className="font-semibold capitalize">{formatMonth(month, "long")}</span>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="start"
+                className="max-h-72 w-48 overflow-y-auto border-border bg-popover text-popover-foreground"
+              >
+                {monthOptions.map((key) => (
+                  <DropdownMenuItem
+                    key={key}
+                    onClick={() => setMonth(key)}
+                    className={
+                      key === month ? "text-primary capitalize" : "text-popover-foreground capitalize"
+                    }
+                  >
+                    {formatMonth(key, "long")}
+                    {key === currentMonth && (
+                      <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground">
+                        {t("thisMonth")}
+                      </span>
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <button
+              type="button"
+              aria-label={t("nextMonth")}
+              disabled={!isPastMonth}
+              onClick={() => setMonth(shiftMonth(month, 1))}
+              className="rounded-r-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+          {isPastMonth && (
+            <span className="text-xs text-muted-foreground">{t("pastMonthReadOnly")}</span>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -385,7 +516,7 @@ export default function PipelinesPage() {
           <GatedButton
             canAct={canCreateDeals}
             gateReason="create deals"
-            disabled={!selectedPipelineId || stages.length === 0}
+            disabled={!selectedPipelineId || stages.length === 0 || isPastMonth}
             onClick={() => handleAddDeal()}
             className="bg-primary text-primary-foreground hover:bg-primary/90"
           >
@@ -417,10 +548,12 @@ export default function PipelinesPage() {
         </div>
       ) : (
         <>
-          <PipelineAnalytics stages={stages} deals={deals} />
+          <PipelineAnalytics stages={stages} deals={deals} range={range} />
           <PipelineBoard
             stages={stages}
             deals={deals}
+            range={range}
+            readOnly={isPastMonth}
             onDealMoved={handleDealMoved}
             onAddDeal={handleAddDeal}
             onEditDeal={handleEditDeal}

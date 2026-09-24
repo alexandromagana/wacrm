@@ -191,6 +191,22 @@ export interface Conversation {
   ai_autoreply_disabled?: boolean;
   ai_reply_count?: number;
   ai_handoff_summary?: string | null;
+  /**
+   * Lifecycle bookkeeping (migration 052). `closed_at` / `close_reason`
+   * are kept by a trigger: closing stamps them ('manual' unless the
+   * closer says otherwise), reopening clears them, and an inbound
+   * customer message reopens a closed chat. Reasons starting `auto_`
+   * come from the lifecycle sweep (src/lib/lifecycle/).
+   *
+   * `close_suggested_*` is the sweep flagging a chat a person owns as
+   * ready to close; `close_suggestion_dismissed_at` is someone choosing
+   * to keep it open.
+   */
+  closed_at?: string | null;
+  close_reason?: string | null;
+  close_suggested_at?: string | null;
+  close_suggested_reason?: string | null;
+  close_suggestion_dismissed_at?: string | null;
 }
 
 // ============================================================
@@ -370,6 +386,14 @@ export interface PipelineStage {
   name: string;
   position: number;
   color: string;
+  /**
+   * Deals in this stage count as won (migration 052). Moving a deal in
+   * wins it; marking a deal won moves it here. Backfilled to each
+   * pipeline's last stage.
+   */
+  is_won?: boolean;
+  /** The lifecycle sweep may close inactive deals in this stage. */
+  auto_close?: boolean;
   created_at: string;
 }
 
@@ -406,6 +430,16 @@ export interface Deal {
   /** Link to the quote sent to the customer. Migration 040. */
   quote_url?: string | null;
   status?: DealStatus;
+  /**
+   * Kept by the deals trigger (migration 052): `closed_at` when status
+   * entered won/lost, `stage_changed_at` on every stage move,
+   * `quoted_at` the first time a proposal link landed. `lost_reason`
+   * is one of src/lib/deals/lost-reasons.ts.
+   */
+  closed_at?: string | null;
+  lost_reason?: string | null;
+  stage_changed_at?: string | null;
+  quoted_at?: string | null;
   created_at: string;
   updated_at?: string;
   contact?: Contact;

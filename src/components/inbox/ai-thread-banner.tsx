@@ -190,7 +190,7 @@ export function AiThreadBanner({
   );
 }
 
-function Banner({
+export function Banner({
   tone,
   children,
 }: {
@@ -211,7 +211,7 @@ function Banner({
   );
 }
 
-function BannerButton({
+export function BannerButton({
   onClick,
   busy,
   icon: Icon,

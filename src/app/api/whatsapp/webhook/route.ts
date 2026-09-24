@@ -764,7 +764,10 @@ async function processMessage(
     }
   }
 
-  // Update conversation
+  // Update conversation. Advancing last_customer_message_at is also what
+  // reopens a closed chat, and a deal the lifecycle sweep lost with it —
+  // the conversations trigger does that in the same statement (migration
+  // 052), before the AI reply or any automation below runs.
   const { error: convError } = await supabaseAdmin()
     .from('conversations')
     .update({

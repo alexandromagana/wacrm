@@ -37,6 +37,8 @@ import {
 } from "@/components/animated-icons";
 import { toast } from "sonner";
 import { useTranslations } from "next-intl";
+import { MANUAL_LOST_REASONS } from "@/lib/deals/lost-reasons";
+import { useLostReasonLabel } from "./lost-reason-label";
 
 /**
  * `technical_visit_at` is a TIMESTAMPTZ but the editor is an
@@ -131,6 +133,11 @@ export function DealForm({
   const [statusAction, setStatusAction] = useState<DealStatus | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Marking lost asks why first; "otro" takes free text instead.
+  const [pickingLostReason, setPickingLostReason] = useState(false);
+  const [lostReason, setLostReason] = useState<string>("");
+  const [lostReasonOther, setLostReasonOther] = useState("");
+  const lostReasonLabel = useLostReasonLabel();
 
   // Reset the form fields every time the sheet opens or its input
   // props change. This is a legitimate prop-driven sync; the rule is
@@ -139,6 +146,9 @@ export function DealForm({
   useEffect(() => {
     if (!open) return;
     setConfirmDelete(false);
+    setPickingLostReason(false);
+    setLostReason("");
+    setLostReasonOther("");
     if (deal) {
       setTitle(deal.title);
       setValue(String(deal.value ?? ""));
@@ -280,11 +290,20 @@ export function DealForm({
   async function handleStatusChange(status: DealStatus) {
     if (!deal) return;
     setStatusAction(status);
-    // Won / lost fire their own triggers server-side.
+    const reason =
+      status === "lost"
+        ? lostReason === "otro"
+          ? lostReasonOther.trim() || "otro"
+          : lostReason || null
+        : undefined;
+    // Won / lost fire their own triggers server-side, and the server
+    // moves a won deal onto the won stage (migration 052).
     const res = await fetch(`/api/deals/${deal.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(
+        status === "lost" ? { status, lost_reason: reason } : { status },
+      ),
     });
     setStatusAction(null);
     if (!res.ok) {
@@ -524,20 +543,77 @@ export function DealForm({
                   </Button>
                   <Button
                     type="button"
-                    onClick={() => handleStatusChange("lost")}
-                    disabled={!!statusAction || deal.status === "lost"}
+                    onClick={() => setPickingLostReason(true)}
+                    disabled={!!statusAction || deal.status === "lost" || pickingLostReason}
                     className="flex-1 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
                   >
-                    {statusAction === "lost" ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <>
-                        <X className="mr-1 h-4 w-4" />
-                        {t("markAsLost")}
-                      </>
-                    )}
+                    <X className="mr-1 h-4 w-4" />
+                    {t("markAsLost")}
                   </Button>
                 </div>
+                {pickingLostReason && (
+                  <div className="space-y-2 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+                    <Label className="text-muted-foreground">{t("lostReasonQuestion")}</Label>
+                    <select
+                      value={lostReason}
+                      onChange={(e) => setLostReason(e.target.value)}
+                      className="h-9 w-full rounded-lg border border-border bg-muted px-2.5 text-sm text-foreground outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                    >
+                      <option value="">{t("lostReasonPlaceholder")}</option>
+                      {MANUAL_LOST_REASONS.map((reason) => (
+                        <option key={reason} value={reason}>
+                          {lostReasonLabel(reason)}
+                        </option>
+                      ))}
+                    </select>
+                    {lostReason === "otro" && (
+                      <Input
+                        value={lostReasonOther}
+                        onChange={(e) => setLostReasonOther(e.target.value)}
+                        maxLength={200}
+                        placeholder={t("lostReasonOtherPlaceholder")}
+                        className="border-border bg-muted text-foreground"
+                      />
+                    )}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => setPickingLostReason(false)}
+                        disabled={!!statusAction}
+                        className="flex-1 text-muted-foreground hover:text-foreground"
+                      >
+                        {t("cancel")}
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={() => handleStatusChange("lost")}
+                        disabled={!!statusAction || !lostReason}
+                        className="flex-1 bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {statusAction === "lost" ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          t("confirmLost")
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {deal.status && deal.status !== "open" && (
+                  <p className="text-xs text-muted-foreground">
+                    {t(deal.status === "won" ? "wonOn" : "lostOn", {
+                      date: deal.closed_at
+                        ? new Date(deal.closed_at).toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })
+                        : "—",
+                    })}
+                    {deal.status === "lost" && ` · ${lostReasonLabel(deal.lost_reason)}`}
+                  </p>
+                )}
                 {deal.status && deal.status !== "open" && (
                   <Button
                     type="button"

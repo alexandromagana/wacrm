@@ -28,6 +28,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   GripVertical,
   AlertTriangle,
@@ -115,6 +116,8 @@ export function PipelineSettings({
       name: s.name,
       color: s.color,
       position: i,
+      is_won: s.is_won ?? false,
+      auto_close: s.auto_close ?? false,
     }));
 
     const [renameRes, stagesRes] = await Promise.all([
@@ -273,6 +276,11 @@ export function PipelineSettings({
                             updated[index] = { ...updated[index], color: v };
                             setLocalStages(updated);
                           }}
+                          onFlagChange={(flag, v) => {
+                            const updated = [...localStages];
+                            updated[index] = { ...updated[index], [flag]: v };
+                            setLocalStages(updated);
+                          }}
                           onRemove={() => handleRemoveStage(stage.id)}
                           colors={STAGE_COLORS}
                           t={t}
@@ -368,6 +376,7 @@ function SortableStageRow({
   stage,
   onNameChange,
   onColorChange,
+  onFlagChange,
   onRemove,
   colors,
   t,
@@ -375,6 +384,7 @@ function SortableStageRow({
   stage: PipelineStage;
   onNameChange: (v: string) => void;
   onColorChange: (v: string) => void;
+  onFlagChange: (flag: "is_won" | "auto_close", value: boolean) => void;
   onRemove: () => void;
   colors: string[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -393,31 +403,51 @@ function SortableStageRow({
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center gap-2 rounded-lg border border-border bg-muted p-2"
+      className="rounded-lg border border-border bg-muted p-2"
     >
-      <button
-        type="button"
-        {...attributes}
-        {...listeners}
-        className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
-        aria-label={t("dragToReorder")}
-      >
-        <GripVertical className="h-4 w-4" />
-      </button>
-      <ColorSwatch value={stage.color} onChange={onColorChange} colors={colors} t={t} />
-      <Input
-        value={stage.name}
-        onChange={(e) => onNameChange(e.target.value)}
-        className="h-7 flex-1 border-transparent bg-transparent text-sm text-foreground focus:border-border"
-      />
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        onClick={onRemove}
-        className="text-muted-foreground hover:text-red-400"
-      >
-        <Trash2 className="h-3 w-3" />
-      </Button>
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          aria-label={t("dragToReorder")}
+        >
+          <GripVertical className="h-4 w-4" />
+        </button>
+        <ColorSwatch value={stage.color} onChange={onColorChange} colors={colors} t={t} />
+        <Input
+          value={stage.name}
+          onChange={(e) => onNameChange(e.target.value)}
+          className="h-7 flex-1 border-transparent bg-transparent text-sm text-foreground focus:border-border"
+        />
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={onRemove}
+          className="text-muted-foreground hover:text-red-400"
+        >
+          <Trash2 className="h-3 w-3" />
+        </Button>
+      </div>
+      {/* Lifecycle flags (migration 052): a won stage wins the deals
+          dropped on it; auto-close lets the sweep close silent ones. */}
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 pl-6 text-xs text-muted-foreground">
+        <label className="flex items-center gap-1.5" title={t("countsAsWonHint")}>
+          <Switch
+            checked={stage.is_won ?? false}
+            onCheckedChange={(value) => onFlagChange("is_won", value)}
+          />
+          {t("countsAsWon")}
+        </label>
+        <label className="flex items-center gap-1.5" title={t("autoCloseHint")}>
+          <Switch
+            checked={stage.auto_close ?? false}
+            onCheckedChange={(value) => onFlagChange("auto_close", value)}
+          />
+          {t("autoClose")}
+        </label>
+      </div>
     </div>
   );
 }

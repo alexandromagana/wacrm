@@ -40,7 +40,28 @@ interface ConversationListProps {
   resyncToken?: number;
 }
 
-type InboxFilter = ConversationStatus | "all" | "unread";
+/**
+ * `active` (open + pending) is the default: closed chats — including the
+ * ones the lifecycle sweep closed — stay out of the way until someone
+ * asks for them, and a customer writing back reopens theirs.
+ * `suggested` is what the sweep flagged as ready to close.
+ */
+type InboxFilter = ConversationStatus | "all" | "unread" | "active" | "suggested";
+
+function matchesStatusFilter(conv: Conversation, filter: InboxFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "unread":
+      return conv.unread_count > 0;
+    case "active":
+      return conv.status !== "closed";
+    case "suggested":
+      return conv.status !== "closed" && Boolean(conv.close_suggested_at);
+    default:
+      return conv.status === filter;
+  }
+}
 
 export function ConversationList({
   activeConversationId,
@@ -104,15 +125,17 @@ export function ConversationList({
   }
 
   const FILTER_OPTIONS: { label: string; value: InboxFilter }[] = useMemo(() => [
-    { label: t("filterAll"), value: "all" },
+    { label: t("filterActive"), value: "active" },
     { label: t("filterUnread"), value: "unread" },
     { label: t("filterOpen"), value: "open" },
     { label: t("filterPending"), value: "pending" },
+    { label: t("filterSuggested"), value: "suggested" },
     { label: t("filterClosed"), value: "closed" },
+    { label: t("filterAll"), value: "all" },
   ], [t]);
 
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState<InboxFilter>("all");
+  const [filter, setFilter] = useState<InboxFilter>("active");
   const [loading, setLoading] = useState(true);
   // Contact-based filters (issue #272). Tags use OR logic (a conversation
   // matches if its contact carries any selected tag), consistent with
@@ -209,10 +232,8 @@ export function ConversationList({
   const filtered = useMemo(() => {
     let result = conversations;
 
-    if (filter === "unread") {
-      result = result.filter((c) => c.unread_count > 0);
-    } else if (filter !== "all") {
-      result = result.filter((c) => c.status === filter);
+    if (filter !== "all") {
+      result = result.filter((c) => matchesStatusFilter(c, filter));
     }
 
     // Contact-based filters (tags via OR logic, exact company match).
@@ -339,10 +360,10 @@ export function ConversationList({
           active={filter}
           onSelect={setFilter}
           labels={{
-            all: t("filterAll"),
+            active: t("filterActive"),
             unread: t("filterUnread"),
-            open: t("filterOpen"),
             pending: t("filterPending"),
+            suggested: t("filterSuggested"),
           }}
         />
         <div className="relative">
@@ -357,11 +378,10 @@ export function ConversationList({
 
         <div className="flex flex-wrap items-center gap-1">
           <DropdownMenu>
-            {/* Hidden on a phone: this sets the same `filter` state the
-                count tiles above already set, and there it's a bigger
-                tap target that also shows the number. */}
-            <DropdownMenuTrigger className="hidden items-center justify-center h-7 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted lg:inline-flex">
-                {activeFilter?.label ?? t("filterAll")}
+            {/* Shown on a phone too: the count tiles above cover the
+                everyday filters, but Closed and All live only here. */}
+            <DropdownMenuTrigger className="inline-flex items-center justify-center h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground rounded-md hover:bg-muted lg:h-7">
+                {activeFilter?.label ?? t("filterActive")}
                 <ChevronDown className="h-3 w-3" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
