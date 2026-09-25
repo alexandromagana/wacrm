@@ -132,6 +132,9 @@ function explainRefusal(
       if (reason === 'missing_current_period') {
         return 'No se leyó el consumo del bimestre actual, así que el promedio salió solo del historial. Revísalo abajo y complétalo antes de cotizar.';
       }
+      if (reason === 'current_outgrows_history') {
+        return `El bimestre actual (${outlierKwh} kWh) está muy por encima de todo el historial: probablemente el cliente se acaba de mudar o empezó a usar más la casa. El promedio se quedaría corto; captura abajo el consumo que sí lo representa.`;
+      }
       if (reason === 'anomalous_history_high') {
         return `El historial trae un bimestre de ${outlierKwh} kWh, muy por encima del resto (un pico real, o un número mal leído). Confírmalo con el cliente, o cotiza con estos datos si así es su consumo.`;
       }
@@ -449,9 +452,11 @@ export async function POST(request: Request) {
       warnings.push(
         resolution.reason === 'missing_current_period'
           ? 'Se cotizó sin el consumo del bimestre actual: el promedio salió solo del historial.'
-          : resolution.reason === 'anomalous_history_high'
-            ? `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por encima del resto.`
-            : `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por debajo del resto.`
+          : resolution.reason === 'current_outgrows_history'
+            ? `Se cotizó con un bimestre actual de ${resolution.outlierKwh} kWh, muy por encima de todo el historial: revisa que el promedio represente el consumo de hoy.`
+            : resolution.reason === 'anomalous_history_high'
+              ? `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por encima del resto.`
+              : `Se cotizó con un historial irregular: un bimestre de ${resolution.outlierKwh} kWh, muy por debajo del resto.`
       );
       quote = resolution;
     }

@@ -771,6 +771,40 @@ describe('formatReceiptNote — never a promise without a document', () => {
   })
 })
 
+// ------------------------------------------------------------------
+// The household that had just moved in: an empty house for five
+// bimesters, then 2,383 kWh. Asked whether that bimester was real, the
+// customer said "así será", and the bot sent a 4-panel proposal priced
+// on the 444 kWh average with the bill "bajando a $65".
+// ------------------------------------------------------------------
+const mudanza = () =>
+  extraction({
+    consumo_periodo_actual_kwh: 2383,
+    periodo_actual: '20 JUL 26 - 18 SEP 26',
+    historial_bimestres_kwh: [103, 65, 36, 38, 38],
+    cantidad_periodos_usados: 6,
+    promedio_bimestral_kwh: 444,
+    costo_periodo_mxn: 7565.43,
+    tarifa: '1D',
+  })
+
+describe('formatReceiptNote — a household that outgrew its history', () => {
+  it('asks whether they just moved in, and quotes nothing', () => {
+    const note = formatReceiptNote(mudanza())
+    expect(note).toContain('consumo_actual_muy_superior')
+    expect(note).toContain('2383 kWh')
+    expect(note).toContain('apenas se mudó')
+    expect(note).toContain('NO des precio, ni número de paneles')
+    expect(note).toContain('NO se enviará PDF')
+  })
+
+  it('hands over no tier for the undersized average', () => {
+    const note = formatReceiptNote(mudanza())
+    expect(note).not.toContain('sistema_cotizado')
+    expect(note).not.toContain('SE ENVÍA automáticamente')
+  })
+})
+
 describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
   const held = () =>
     extraction({
@@ -842,6 +876,23 @@ describe('formatHeldQuoteNote — the turn the answer arrives on', () => {
     expect(note).toContain('PRIMERA página')
     expect(note).toContain('NO des precio')
     expect(note).not.toContain('[CONSUMO:')
+  })
+
+  it('never offers the proposal back to a household that outgrew its history', () => {
+    // The answer the old note waited for — "sí, así será" — was the one
+    // that released the 4-panel proposal. This hold has no release, so
+    // the note carries neither the tier nor the marker that would ask
+    // for one.
+    const note = formatHeldQuoteNote(mudanza(), {
+      reason: 'current_outgrows_history',
+      askedCount: 1,
+    })!
+    expect(note).toContain('Conteste lo que conteste, NO cotices')
+    expect(note).toContain('[CONSUMO: ATIPICO]')
+    expect(note).not.toContain('[CONSUMO: NORMAL]')
+    expect(note).not.toContain('sistema_cotizado')
+    expect(note).not.toContain('proyeccion_25_anios')
+    expect(note).not.toContain('cotización LISTA')
   })
 
   it('answers "¿y el PDF?" with what is missing, not with a promise', () => {
