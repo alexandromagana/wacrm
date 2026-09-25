@@ -1,0 +1,34 @@
+(version 1)
+
+; Node may read macOS runtime and TLS assets, but user-controlled data is
+; default-denied outside the collector project. This blocks every current and
+; future credential store under the operator's home directory without relying
+; on a list of product-specific paths.
+(allow default)
+
+(deny file-read-data
+  (require-all
+    (subpath "/Users/alexandromagana")
+    (require-not
+      (require-any
+        (literal "/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/.crm-audit.env")
+        (literal "/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/scripts/audit-crm.mjs")
+        (subpath "/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/src/lib/audit")))))
+
+; Temporary files are not collector inputs and may contain unrelated secrets.
+(deny file-read-data
+  (subpath "/private/tmp"))
+
+; The collector is single-process. Explicitly prevent descendants from being
+; spawned and escaping the wrapper's process group through a new session.
+(deny process-fork)
+
+(deny file-write*)
+
+(deny file-read-data
+  (literal "/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/.env")
+  (literal "/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/.env.local")
+  (regex #"^/Users/alexandromagana/Developer/Gama Agency/Gama_CRM/\\.env\\..*$")
+  (literal "/Users/alexandromagana/.hermes/.env")
+  (literal "/Users/alexandromagana/.hermes/auth.json")
+  (subpath "/Users/alexandromagana/Library/Keychains"))

@@ -32,9 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+.crm-audit.env
 # keep example files so forkers have a template to copy
 !.env.local.example
 !.env.example
+!.crm-audit.env.example
 
 # vercel
 .vercel
