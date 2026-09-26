@@ -5,6 +5,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { buildAuditSnapshot } from '../src/lib/audit/crm-auditor.mjs';
 import { parseAuditOptions } from '../src/lib/audit/audit-runtime-options.mjs';
+import {
+  classifyCollectorFailure,
+  collectorFailureExitCode,
+} from '../src/lib/audit/collector-failure.mjs';
 import { loadDedicatedAuditEnvironment } from '../src/lib/audit/local-runtime-config.mjs';
 import { readAuditData } from '../src/lib/audit/supabase-reader.mjs';
 
@@ -17,27 +21,34 @@ export function loadEnvironment({ root = projectRoot } = {}) {
   return loadDedicatedAuditEnvironment({ projectRoot: root });
 }
 
-async function main() {
-  const config = loadEnvironment();
+export async function collectAuditSnapshot({
+  config,
+  readData = readAuditData,
+  clock = Date.now,
+}) {
   const baseUrl = config.CRM_AUDIT_SUPABASE_URL;
   const apiKey = config.CRM_AUDIT_API_KEY;
   const accessToken = config.CRM_AUDIT_ACCESS_TOKEN;
   const referenceKey = config.CRM_AUDIT_REFERENCE_KEY;
 
-  const nowMs = Date.now();
+  // The reads are bounded by the moment they start, but conversations are
+  // not: a message that arrives while the pages download moves
+  // last_message_at past that moment. "Future" is judged against the moment
+  // the last page arrived, so only a clock that is really ahead still fails.
+  const readStartedMs = clock();
   const { historyDays, ...snapshotOptions } = parseAuditOptions(config);
-  const data = await readAuditData({
+  const data = await readData({
     baseUrl,
     apiKey,
     accessToken,
     accountId: config.CRM_AUDIT_ACCOUNT_ID || '',
     expectedOrigin: config.CRM_AUDIT_SUPABASE_ORIGIN || '',
-    nowMs,
+    nowMs: readStartedMs,
     historyDays,
     incidentLookbackDays: snapshotOptions.incidentLookbackDays,
   });
   const snapshot = buildAuditSnapshot(data, {
-    nowMs,
+    nowMs: clock(),
     ...snapshotOptions,
     referenceKey,
   });
@@ -52,15 +63,22 @@ async function main() {
       'El snapshot coincidió con una credencial sensible y fue bloqueado.'
     );
   }
+  return output;
+}
+
+async function main() {
+  const output = await collectAuditSnapshot({ config: loadEnvironment() });
   process.stdout.write(`${output}\n`);
 }
 
 const invokedPath = process.argv[1] ? path.resolve(process.argv[1]) : '';
 if (invokedPath && import.meta.url === pathToFileURL(invokedPath).href) {
-  main().catch(() => {
+  main().catch((error) => {
+    // Only the closed category leaves the process, never the error text.
+    const category = classifyCollectorFailure(error);
     process.stderr.write(
-      '[crm-auditor] La lectura falló; no se emitió un snapshot parcial.\n'
+      `[crm-auditor] La lectura falló (${category}); no se emitió un snapshot parcial.\n`
     );
-    process.exitCode = 1;
+    process.exitCode = collectorFailureExitCode(category);
   });
 }

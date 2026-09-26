@@ -414,6 +414,27 @@ class SubprocessBoundaryTests(unittest.TestCase):
             monitor.collect_snapshot(run_impl=run_impl)
         self.assertNotIn(secret, str(raised.exception))
 
+    def test_names_a_known_failure_from_the_exit_code_alone(self):
+        secret = 'synthetic child stderr that must stay local'
+
+        def run_impl(_command, **_kwargs):
+            return SimpleNamespace(returncode=85, stdout=b'', stderr=secret.encode())
+
+        with self.assertRaises(ValueError) as raised:
+            monitor.collect_snapshot(run_impl=run_impl)
+        self.assertIn('(timestamp_futuro)', str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
+
+    def test_keeps_the_generic_message_for_an_unknown_exit_code(self):
+        def run_impl(_command, **_kwargs):
+            return SimpleNamespace(returncode=2, stdout=b'', stderr=b'')
+
+        with self.assertRaises(ValueError) as raised:
+            monitor.collect_snapshot(run_impl=run_impl)
+        self.assertEqual(
+            str(raised.exception), 'El recolector local terminó con error.'
+        )
+
     def test_bounded_runner_kills_stdout_overflow_before_capture(self):
         command = [
             sys.executable,

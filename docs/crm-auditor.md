@@ -47,6 +47,22 @@ La API key debe ser una JWT `anon`, y el bearer debe declarar exactamente `role:
 
 Las opciones temporales deben ser enteros decimales estrictos dentro de su dominio; sólo la ausencia usa defaults. Además deben conservar 30 minutos de solapamiento: historia ≥ lookback y SLA, y lookback ≥ umbral de entrega. Los límites de salida son constantes (`3/1/1/1`) y una variable que intente cambiarlos hace fallar la ejecución.
 
+### Si el recolector falla
+
+El recolector nunca imprime el texto del error. En `stderr` sólo nombra la categoría, y sale con el código de esa categoría para que el wrapper de Hermes pueda decir la causa sin leer ese `stderr`.
+
+| Código | Categoría          | Qué significa                                                                        |
+| ------ | ------------------ | ------------------------------------------------------------------------------------ |
+| 80     | `configuracion`    | `.crm-audit.env`, el entorno o las opciones no pasan la validación local             |
+| 81     | `credenciales`     | Los JWT, la cuenta o el origen no cuadran, o Supabase no confirmó la cuenta fijada   |
+| 82     | `red`              | Supabase no contestó a tiempo: sin red, DNS, timeout o una Mac que apenas despierta  |
+| 83     | `respuesta`        | Supabase contestó con error HTTP, un cuerpo inválido o una paginación inconsistente  |
+| 84     | `datos`            | Una fila del CRM sale del contrato cerrado: estado, identificador, fecha o relación  |
+| 85     | `timestamp_futuro` | Una fila trae una fecha posterior al final de la lectura                             |
+| 1      | `desconocido`      | Cualquier otra falla                                                                 |
+
+El wrapper traduce el código con una tabla cerrada y sólo agrega el nombre de la categoría, por ejemplo `El recolector local terminó con error (red).`
+
 ## Qué revisa
 
 | Área             | Señal                                                                                                                            | Interpretación                                                                                                                                                  |
@@ -76,7 +92,7 @@ Un log de automatización `partial` que sólo contiene un paso `wait` exitoso **
 - No consulta columnas de teléfono o correo ni incluye nombres, identificadores crudos, texto libre o enlaces de conversación. Cada conversación, mensaje, automatización, Flow, webhook y configuración de WhatsApp usa una referencia HMAC-SHA-256 truncada a 128 bits, con detección fail-closed de colisiones. La clave se acepta únicamente como base64url canónico sin padding que decodifique a exactamente 32 bytes; sólo el resolver local y aprobado maneja el UUID en memoria para abrir la ruta sin imprimirlo.
 - `privacy.pii_redaction: structured_only`, `customer_message_text_included: false` y `untrusted_free_text_included: false` son parte obligatoria del contrato que valida el wrapper.
 - El generador valida antes de clasificar: todas las colecciones deben ser arreglos, cada fila debe tener un identificador válido y único, cada mensaje debe resolver a una conversación y cada ejecución de Flow a su Flow y conversación cuando exista, estados y booleanos deben pertenecer al contrato cerrado, y los campos libres consultados sólo pueden ser texto o `null`. Un valor malformado invalida la cobertura sin copiarlo a la salida.
-- Todos los timestamps emitidos usan exactamente UTC ISO con milisegundos (`YYYY-MM-DDTHH:mm:ss.sssZ`), pero la clasificación, los umbrales y el orden conservan hasta nanosegundos de la fuente. Un timestamp fuente requerido ausente, futuro, con otro formato, con calendario imposible, cuya normalización UTC salga del rango de años de cuatro dígitos, una opción temporal no entera o inválida o un miembro JSON duplicado invalida el snapshot completo. `run_at` sí puede ser futuro porque representa trabajo programado.
+- Todos los timestamps emitidos usan exactamente UTC ISO con milisegundos (`YYYY-MM-DDTHH:mm:ss.sssZ`), pero la clasificación, los umbrales y el orden conservan hasta nanosegundos de la fuente. Un timestamp fuente requerido ausente, futuro, con otro formato, con calendario imposible, cuya normalización UTC salga del rango de años de cuatro dígitos, una opción temporal no entera o inválida o un miembro JSON duplicado invalida el snapshot completo. `run_at` sí puede ser futuro porque representa trabajo programado. «Futuro» se mide contra el momento en que llegó la última página. Las consultas siguen acotadas al momento en que empezó la lectura, así que una conversación que recibe un mensaje mientras se descargan las páginas ya no invalida el snapshot.
 - Un timeout de Flow ausente, cuyo tipo JSON no sea un entero —incluidas cadenas numéricas y fracciones—, infinito, no positivo o superior a 8,760 horas usa el fallback local de 24 horas; así un desbordamiento o coerción no puede suprimir un Flow atascado.
 - Los desempates usan comparación binaria estable en lugar de la configuración regional del sistema; identificadores ausentes, duplicados, con caracteres de control o con sustitutos UTF-16 aislados fallan antes de construir referencias o claves de incidente.
 - Las listas visibles se acotan a tres esperas, una interacción reciente, un mensaje de contexto y un incidente por subcategoría técnica. Esos topes `3/1/1/1` son parte fija del esquema v2, no opciones ajustables del productor; cualquier valor distinto falla antes de generar un snapshot. `omitted` indica cuántos candidatos quedaron fuera; los más antiguos o de mayor severidad se priorizan según el tipo de señal.

@@ -773,10 +773,19 @@ async function fetchDescriptorRows({
         ),
         timedOut,
       ]);
-    } catch {
-      throw new Error(
+    } catch (error) {
+      // Keep only which side failed, never the original error: it can carry
+      // response text. No response, or our own timeout, means Supabase was
+      // never reached in time.
+      const failure = new Error(
         `Supabase request failed for allowlisted table "${table}".`
       );
+      failure.category =
+        response === undefined ||
+        (error instanceof Error && error.message === 'Supabase request timed out.')
+          ? 'red'
+          : 'respuesta';
+      throw failure;
     } finally {
       clearTimeout(timeout);
       operation.controller.signal.removeEventListener(

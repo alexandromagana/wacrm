@@ -144,6 +144,26 @@ process.stdout.write(JSON.stringify(buildAuditSnapshot(data, {
         canonical = monitor.normalise_snapshot(result.stdout.decode("utf-8"))
         self.assertEqual(json.loads(canonical)["schema_version"], 2)
 
+    def test_failure_exit_codes_match_the_javascript_collector(self):
+        script = r"""
+import { COLLECTOR_FAILURE_EXIT_CODES } from './src/lib/audit/collector-failure.mjs';
+process.stdout.write(JSON.stringify(COLLECTOR_FAILURE_EXIT_CODES));
+"""
+        result = subprocess.run(
+            ["/usr/local/bin/node", "--input-type=module", "-e", script],
+            cwd=PROJECT_ROOT,
+            env={"LANG": "C", "LC_ALL": "C", "TZ": "UTC"},
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+        produced = json.loads(result.stdout.decode("utf-8"))
+        self.assertEqual(
+            {code: name for name, code in produced.items()},
+            monitor.COLLECTOR_FAILURE_CATEGORIES,
+        )
+
     def test_rejects_counts_above_source_bounds(self):
         for section, key in (("metrics", "contacts"), ("omitted", "failed_messages")):
             with self.subTest(section=section, key=key):
