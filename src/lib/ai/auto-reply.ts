@@ -4,7 +4,7 @@ import { buildConversationContext } from './context'
 import { retrieveKnowledge } from './knowledge'
 import { generateReply } from './generate'
 import { buildSystemPrompt, buildDateTimeNote } from './defaults'
-import { buildHandoffSummary } from './handoff'
+import { buildHandoffSummary, type HandoffReason } from './handoff'
 import { applyLeadStatusTag } from './lead-status'
 import {
   extractReceipts,
@@ -174,6 +174,17 @@ async function performHandoff(
     'handoff',
     'El asistente te pasó una conversación',
   )
+}
+
+/**
+ * The note a person gets for a parked quote reaching them, by what it
+ * was waiting on — each one is a different job: generate the PDF, size
+ * it from this bimester, or read the history with the customer.
+ */
+function holdHandoffReason(hold: QuoteHold['reason'] | null): HandoffReason {
+  if (hold === 'missing_amount') return 'quote_missing_amount'
+  if (hold === 'current_outgrows_history') return 'quote_outgrown_history'
+  return 'quote_review'
 }
 
 export async function dispatchInboundToAiReply(
@@ -356,9 +367,11 @@ export async function dispatchInboundToAiReply(
     // That question, asked twice and still unanswered. Same bound as
     // the meter gate, and the same conclusion.
     let holdHandoff = false
-    // What that stalled hold was waiting on. An amount that never read
-    // hands the person a different job — generate the PDF — from a
-    // history nobody explained.
+    // What the hold going to a person was waiting on — stalled, or
+    // answered with "that isn't how we live". An amount that never read
+    // hands them a different job (generate the PDF) from a household that
+    // just moved in (size it from this bimester) or a history nobody
+    // explained.
     let stalledHold: QuoteHold['reason'] | null = null
 
     // The conversation's open batch of meters, if any. An ordinary
@@ -635,17 +648,26 @@ export async function dispatchInboundToAiReply(
     let reviewCleared = false
 
     if (held) {
-      if (consumptionVerdict === 'normal') {
+      // A bill whose own bimester outgrew its history is never released,
+      // whatever the model reads into the answer. "Así será" is a yes to
+      // the current level — the one the average cannot reach — and it is
+      // exactly the yes that once sent a 2,383 kWh household a 4-panel
+      // proposal. The note already asks for the atypical marker; this is
+      // the same rule where a forgotten or misread marker cannot move it.
+      const neverReleases = held.hold.reason === 'current_outgrows_history'
+      if (consumptionVerdict === 'normal' && !neverReleases) {
         // The customer says that window is how they actually live. The
         // numbers were never in doubt — only whether they described
         // this household — so the proposal goes out exactly as priced.
         receiptExtraction = held.reading
         reviewCleared = true
         meterState = releaseQuote(meterState)
-      } else if (consumptionVerdict === 'atypical') {
+      } else if (consumptionVerdict != null) {
         // It does not represent them: an empty house, a remodel, a
-        // bimester read wrong. Nothing here can size a system, and
-        // guessing at one is the mistake the hold exists to prevent.
+        // bimester read wrong, a household that just moved in. Nothing
+        // here can size a system, and guessing at one is the mistake the
+        // hold exists to prevent.
+        stalledHold = held.hold.reason
         meterState = releaseQuote(meterState)
         holdHandoff = true
       } else {
@@ -752,11 +774,16 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
+          // A parked quote the model also escalated — the account's own
+          // "consumo no representativo" template ends in [[HANDOFF]] —
+          // keeps the note that says what the person has to do.
           reason: meterHandoff
             ? 'meter_gate'
-            : handoff
-              ? 'model_requested'
-              : 'no_reply',
+            : holdHandoff
+              ? holdHandoffReason(stalledHold)
+              : handoff
+                ? 'model_requested'
+                : 'no_reply',
         }),
       })
       // If the model wrote a farewell alongside the sentinel ("a teammate
@@ -950,9 +977,7 @@ export async function dispatchInboundToAiReply(
           reason: meterStillStalled
             ? 'meter_gate'
             : holdHandoff
-              ? stalledHold === 'missing_amount'
-                ? 'quote_missing_amount'
-                : 'quote_review'
+              ? holdHandoffReason(stalledHold)
               : handoff
                 ? 'model_requested'
                 : 'cap_reached',
