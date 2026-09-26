@@ -255,12 +255,23 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const content_type = input.kind === 'template' ? 'template' : 'text'
   const content_text = input.kind === 'text' ? input.text : null
   const template_name = input.kind === 'template' ? input.templateName : null
+  // A media-header template ships its image, video or document along
+  // with the body, but the URL lives on the template row, not on the
+  // send. Store it on the message the way sendMessageToConversation
+  // does, so the thread shows what the customer received. The engine
+  // passes no per-send override, so the row's URL is the one that went
+  // out. `header_handle` is no fallback: it's an upload handle, not a URL.
+  const media_url =
+    templateRow?.header_type && templateRow.header_type !== 'text'
+      ? templateRow.header_media_url || null
+      : null
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: conversationId,
     sender_type: 'bot',
     content_type,
     content_text,
+    media_url,
     template_name,
     message_id: waMessageId,
     status: 'sent',
