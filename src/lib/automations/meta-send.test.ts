@@ -37,6 +37,8 @@ const TEMPLATE_ROW = {
 
 /** Every `.update()` payload, by table, for the current test. */
 let updates: Array<{ table: string; payload: Record<string, unknown> }> = []
+/** Every `.insert()` row, by table, for the current test. */
+let inserts: Array<{ table: string; payload: Record<string, unknown> }> = []
 
 /**
  * Fake covering the tables `sendViaMeta` touches. `templateRow` is what
@@ -51,7 +53,10 @@ function fakeDb(templateRow: unknown = TEMPLATE_ROW) {
         updates.push({ table, payload })
         return c
       },
-      insert: () => c,
+      insert: (payload: Record<string, unknown>) => {
+        inserts.push({ table, payload })
+        return c
+      },
       eq: () => c,
       maybeSingle: () => {
         if (table === 'contacts') {
@@ -86,6 +91,7 @@ const ARGS = {
 beforeEach(() => {
   vi.clearAllMocks()
   updates = []
+  inserts = []
   h.decrypt.mockReturnValue('token')
   h.sendTemplateMessage.mockResolvedValue({ messageId: 'wamid.1' })
   h.sendTextMessage.mockResolvedValue({ messageId: 'wamid.2' })
@@ -131,6 +137,33 @@ describe('engineSendTemplate — template components', () => {
 
     await expect(engineSendTemplate(ARGS)).rejects.toThrow(/malformed/)
     expect(h.sendTemplateMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe('engineSendTemplate — the stored message', () => {
+  const messageInsert = () => inserts.find((i) => i.table === 'messages')?.payload
+
+  it('stores the header image the customer received', async () => {
+    // The image goes out with the template but lives on the template
+    // row, so the stored message had no record of what was sent.
+    // Same resolution as sendMessageToConversation.
+    await engineSendTemplate(ARGS)
+
+    expect(messageInsert()).toMatchObject({
+      content_type: 'template',
+      template_name: 'seguimiento_coti',
+      media_url: 'https://storage.test/header.jpg',
+    })
+  })
+
+  it('stores no media for a text header', async () => {
+    // A text header is the body's first line. A URL left on the row
+    // from an earlier media header was never sent, so it isn't stored.
+    h.supabaseAdmin.mockReturnValue(fakeDb({ ...TEMPLATE_ROW, header_type: 'text' }))
+
+    await engineSendTemplate(ARGS)
+
+    expect(messageInsert()).toMatchObject({ media_url: null })
   })
 })
 
