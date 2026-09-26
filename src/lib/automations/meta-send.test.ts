@@ -155,6 +155,33 @@ describe('engineSendTemplate — template components', () => {
   })
 })
 
+describe('engineSendTemplate — the stored message', () => {
+  const messageInsert = () => inserts.find((i) => i.table === 'messages')?.payload
+
+  it('stores the header image the customer received', async () => {
+    // The image goes out with the template but lives on the template
+    // row, so the stored message had no record of what was sent.
+    // Same resolution as sendMessageToConversation.
+    await engineSendTemplate(ARGS)
+
+    expect(messageInsert()).toMatchObject({
+      content_type: 'template',
+      template_name: 'seguimiento_coti',
+      media_url: 'https://storage.test/header.jpg',
+    })
+  })
+
+  it('stores no media for a text header', async () => {
+    // A text header is the body's first line. A URL left on the row
+    // from an earlier media header was never sent, so it isn't stored.
+    h.supabaseAdmin.mockReturnValue(fakeDb({ ...TEMPLATE_ROW, header_type: 'text' }))
+
+    await engineSendTemplate(ARGS)
+
+    expect(messageInsert()).toMatchObject({ media_url: null })
+  })
+})
+
 describe('conversation ordering', () => {
   const conversationUpdate = () =>
     updates.find((u) => u.table === 'conversations')?.payload
