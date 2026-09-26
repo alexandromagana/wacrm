@@ -320,6 +320,13 @@ export async function dispatchInboundToAiReply(
     // becomes the turn. Without either, there's nothing to reply to.
     if (messages.length === 0 && !hasReceipt) return
 
+    // What the knowledge base gets searched with, also read before any
+    // system note joins `messages`. Every turn pushes at least the clock
+    // note, so by retrieval time the latest user turn is always a note —
+    // and retrieval searched with the date and time instead of the
+    // customer's question.
+    const knowledgeQuery = latestUserMessage(messages)
+
     // Account-wide throttle on the shared BYO key. The per-conversation
     // cap bounds one thread; this bounds a burst across many threads (a
     // marketing blast landing 200 replies at once) so we never run the
@@ -589,7 +596,7 @@ export async function dispatchInboundToAiReply(
       db,
       accountId,
       config,
-      latestUserMessage(messages),
+      knowledgeQuery,
     )
 
     const systemPrompt = buildSystemPrompt({
