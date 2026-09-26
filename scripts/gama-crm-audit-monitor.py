@@ -28,6 +28,16 @@ MAX_SAFE_INTEGER = 9_007_199_254_740_991
 # 20k logs × 15 normalized step classes × 11 normalized error codes.
 MAX_AUTOMATION_FAILURE_GROUPS = 3_300_000
 SAFE_CHILD_ENV = {"LANG": "C", "LC_ALL": "C", "TZ": "UTC"}
+# Why the collector failed, from its exit code alone: a closed table shared
+# with src/lib/audit/collector-failure.mjs. Its stderr is never read.
+COLLECTOR_FAILURE_CATEGORIES = {
+    80: "configuracion",
+    81: "credenciales",
+    82: "red",
+    83: "respuesta",
+    84: "datos",
+    85: "timestamp_futuro",
+}
 
 TOP_LEVEL_FIELDS = {
     "schema_version",
@@ -837,7 +847,10 @@ def collect_snapshot(run_impl=run_bounded_command):
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         raise ValueError("El recolector local no pudo ejecutarse.") from error
     if result.returncode != 0:
-        raise ValueError("El recolector local terminó con error.")
+        category = COLLECTOR_FAILURE_CATEGORIES.get(result.returncode)
+        if category is None:
+            raise ValueError("El recolector local terminó con error.")
+        raise ValueError(f"El recolector local terminó con error ({category}).")
     if type(result.stdout) is not bytes or len(result.stdout) > MAX_MONITOR_BYTES:
         raise ValueError("El recolector local excedió su límite de salida.")
     try:

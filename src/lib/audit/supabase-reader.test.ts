@@ -282,6 +282,41 @@ describe('fetchAllRows', () => {
     ).rejects.not.toThrow('sensitive-response-marker');
   });
 
+  it('files a request that never got an answer as a network failure', async () => {
+    const fetchImpl = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+
+    const failure = await fetchAllRows({
+      baseUrl: 'https://project.supabase.co',
+      expectedOrigin: 'https://project.supabase.co',
+      table: 'messages',
+      fetchImpl,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error & { category?: string }).category).toBe('red');
+  });
+
+  it('files an HTTP error from Supabase as a bad response', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response('{}', {
+        status: 503,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+
+    const failure = await fetchAllRows({
+      baseUrl: 'https://project.supabase.co',
+      expectedOrigin: 'https://project.supabase.co',
+      table: 'messages',
+      fetchImpl,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error & { category?: string }).category).toBe(
+      'respuesta'
+    );
+  });
+
   it('does not echo a malformed audit token from validation', async () => {
     const accessToken = ['synthetic', 'secret', 'value\nleak'].join('-');
     const fetchImpl = vi.fn(fetch);
