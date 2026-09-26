@@ -228,6 +228,30 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(systemPrompt).toContain('Returns accepted within 30 days.')
   })
 
+  it('searches the knowledge base with the customer question, not a system note', async () => {
+    // By the time retrieval runs, the dispatcher has pushed its notes as
+    // user turns — the clock on every turn — so the latest user turn is
+    // a note. Searching with it grounded every reply in the date and
+    // time, whatever the customer had asked.
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'assistant', content: '¡Hola! ¿En qué te puedo ayudar?' },
+      { role: 'user', content: '¿qué garantía tienen los paneles?' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      role: string
+      content: string
+    }[]
+    expect(messages.at(-1)!.content).toMatch(/^\[NOTA DEL SISTEMA/)
+    expect(h.retrieveKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      'acct-1',
+      expect.anything(),
+      '¿qué garantía tienen los paneles?',
+    )
+  })
+
   it('stands down when an active message-level automation SENDS messages', async () => {
     h.state.autoResponders = [{ id: 'auto-1' }]
     h.state.autoResponderSendSteps = [{ id: 'step-1' }]
