@@ -6,9 +6,11 @@ Este repositorio incluye un recolector local, de solo lectura, para que Hermes r
 
 ```bash
 /usr/bin/env -i /usr/bin/sandbox-exec \
-  -f scripts/gama-crm-auditor.sb \
-  /usr/local/bin/node scripts/audit-crm.mjs
+  -f "$PWD/scripts/gama-crm-auditor.sb" \
+  /usr/local/bin/node "$PWD/scripts/audit-crm.mjs"
 ```
+
+Se corre desde la raíz de la carpeta principal y con rutas absolutas. El perfil no deja que Node lea el directorio de trabajo: con `scripts/audit-crm.mjs` relativo, `process.cwd()` falla con `EPERM` antes de cargar el recolector. El perfil sólo deja leer el recolector en la ruta fija de la carpeta principal, así que tampoco funciona desde un worktree.
 
 El comando lee únicamente las variables allowlisteadas del archivo de capacidad `.crm-audit.env`, que debe ser regular, no enlazado, propiedad del usuario, modo `0600`, de hasta 65,536 bytes y anclado a la raíz del proyecto. Consulta Supabase por REST y escribe un único JSON en `stdout`. Los errores van a `stderr`; las credenciales nunca forman parte del resultado ni de los mensajes de error. El sandbox bloquea lectura de los entornos privilegiados de la aplicación, Keychain y credenciales de Hermes, además de toda escritura a disco. El alias `npm run audit:crm` queda para desarrollo, pero la frontera endurecida y el cron fijan `sandbox-exec`, el perfil y Node por ruta absoluta con un entorno mínimo.
 
