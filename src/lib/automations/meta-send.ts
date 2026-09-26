@@ -12,6 +12,7 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { isMessageTemplate } from '@/lib/whatsapp/template-row-guard'
+import { findOrCreateConversationRow } from '@/lib/whatsapp/find-or-create-conversation'
 import type { MessageTemplate } from '@/types'
 import { supabaseAdmin } from './admin-client'
 
@@ -43,7 +44,10 @@ interface SendTextArgs {
 interface SendTemplateArgs {
   accountId: string
   userId: string
-  conversationId: string
+  /** The contact's conversation, or null if they have none yet. A
+   *  template is the one message Meta delivers to someone who never
+   *  wrote, so null is not an error: the send opens the conversation. */
+  conversationId: string | null
   contactId: string
   templateName: string
   language?: string
@@ -223,6 +227,28 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }
 
+  // A template to a contact with no conversation opens one, but only
+  // now that Meta has taken the message: a send Meta refuses (expired
+  // token, paused template) must not leave an empty chat behind for
+  // every lead it was meant for. It is the chat the customer's reply
+  // lands in, owned like one the webhook opens: by the WhatsApp config
+  // owner.
+  let conversationId = input.conversationId
+  const opensConversation = !conversationId
+  if (!conversationId) {
+    try {
+      conversationId = await findOrCreateConversationRow(
+        db,
+        input.accountId,
+        contact.id,
+        config.user_id,
+      )
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      throw new Error(`sent to Meta but opening the conversation failed: ${msg}`)
+    }
+  }
+
   // Persist the sent message so it appears in the inbox with a real
   // Meta message id. sender_type='bot' distinguishes automation sends
   // from manual agent sends.
@@ -231,7 +257,7 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   const template_name = input.kind === 'template' ? input.templateName : null
 
   const { error: msgErr } = await db.from('messages').insert({
-    conversation_id: input.conversationId,
+    conversation_id: conversationId,
     sender_type: 'bot',
     content_type,
     content_text,
@@ -249,16 +275,20 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // receipt reminders). Bumping last_message_at floated every silent
   // prospect back to the top of the inbox after each nudge, so only the
   // preview changes; the chat keeps its place until someone writes.
-  // Text sends answer a live conversation and still move it up.
+  // Text sends answer a live conversation and still move it up. So does
+  // a template that just opened the chat: it has no place to keep, and
+  // a null last_message_at sorts above every other chat in the inbox.
   const now = new Date().toISOString()
+  const movesUp = input.kind === 'text' || opensConversation
   await db
     .from('conversations')
-    .update(
-      input.kind === 'template'
-        ? { last_message_text: `[template:${input.templateName}]`, updated_at: now }
-        : { last_message_text: input.text, last_message_at: now, updated_at: now },
-    )
-    .eq('id', input.conversationId)
+    .update({
+      last_message_text:
+        input.kind === 'template' ? `[template:${input.templateName}]` : input.text,
+      ...(movesUp ? { last_message_at: now } : {}),
+      updated_at: now,
+    })
+    .eq('id', conversationId)
 
   return { whatsapp_message_id: waMessageId }
 }
