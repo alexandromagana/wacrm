@@ -2,7 +2,7 @@
 
 `GET /api/automations/cron` drains the `automation_pending_executions` queue —
 it's what fires a `wait` step once its timer is up (the 48h/5-day quote
-follow-ups, the 1-day "pedir recibo" delay, etc.). Nothing inside this app
+follow-ups, the 30-minute "pedir recibo" delay, etc.). Nothing inside this app
 calls it; it only runs when something external pings it.
 
 Auth: the request must carry an `x-cron-secret` header matching the

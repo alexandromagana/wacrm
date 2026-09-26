@@ -385,6 +385,11 @@ async function main() {
     trigger_config: { tag_id: fbPending },
     is_active: false,
     steps: [
+      // Most leads write on WhatsApp within a minute of the tag (62 of 86
+      // in Aug–Sep 2026). The wait gives "FB Pendiente WA → quitar al
+      // responder" time to drop the tag, and the resume re-checks it, so
+      // only leads who stay silent get the (paid) template.
+      { step_type: 'wait', step_config: { unit: 'minutes', amount: 30 } },
       {
         step_type: 'send_template',
         step_config: { template_name: TPL.lead.name, language: TPL.lead.language, variables: TPL.lead.variables },
