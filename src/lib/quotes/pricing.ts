@@ -141,6 +141,27 @@ export const ANOMALY_FLOOR_RATIO = 0.3
  */
 export const ANOMALY_CEILING_RATIO = 4
 
+/**
+ * How far the bill's own bimester may run past the highest one in its
+ * history before the history stops describing the household at all.
+ *
+ * The floor and the ceiling above both measure against the window's
+ * median, and a house that stood empty for most of the year defeats
+ * both: the empty bimesters ARE the median. One real bill ran
+ * [2383, 103, 65, 36, 38, 38] — the family had just moved in. Nothing
+ * sat below 30% of a 51 kWh median, the ceiling read 2383 as a misread
+ * bimester, and once the customer said "así será" the proposal went out
+ * sized on the 444 kWh average: 4 panels, and a promise that the bill
+ * would drop to the fixed charge.
+ *
+ * Measured against the history's MAX rather than its median, so a hot
+ * summer is not mistaken for a new household: the year behind a real
+ * seasonal peak holds last summer too. 3x clears every legitimate bill
+ * on file (the worst, the low-baseline house, is 1.32x its history's
+ * peak) and still catches the move-in by an order of magnitude.
+ */
+export const OUTGROWN_HISTORY_RATIO = 3
+
 /** Why a reading is priced but not safe to put on a PDF unattended. */
 export type ReviewReason =
   /** The bill's own bimester never made it into the average. */
@@ -149,6 +170,14 @@ export type ReviewReason =
   | 'anomalous_history'
   /** One bimester towers over the rest — almost always a misread. */
   | 'anomalous_history_high'
+  /**
+   * The bill's own bimester towers over its history: a household that
+   * just moved in, or started living in the house differently. The
+   * average mixes the two and undersizes the system, and no answer the
+   * customer gives makes it the right number — a person sizes this one
+   * from the current consumption.
+   */
+  | 'current_outgrows_history'
 
 /**
  * Signals the pricing table cannot see for itself. Optional: callers
@@ -217,6 +246,26 @@ export function findAnomalousHighPeriod(
   if (middle <= 0) return null
   const highest = Math.max(...values)
   return highest > middle * ANOMALY_CEILING_RATIO ? highest : null
+}
+
+/**
+ * The bill's own bimester when it has outgrown everything in its
+ * history, else null. See `OUTGROWN_HISTORY_RATIO`.
+ *
+ * `periods` is newest first with the current bimester at index 0 —
+ * callers pass it only when the reading includes one. Two past bimesters
+ * at least, the same bar the outlier checks set: one is not a history.
+ */
+export function findOutgrownHistory(
+  periods: readonly number[],
+): number | null {
+  const [current, ...rest] = periods
+  if (current == null || !Number.isFinite(current) || current <= 0) return null
+  const history = rest.filter((v) => Number.isFinite(v) && v >= 0)
+  if (history.length < 2) return null
+  return current > Math.max(...history) * OUTGROWN_HISTORY_RATIO
+    ? current
+    : null
 }
 
 /**
@@ -324,6 +373,26 @@ export function resolveQuote(
   }
 
   if (evidence.periods) {
+    // The bill's own bimester, when the reading has one. It is the only
+    // period the history can be outgrown BY, and the only high outlier
+    // that is not a stray row: a customer who confirms it is how they
+    // live now has just said the average is the wrong number.
+    const current =
+      evidence.includesCurrentPeriod === true ? evidence.periods[0] : undefined
+
+    // First, because it answers the question the other two would ask
+    // for nothing: however the customer explains a history that no
+    // longer describes them, the average cannot size their system.
+    if (current != null && findOutgrownHistory(evidence.periods) != null) {
+      return {
+        kind: 'needs_review',
+        kwh,
+        tier,
+        reason: 'current_outgrows_history',
+        outlierKwh: current,
+      }
+    }
+
     const outlier = findAnomalousPeriod(evidence.periods)
     if (outlier != null) {
       return {
@@ -344,7 +413,11 @@ export function resolveQuote(
         kind: 'needs_review',
         kwh,
         tier,
-        reason: 'anomalous_history_high',
+        // The ceiling was written for a stray row read wrong. When the
+        // bimester towering over the rest is the bill's own, the "yes,
+        // that's real" it is waiting for means the customer lives at that
+        // level now — which the average undersizes, however it is asked.
+        reason: high === current ? 'current_outgrows_history' : 'anomalous_history_high',
         outlierKwh: high,
       }
     }

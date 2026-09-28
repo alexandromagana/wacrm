@@ -228,6 +228,30 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
     expect(systemPrompt).toContain('Returns accepted within 30 days.')
   })
 
+  it('searches the knowledge base with the customer question, not a system note', async () => {
+    // By the time retrieval runs, the dispatcher has pushed its notes as
+    // user turns — the clock on every turn — so the latest user turn is
+    // a note. Searching with it grounded every reply in the date and
+    // time, whatever the customer had asked.
+    h.buildConversationContext.mockResolvedValue([
+      { role: 'assistant', content: '¡Hola! ¿En qué te puedo ayudar?' },
+      { role: 'user', content: '¿qué garantía tienen los paneles?' },
+    ])
+    await dispatchInboundToAiReply(ARGS)
+
+    const messages = h.generateReply.mock.calls[0][0].messages as {
+      role: string
+      content: string
+    }[]
+    expect(messages.at(-1)!.content).toMatch(/^\[NOTA DEL SISTEMA/)
+    expect(h.retrieveKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      'acct-1',
+      expect.anything(),
+      '¿qué garantía tienen los paneles?',
+    )
+  })
+
   it('stands down when an active message-level automation SENDS messages', async () => {
     h.state.autoResponders = [{ id: 'auto-1' }]
     h.state.autoResponderSendSteps = [{ id: 'step-1' }]
@@ -1218,6 +1242,90 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
     expect(h.state.updatePayload?.ai_handoff_summary).toContain(
       "peso amount never read",
+    )
+  })
+
+  // ----------------------------------------------------------------
+  // The household that had just moved in: "así será" about a 2,383 kWh
+  // bimester released a proposal priced on a 444 kWh average.
+  // ----------------------------------------------------------------
+
+  it('never releases a proposal whose history the household outgrew, even on "normal"', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'current_outgrows_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Gracias, un compañero te prepara tu propuesta con tu consumo actual.',
+      handoff: false,
+      consumptionVerdict: 'normal',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.engineSendText).toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'Size it from the current consumption',
+    )
+  })
+
+  it('hands the outgrown history to a person on "atypical" too', async () => {
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'current_outgrows_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Gracias, un compañero te prepara tu propuesta con tu consumo actual.',
+      handoff: false,
+      consumptionVerdict: 'atypical',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'Size it from the current consumption',
+    )
+  })
+
+  it('keeps the sizing note when the model escalates with the account template', async () => {
+    // The prompt's "consumo no representativo" template ends in
+    // [[HANDOFF]]. The person picking it up still needs to hear which
+    // number to size from, not just that the bot asked for them.
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'current_outgrows_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Gracias 🌞 Tu sistema hay que dimensionarlo a la medida. Te conecto con nuestro especialista.',
+      handoff: true,
+      consumptionVerdict: 'atypical',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      'Size it from the current consumption',
+    )
+  })
+
+  it('still releases an ordinary held proposal on "normal"', async () => {
+    // The exception is the outgrown history alone: an empty bimester the
+    // customer explains away still sends the proposal as priced.
+    h.state.conv!.ai_meter_state = parked({
+      reason: 'anomalous_history',
+      askedCount: 1,
+    })
+    h.generateReply.mockResolvedValue({
+      text: 'Perfecto, entonces vamos con 8 paneles.',
+      handoff: false,
+      consumptionVerdict: 'normal',
+    })
+    await dispatchInboundToAiReply(ARGS)
+
+    expect(h.sendQuoteProposal).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ reviewCleared: true }),
     )
   })
 })

@@ -332,6 +332,26 @@ describe('POST /api/quotes/generate — hand-captured readings', () => {
     expect(quoteInserts[0].warnings).toContain('historial irregular');
   });
 
+  it('names a history the household outgrew, instead of calling it irregular', async () => {
+    // The bill the bot quoted at 4 panels: an empty house, then the first
+    // bimester lived in. Typed by hand it still prices — whoever typed it
+    // chose these numbers — but the quote says which number to doubt.
+    const res = await post(
+      quoteForm({
+        manual_reading: JSON.stringify([
+          {
+            consumo_periodo_actual_kwh: 2383,
+            historial_bimestres_kwh: [103, 65, 36, 38, 38],
+          },
+        ]),
+      })
+    );
+
+    expect(res.status).toBe(200);
+    expect(quoteInserts[0].warnings).toContain('2383 kWh');
+    expect(quoteInserts[0].warnings).toContain('muy por encima de todo el historial');
+  });
+
   it('still refuses a typed average no real bill would show', async () => {
     const res = await post(
       quoteForm({

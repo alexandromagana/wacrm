@@ -425,7 +425,10 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       const cfg = step.step_config as SendTemplateStepConfig
       if (!args.contactId) throw new Error('send_template needs a contact')
       if (!cfg.template_name) throw new Error('send_template needs template_name')
-      const conversationId = await resolveConversationId(args)
+      // No conversation is fine here. A template is the one message Meta
+      // delivers to someone who never wrote (a Facebook lead, say), so
+      // the sender opens the conversation once Meta accepts it.
+      const conversationId = await findConversationId(args)
       // Meta templates use positional {{1}}, {{2}}, … placeholders, so
       // we MUST emit params in strict numeric order. Lexicographic sort
       // of "1", "2", …, "10" yields "1", "10", "2", … which silently
@@ -743,13 +746,12 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
 // ------------------------------------------------------------
 
 /**
- * Pick the conversation a send-type step should use. Prefer the id the
- * webhook handed us (it's the one that just got the inbound message);
- * fall back to the contact's conversation for resumed/wait paths and
- * manual engine POSTs. Throws if none exists — send steps have
- * no meaningful target without a conversation.
+ * Pick the conversation a send-type step should use, or null if the
+ * contact has none yet. Prefer the id the webhook handed us (it's the
+ * one that just got the inbound message); fall back to the contact's
+ * conversation for resumed/wait paths and manual engine POSTs.
  */
-async function resolveConversationId(args: ExecuteArgs): Promise<string> {
+async function findConversationId(args: ExecuteArgs): Promise<string | null> {
   const fromCtx = args.context.conversation_id
   if (fromCtx) return fromCtx
   if (!args.contactId) throw new Error('cannot resolve conversation: no contact')
@@ -760,8 +762,20 @@ async function resolveConversationId(args: ExecuteArgs): Promise<string> {
     .eq('contact_id', args.contactId)
     .maybeSingle()
   if (error) throw new Error(`conversation lookup failed: ${error.message}`)
-  if (!data?.id) throw new Error('no conversation for contact')
-  return data.id as string
+  return (data?.id as string | undefined) ?? null
+}
+
+/**
+ * The conversation for a free-form send (text, buttons, list). Throws
+ * if the contact has none: Meta delivers those only within 24 hours of
+ * the customer's last message, and a contact without a conversation has
+ * not written at all. The crm-auditor classifies failures by this exact
+ * error text.
+ */
+async function resolveConversationId(args: ExecuteArgs): Promise<string> {
+  const conversationId = await findConversationId(args)
+  if (!conversationId) throw new Error('no conversation for contact')
+  return conversationId
 }
 
 export function triggerMatches(automation: Automation, ctx: AutomationContext | undefined): boolean {

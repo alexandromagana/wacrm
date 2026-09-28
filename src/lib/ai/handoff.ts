@@ -20,6 +20,7 @@ export type HandoffReason =
   | 'meter_gate'
   | 'quote_review'
   | 'quote_missing_amount'
+  | 'quote_outgrown_history'
   | 'no_reply'
 
 const REASON_TEXT: Record<HandoffReason, string> = {
@@ -31,6 +32,8 @@ const REASON_TEXT: Record<HandoffReason, string> = {
     'A proposal is priced and waiting: the bill\'s consumption history needs explaining before the system can be sized from it.',
   quote_missing_amount:
     "A proposal is priced and waiting: the bill's peso amount never read, so no PDF went out. Generate it from the Cotizador.",
+  quote_outgrown_history:
+    "No proposal went out: this bimester is far above the bill's own history (the customer likely just moved in or added AC), so the average would undersize the system. Size it from the current consumption in the Cotizador.",
   no_reply: 'It produced no reply to send.',
 }
 

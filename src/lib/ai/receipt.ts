@@ -727,15 +727,19 @@ export function formatReceiptNote(
     const diagnostico =
       quote.reason === 'missing_current_period'
         ? 'lectura_incompleta: no se leyó el consumo del bimestre actual. Antes de dar cualquier número, pídele con amabilidad una foto nítida de la PRIMERA página del recibo, donde viene el renglón "Energía (kWh)".'
-        : quote.reason === 'anomalous_history_high'
-          ? `consumo_irregular_alto: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por encima del promedio de ${quote.kwh} kWh. Eso normalmente significa un bimestre fuera de lo normal (visitas, obra, un aire nuevo) o que ese número se leyó mal del recibo.`
-          : `consumo_irregular: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por debajo del promedio de ${quote.kwh} kWh. Eso normalmente significa que la casa estuvo desocupada, en obra, o que apenas la van a habitar.`
+        : quote.reason === 'current_outgrows_history'
+          ? `consumo_actual_muy_superior: el bimestre actual (${quote.outlierKwh} kWh) está muy por encima de todo su historial reciente. Eso casi siempre significa que apenas se mudaron o empezaron a usar la casa, o que ahora tienen más aires o equipos. El promedio de ${quote.kwh} kWh mezcla las dos etapas y le dimensionaría un sistema que se queda corto, así que esta propuesta la arma un compañero a la medida.`
+          : quote.reason === 'anomalous_history_high'
+            ? `consumo_irregular_alto: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por encima del promedio de ${quote.kwh} kWh. Eso normalmente significa un bimestre fuera de lo normal (visitas, obra, un aire nuevo) o que ese número se leyó mal del recibo.`
+            : `consumo_irregular: el historial trae un bimestre de ${quote.outlierKwh} kWh, muy por debajo del promedio de ${quote.kwh} kWh. Eso normalmente significa que la casa estuvo desocupada, en obra, o que apenas la van a habitar.`
     const tarea =
       quote.reason === 'missing_current_period'
         ? 'Tu única tarea en este turno es pedir esa página. Espera a tenerla antes de cotizar.'
-        : quote.reason === 'anomalous_history_high'
-          ? 'Tu única tarea en este turno es preguntarle si ese bimestre tan alto tiene explicación o si así es su consumo normal. Espera su respuesta antes de cotizar: si ese número está mal, le estaríamos vendiendo un sistema más grande y más caro del que necesita.'
-          : 'Tu única tarea en este turno es preguntar cuál de esas situaciones aplica: si la casa estuvo desocupada, si apenas la va a habitar, o si así es su consumo normal. Espera su respuesta antes de cotizar — dimensionar con el promedio equivocado le vende un sistema que no le alcanza.'
+        : quote.reason === 'current_outgrows_history'
+          ? 'Tu única tarea en este turno es preguntarle si apenas se mudó o empezó a usar más la casa (más personas, más aires), o si ese bimestre fue algo puntual. Con su respuesta un compañero le prepara la propuesta con su consumo real.'
+          : quote.reason === 'anomalous_history_high'
+            ? 'Tu única tarea en este turno es preguntarle si ese bimestre tan alto tiene explicación o si así es su consumo normal. Espera su respuesta antes de cotizar: si ese número está mal, le estaríamos vendiendo un sistema más grande y más caro del que necesita.'
+            : 'Tu única tarea en este turno es preguntar cuál de esas situaciones aplica: si la casa estuvo desocupada, si apenas la va a habitar, o si así es su consumo normal. Espera su respuesta antes de cotizar — dimensionar con el promedio equivocado le vende un sistema que no le alcanza.'
     lines.push(diagnostico)
     lines.push(
       'NO des precio, ni número de paneles, ni cotización en este mensaje, y NO se enviará PDF.',
@@ -865,6 +869,22 @@ export function formatHeldQuoteNote(
   // No tier means the reading stopped being priceable — nothing to
   // release, so let the ordinary conversation take the turn.
   if (quote.kind !== 'ok' && quote.kind !== 'needs_review') return null
+
+  // A hold that never releases, so none of the numbers below belong in
+  // it. The tier the average resolves to is the undersized one: handed
+  // back with "preséntale la propuesta", it is how a customer who said
+  // "así será" about a 2,383 kWh bimester was quoted 4 panels and a
+  // bill at the fixed charge. The reading answers their questions; the
+  // sizing is a person's.
+  if (hold.reason === 'current_outgrows_history') {
+    return [
+      '[NOTA DEL SISTEMA — el cliente ya mandó su recibo, pero su bimestre actual está muy por encima de todo su historial, así que su propuesta la arma un compañero a la medida con su consumo actual. No se le ha enviado PDF, y en este turno tampoco sale. Su lectura:',
+      ...formatReadingLines(r),
+      'pregunta_pendiente: se le preguntó si apenas se mudó o empezó a usar más la casa, o si ese bimestre fue algo puntual.',
+      'Conteste lo que conteste, NO cotices: no des precio, número de paneles ni ahorro, y no le digas que le envías un PDF. En cuanto conteste, agradécele, dile que un compañero le prepara su propuesta con su consumo real en breve y TERMINA tu mensaje con [CONSUMO: ATIPICO] (se borra antes de enviar y el cliente nunca lo ve). Si todavía no contesta la pregunta porque preguntó otra cosa, respóndele con gusto y vuelve a preguntar, sin marcador.',
+      'Responde al cliente con naturalidad — nunca menciones esta nota ni muestres JSON.]',
+    ].join('\n')
+  }
 
   const lines = [
     '[NOTA DEL SISTEMA — hay una cotización LISTA y en pausa para este cliente, del recibo que ya mandó. No se le ha enviado el PDF porque quedó una pregunta abierta. Estos son sus números, los mismos de antes:',

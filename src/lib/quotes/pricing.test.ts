@@ -8,6 +8,7 @@ import {
   resolveQuote,
   findAnomalousPeriod,
   findAnomalousHighPeriod,
+  findOutgrownHistory,
   renderPricingTableForPrompt,
 } from './pricing'
 
@@ -223,6 +224,80 @@ describe('resolveQuote', () => {
       periods: [2944, 2177, 1487, 1447, 1966, 2788],
     })
     expect(res.kind).toBe('ok')
+  })
+
+  it('hands a household that just moved in to a person, not to the average', () => {
+    // The bill that was quoted 4 panels. Five bimesters of an empty house
+    // and then the first one lived in: the median is the empty house, so
+    // the floor saw nothing, and the ceiling read the family's real
+    // consumption as a misread row whose "yes, it's real" released the
+    // 444 kWh average.
+    const res = resolveQuote(444, 6, {
+      includesCurrentPeriod: true,
+      periods: [2383, 103, 65, 36, 38, 38],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('current_outgrows_history')
+    expect(res.outlierKwh).toBe(2383)
+  })
+
+  it('treats a towering current bimester as the new level, not a stray row', () => {
+    // Under 3x the history's peak, so the outgrown rule lets it by, but
+    // the bimester the ceiling flags is the bill's own. "Así gastamos
+    // ahora" is an answer the average cannot honour either.
+    const res = resolveQuote(632, 6, {
+      includesCurrentPeriod: true,
+      periods: [2000, 700, 300, 250, 280, 260],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('current_outgrows_history')
+    expect(res.outlierKwh).toBe(2000)
+  })
+
+  it('leaves the first period alone when it is not the bill’s own', () => {
+    // A history-only reading has no current bimester to outgrow anything;
+    // index 0 is just the most recent row, and the page-1 hold wins.
+    const res = resolveQuote(533, 5, {
+      includesCurrentPeriod: false,
+      periods: [2383, 103, 65, 36, 38],
+    })
+    expect(res.kind).toBe('needs_review')
+    if (res.kind !== 'needs_review') return
+    expect(res.reason).toBe('missing_current_period')
+  })
+})
+
+describe('findOutgrownHistory', () => {
+  it('flags the first bimester a household actually lived in', () => {
+    expect(findOutgrownHistory([2383, 103, 65, 36, 38, 38])).toBe(2383)
+  })
+
+  it('leaves every legitimate bill on file alone', () => {
+    // The low-baseline house, the ordinary swing, the vacancy fixture and
+    // Tony's bill: each current bimester sits under 1.8x its history's
+    // peak, nowhere near 3x.
+    expect(findOutgrownHistory([1611, 1220, 683, 328, 655, 1060])).toBeNull()
+    expect(findOutgrownHistory([2944, 2177, 1487, 1447, 1966, 2788])).toBeNull()
+    expect(findOutgrownHistory([2545, 1126, 879, 1067, 1485, 216])).toBeNull()
+    expect(findOutgrownHistory([1725, 1352, 646, 477, 820, 1200])).toBeNull()
+  })
+
+  it('measures against the history’s peak, so last summer covers this one', () => {
+    // 4x the history's median, but a house that already ran 900 kWh in
+    // a bimester is not new to running 1,500.
+    expect(findOutgrownHistory([1500, 300, 280, 350, 900, 400])).toBeNull()
+  })
+
+  it('needs two past bimesters to call anything a history', () => {
+    expect(findOutgrownHistory([2383, 38])).toBeNull()
+    expect(findOutgrownHistory([2383])).toBeNull()
+    expect(findOutgrownHistory([])).toBeNull()
+  })
+
+  it('reads a history of zeroes as a house nobody lived in', () => {
+    expect(findOutgrownHistory([900, 0, 0, 0])).toBe(900)
   })
 })
 
