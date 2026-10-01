@@ -1,4 +1,4 @@
-import { AiError, type ProviderResult } from '../types'
+import { AiError, type ProviderResult, type ReasoningEffort } from '../types'
 import { aiMaxOutputTokens } from '../defaults'
 import {
   mergeConsecutive,
@@ -11,18 +11,36 @@ import {
 const OPENAI_URL = 'https://api.openai.com/v1/chat/completions'
 
 /**
- * Reasoning-capable model families (o1/o3/o4-mini, the gpt-5.x line
- * including the Sol/Terra/Luna tiers). These default to
- * `reasoning_effort: "medium"` on Chat Completions when the param is
- * omitted, which can leak the model's own deliberation into the visible
- * reply instead of the customer-facing text (e.g. a reasoning model
- * answering "no hagas nada, solo es pregunta" instead of writing the
- * reply). This bot never uses function tools and only wants direct
- * text output, so reasoning buys nothing — we turn it off explicitly.
- * Sending `reasoning_effort` to a non-reasoning model (gpt-4o and
- * earlier) is a 400, so this must stay opt-in by model name.
+ * Model families that get `reasoning_effort: "none"` when the account
+ * hasn't chosen an effort (o1/o3/o4-mini and the gpt-5.x line, including
+ * the GPT-5.6 Sol/Terra/Luna tiers). They default to "medium" on Chat
+ * Completions when the param is omitted, which leaked the model's own
+ * deliberation into the visible reply instead of the customer-facing
+ * text (e.g. a reasoning model answering "no hagas nada, solo es
+ * pregunta" instead of writing the reply). This bot never uses function
+ * tools and only wants direct text output, so the old default turns
+ * reasoning off.
+ *
+ * Deliberately NOT extended to gpt-6: GPT-6.1 Sol rejects "none" and
+ * "minimal" (its floor is "low"), so sending "none" by name would 400
+ * every auto-reply. A GPT-6 model gets the effort the account
+ * configured (`ai_configs.reasoning_effort`), or the provider's default
+ * when that is unset. Sending `reasoning_effort` to a non-reasoning
+ * model (gpt-4o and earlier) is also a 400, so the fallback stays
+ * opt-in by model name.
  */
 const REASONING_MODEL_RE = /^(gpt-5|o1|o3|o4)(\b|[.-])/i
+
+/** The effort to send for this call, or undefined to send none. The
+ *  account's choice wins; the name-based default only fills in for an
+ *  account that hasn't made one. */
+export function chatReasoningEffort(
+  model: string,
+  configured: ReasoningEffort | null | undefined,
+): ReasoningEffort | undefined {
+  if (configured) return configured
+  return REASONING_MODEL_RE.test(model) ? 'none' : undefined
+}
 
 interface OpenAiResponse {
   choices?: { message?: { content?: string }; finish_reason?: string }[]
@@ -30,6 +48,7 @@ interface OpenAiResponse {
     prompt_tokens?: number
     completion_tokens?: number
     total_tokens?: number
+    prompt_tokens_details?: { cached_tokens?: number }
     completion_tokens_details?: { reasoning_tokens?: number }
   }
 }
@@ -41,6 +60,7 @@ interface OpenAiResponse {
  */
 export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult> {
   const { apiKey, model, systemPrompt, messages, timeoutMs } = args
+  const reasoningEffort = chatReasoningEffort(model, args.reasoningEffort)
 
   let res: Response
   try {
@@ -57,7 +77,7 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
           ...mergeConsecutive(messages),
         ],
         max_completion_tokens: aiMaxOutputTokens(),
-        ...(REASONING_MODEL_RE.test(model) ? { reasoning_effort: 'none' } : {}),
+        ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     })
@@ -84,7 +104,7 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
       budgetExhausted
         ? `OpenAI returned an empty response: the output budget (${aiMaxOutputTokens()}) was consumed before any text was produced` +
           `${reasoning ? ` (${reasoning} reasoning tokens)` : ''}. ` +
-          'This model reasons before replying. Raise AI_MAX_OUTPUT_TOKENS or use a non-reasoning model.'
+          'This model reasons before replying. Raise AI_MAX_OUTPUT_TOKENS, lower its reasoning effort, or use a non-reasoning model.'
         : 'OpenAI returned an empty response.',
       { code: 'empty_response' },
     )
@@ -93,6 +113,8 @@ export async function generateOpenAi(args: ProviderArgs): Promise<ProviderResult
     prompt: data?.usage?.prompt_tokens,
     completion: data?.usage?.completion_tokens,
     total: data?.usage?.total_tokens,
+    cached: data?.usage?.prompt_tokens_details?.cached_tokens,
+    reasoning: data?.usage?.completion_tokens_details?.reasoning_tokens,
   })
   return { text, usage }
 }

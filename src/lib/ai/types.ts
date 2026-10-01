@@ -9,6 +9,31 @@
 export type AiProvider = 'openai' | 'anthropic'
 
 /**
+ * OpenAI's `reasoning_effort` values. Not every model takes every value:
+ * GPT-6.1 Sol rejects `none` and `minimal`, and models before GPT-5
+ * reject the parameter altogether. The provider says so with a 400,
+ * which is why a config change is validated against the provider before
+ * it is saved.
+ */
+export const REASONING_EFFORTS = [
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number]
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return (
+    typeof value === 'string' &&
+    (REASONING_EFFORTS as readonly string[]).includes(value)
+  )
+}
+
+/**
  * Account AI setup, decrypted and ready to use. Produced by
  * `loadAiConfig` — `apiKey` is the plaintext BYO provider key
  * (stored AES-256-GCM-encrypted at rest).
@@ -21,6 +46,12 @@ export interface AiConfig {
    *  conversation while a cheap, fast vision model reads bills — the
    *  two jobs have opposite requirements. */
   visionModel: string
+  /** Reasoning effort for the conversation call. Null/absent keeps the
+   *  code default: `none` for gpt-5/o-series, nothing sent otherwise. */
+  reasoningEffort?: ReasoningEffort | null
+  /** Reasoning effort for the extraction call. Null/absent sends
+   *  nothing, so the model runs at its own default. */
+  visionReasoningEffort?: ReasoningEffort | null
   apiKey: string
   systemPrompt: string | null
   isActive: boolean
@@ -51,6 +82,12 @@ export interface AiUsage {
   promptTokens: number
   completionTokens: number
   totalTokens: number
+  /** Prompt tokens served from the provider's cache. Present only when
+   *  the provider reported it. */
+  cachedTokens?: number
+  /** Completion tokens spent reasoning — billed as output, never sent.
+   *  Present only when the provider reported it. */
+  reasoningTokens?: number
 }
 
 /** Raw text + usage a provider adapter returns before handoff parsing. */

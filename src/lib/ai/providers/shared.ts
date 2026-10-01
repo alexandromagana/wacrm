@@ -1,4 +1,9 @@
-import { AiError, type AiUsage, type ChatMessage } from '../types'
+import {
+  AiError,
+  type AiUsage,
+  type ChatMessage,
+  type ReasoningEffort,
+} from '../types'
 
 // ============================================================
 // Bits shared by the OpenAI + Anthropic adapters.
@@ -10,6 +15,8 @@ export interface ProviderArgs {
   systemPrompt: string
   messages: ChatMessage[]
   timeoutMs: number
+  /** From the account config. OpenAI only; Anthropic ignores it. */
+  reasoningEffort?: ReasoningEffort | null
 }
 
 /**
@@ -23,9 +30,12 @@ export function normalizeUsage(raw: {
   prompt?: unknown
   completion?: unknown
   total?: unknown
+  cached?: unknown
+  reasoning?: unknown
 }): AiUsage | null {
-  const num = (v: unknown): number =>
-    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : 0
+  const isCount = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0
+  const num = (v: unknown): number => (isCount(v) ? Math.floor(v) : 0)
   const promptTokens = num(raw.prompt)
   const completionTokens = num(raw.completion)
   const total = num(raw.total)
@@ -33,7 +43,12 @@ export function normalizeUsage(raw: {
   if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
     return null
   }
-  return { promptTokens, completionTokens, totalTokens }
+  const usage: AiUsage = { promptTokens, completionTokens, totalTokens }
+  // Only when reported: a provider that doesn't break these out has not
+  // told us zero, and the cost comparison must not read it that way.
+  if (isCount(raw.cached)) usage.cachedTokens = Math.floor(raw.cached)
+  if (isCount(raw.reasoning)) usage.reasoningTokens = Math.floor(raw.reasoning)
+  return usage
 }
 
 /** Map a fetch rejection (timeout / DNS / offline) to a typed AiError. */

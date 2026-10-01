@@ -33,6 +33,7 @@ export async function generateReply(args: GenerateArgs): Promise<GenerateResult>
     systemPrompt,
     messages,
     timeoutMs,
+    reasoningEffort: config.reasoningEffort,
   }
 
   let result: { text: string; usage: AiUsage | null }

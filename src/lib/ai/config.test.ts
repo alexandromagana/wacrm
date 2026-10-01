@@ -72,3 +72,29 @@ describe('loadAiConfig visionModel fallback', () => {
     expect(config.model).toBe('gpt-x')
   })
 })
+
+describe('loadAiConfig reasoning effort', () => {
+  const load = (row: Record<string, unknown>) =>
+    loadAiConfig(dbReturning(row), 'acct', { requireActive: false })
+
+  it('reads each job’s effort on its own', async () => {
+    const config = (await load({
+      ...ROW,
+      reasoning_effort: 'low',
+      vision_reasoning_effort: 'none',
+    }))!
+    expect(config.reasoningEffort).toBe('low')
+    expect(config.visionReasoningEffort).toBe('none')
+  })
+
+  it('leaves both null when unset — today’s behaviour, decided in code', async () => {
+    const config = (await load(ROW))!
+    expect(config.reasoningEffort).toBeNull()
+    expect(config.visionReasoningEffort).toBeNull()
+  })
+
+  it('drops a value it does not know rather than sending it to the provider', async () => {
+    const config = (await load({ ...ROW, reasoning_effort: 'turbo' }))!
+    expect(config.reasoningEffort).toBeNull()
+  })
+})

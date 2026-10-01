@@ -8,10 +8,33 @@ import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit
 import { encrypt, decrypt } from '@/lib/whatsapp/encryption'
 import { validateAiCredentials } from '@/lib/ai/validate'
 import { embedTexts } from '@/lib/ai/embeddings'
-import { AiError, type AiProvider } from '@/lib/ai/types'
+import {
+  AiError,
+  isReasoningEffort,
+  type AiProvider,
+  type ReasoningEffort,
+} from '@/lib/ai/types'
 
 function bad(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
+}
+
+/**
+ * A reasoning effort from the request body. Absent → `undefined`
+ * (leave the stored value alone); `null` or blank → `null` (back to the
+ * code default); a known effort → itself. Anything else is reported,
+ * not stored: the column CHECK would refuse it anyway.
+ */
+function readEffort(
+  body: Record<string, unknown>,
+  field: string,
+): { value: ReasoningEffort | null | undefined } | { error: string } {
+  if (!(field in body)) return { value: undefined }
+  const raw = body[field]
+  const value = typeof raw === 'string' ? raw.trim() : raw
+  if (value === null || value === '') return { value: null }
+  if (isReasoningEffort(value)) return { value }
+  return { error: `${field} is not a known reasoning effort` }
 }
 
 /**
@@ -30,7 +53,7 @@ export async function GET() {
       // `api_key` is selected only to derive `has_key` — it is stripped
       // out below and never returned to the client.
       .select(
-        'provider, model, vision_model, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
+        'provider, model, vision_model, reasoning_effort, vision_reasoning_effort, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, api_key, embeddings_api_key',
       )
       .eq('account_id', accountId)
       .maybeSingle()
@@ -89,6 +112,11 @@ export async function POST(request: Request) {
         ? body.vision_model.trim()
         : null
 
+    const effortField = readEffort(body, 'reasoning_effort')
+    if ('error' in effortField) return bad(effortField.error)
+    const visionEffortField = readEffort(body, 'vision_reasoning_effort')
+    if ('error' in visionEffortField) return bad(visionEffortField.error)
+
     const systemPrompt =
       typeof body.system_prompt === 'string' && body.system_prompt.trim()
         ? body.system_prompt.trim()
@@ -133,7 +161,7 @@ export async function POST(request: Request) {
     // Reuse the stored key when the form didn't send a fresh one.
     const { data: existing } = await supabase
       .from('ai_configs')
-      .select('id, provider, model, api_key')
+      .select('id, provider, model, vision_model, reasoning_effort, vision_reasoning_effort, api_key')
       .eq('account_id', accountId)
       .maybeSingle()
 
@@ -154,11 +182,37 @@ export async function POST(request: Request) {
     // reachability actually changed. A save that just flips a toggle or
     // edits the system prompt on an existing, already-validated config
     // skips the call — no wasted token/latency on the account's key.
+    // What the row will hold once saved: a field the form didn't send
+    // keeps its stored value.
+    const reasoningEffort =
+      effortField.value !== undefined
+        ? effortField.value
+        : ((existing?.reasoning_effort as ReasoningEffort | null) ?? null)
+    const visionReasoningEffort =
+      visionEffortField.value !== undefined
+        ? visionEffortField.value
+        : ((existing?.vision_reasoning_effort as ReasoningEffort | null) ?? null)
+
+    // The effort counts as a credential: model and effort only work as a
+    // pair (GPT-6.1 Sol answers "none" with a 400), and a pair that does
+    // not work must fail here, in the form, not on a customer's turn.
     const credentialsChanged =
       !existing ||
       rawKey !== '' ||
       provider !== existing.provider ||
-      model !== existing.model
+      model !== existing.model ||
+      reasoningEffort !== (existing.reasoning_effort ?? null)
+
+    // The bill-reading pair gets the same check once it carries an
+    // effort. Without one the read sends no effort at all, as it always
+    // has, and there's no new way for it to fail.
+    const visionPairChanged =
+      visionReasoningEffort !== null &&
+      (!existing ||
+        rawKey !== '' ||
+        provider !== existing.provider ||
+        (visionModel ?? model) !== (existing.vision_model ?? existing.model) ||
+        visionReasoningEffort !== (existing.vision_reasoning_effort ?? null))
 
     if (credentialsChanged) {
       try {
@@ -168,6 +222,7 @@ export async function POST(request: Request) {
           // Key validation only exercises the chat model; vision is
           // unused here (same provider + key either way).
           visionModel: visionModel ?? model,
+          reasoningEffort,
           apiKey: apiKeyPlain,
           systemPrompt,
           isActive,
@@ -185,6 +240,35 @@ export async function POST(request: Request) {
         }
         console.error('[ai/config POST] validation error:', err)
         return bad('Could not validate the API key with the provider.')
+      }
+    }
+
+    if (visionPairChanged) {
+      try {
+        await validateAiCredentials({
+          provider,
+          // The vision model, answered on the plain chat path: what is
+          // being checked is that it takes this effort.
+          model: visionModel ?? model,
+          visionModel: visionModel ?? model,
+          reasoningEffort: visionReasoningEffort,
+          apiKey: apiKeyPlain,
+          systemPrompt: null,
+          isActive,
+          autoReplyEnabled,
+          autoReplyMaxPerConversation: maxPer,
+          handoffAgentId: null,
+          embeddingsApiKey: null,
+        })
+      } catch (err) {
+        if (err instanceof AiError) {
+          return NextResponse.json(
+            { error: `Receipt model: ${err.message}`, code: err.code },
+            { status: 400 },
+          )
+        }
+        console.error('[ai/config POST] vision validation error:', err)
+        return bad('Could not validate the receipt model with the provider.')
       }
     }
 
@@ -210,6 +294,8 @@ export async function POST(request: Request) {
       provider,
       model,
       vision_model: visionModel,
+      reasoning_effort: reasoningEffort,
+      vision_reasoning_effort: visionReasoningEffort,
       system_prompt: systemPrompt,
       is_active: isActive,
       auto_reply_enabled: autoReplyEnabled,

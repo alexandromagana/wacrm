@@ -38,6 +38,9 @@ yarn-error.log*
 !.env.example
 !.crm-audit.env.example
 
+# model comparison reports (scripts/eval-models.ts) — customer chats and bills
+/eval-out/
+
 # vercel
 .vercel
 

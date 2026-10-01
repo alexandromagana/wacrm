@@ -29,7 +29,30 @@ describe('logAiUsage', () => {
       prompt_tokens: 30,
       completion_tokens: 6,
       total_tokens: 36,
+      cached_tokens: null,
+      reasoning_tokens: null,
     })
+  })
+
+  it('records cached and reasoning tokens when the provider reported them', async () => {
+    const { db, insert } = fakeDb()
+    await logAiUsage(db, {
+      accountId: 'acct-1',
+      conversationId: 'conv-1',
+      mode: 'auto_reply',
+      provider: 'openai',
+      model: 'gpt-6.1-sol',
+      usage: {
+        promptTokens: 8600,
+        completionTokens: 300,
+        totalTokens: 8900,
+        cachedTokens: 7000,
+        reasoningTokens: 0,
+      },
+    })
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({ cached_tokens: 7000, reasoning_tokens: 0 }),
+    )
   })
 
   it('is a no-op when the provider reported no usage', async () => {

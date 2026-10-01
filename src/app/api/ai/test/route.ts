@@ -3,7 +3,7 @@ import { requireRole, toErrorResponse } from '@/lib/auth/account'
 import { checkRateLimit, rateLimitResponse, RATE_LIMITS } from '@/lib/rate-limit'
 import { decrypt } from '@/lib/whatsapp/encryption'
 import { validateAiCredentials } from '@/lib/ai/validate'
-import { AiError, type AiProvider } from '@/lib/ai/types'
+import { AiError, isReasoningEffort, type AiProvider } from '@/lib/ai/types'
 
 /**
  * POST /api/ai/test  (admin+)
@@ -37,6 +37,11 @@ export async function POST(request: Request) {
     if (!model) {
       return NextResponse.json({ error: 'model is required' }, { status: 400 })
     }
+    // Tested together with the model: a pair the provider refuses (e.g.
+    // GPT-6.1 Sol with "none") should fail the test, not the first reply.
+    const rawEffort =
+      typeof body.reasoning_effort === 'string' ? body.reasoning_effort.trim() : ''
+    const reasoningEffort = isReasoningEffort(rawEffort) ? rawEffort : null
 
     const rawKey = typeof body.api_key === 'string' ? body.api_key.trim() : ''
     let apiKeyPlain = rawKey
@@ -68,6 +73,7 @@ export async function POST(request: Request) {
         model,
         // Key validation only exercises the chat model; vision is unused here.
         visionModel: model,
+        reasoningEffort,
         apiKey: apiKeyPlain,
         systemPrompt: null,
         isActive: true,
