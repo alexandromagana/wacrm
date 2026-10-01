@@ -99,4 +99,16 @@ describe('buildHandoffSummary', () => {
     expect(summary).toContain('“Así es, son todos”')
     expect(summary).not.toContain('NOTA DEL SISTEMA')
   })
+
+  it('carries what the reads of a disputed bill said, before the customer quote', () => {
+    const summary = buildHandoffSummary({
+      messages: [{ role: 'user', content: 'Ahí va mi recibo' }],
+      replyCount: 1,
+      reason: 'quote_disputed_reading',
+      detail: '1303 kWh avg → 8 panels; 1501 kWh avg → 10 panels',
+    })
+    expect(summary).toContain('reads disagreed')
+    expect(summary).toContain('(1303 kWh avg → 8 panels; 1501 kWh avg → 10 panels)')
+    expect(summary.indexOf('1303')).toBeLessThan(summary.indexOf('Ahí va mi recibo'))
+  })
 })

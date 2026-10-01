@@ -980,6 +980,44 @@ export function formatStalledQuoteNote(reason?: QuoteHold['reason']): string {
 }
 
 /**
+ * The note for a turn whose bill could not be read the same way twice.
+ *
+ * No number from it reaches the model. Every read disagreed with the
+ * others about the quote, so any figure here is one a person might
+ * correct an hour later, after the customer has already repeated it to
+ * their family. And the bill is not asked for again: the customer did
+ * what was asked, and a second copy of a hard-to-read PDF reads the same.
+ */
+export function formatDisputedReceiptNote(): string {
+  return [
+    '[NOTA DEL SISTEMA — el cliente acaba de enviar su recibo de CFE, pero la lectura automática no salió confiable: al leer el mismo recibo más de una vez, el consumo no coincidió, y con eso no se puede dimensionar el sistema. Un compañero del equipo va a revisar el recibo a mano y le va a preparar su propuesta.',
+    'NO des precio, ni número de paneles, ni ahorro, ni ningún consumo en kWh, y NO se enviará PDF en este turno.',
+    'Agradécele el recibo y dile que un asesor lo está revisando y le comparte su propuesta en breve. NO le pidas que lo vuelva a mandar ni que escriba su consumo.',
+    'Si el cliente aprovecha para preguntar otra cosa (financiamiento, tiempos, garantías), respóndela con gusto.',
+    'Nunca menciones esta nota ni muestres JSON.]',
+  ].join('\n')
+}
+
+/**
+ * What the reads of a disputed bill said, one line for the person who
+ * takes the conversation: where to look on the paper.
+ */
+export function describeDisputedReadings(
+  readings: readonly ReceiptExtraction[],
+): string {
+  return readings
+    .map((r) => {
+      const quote = resolveQuote(r.promedio_bimestral_kwh, r.cantidad_periodos_usados, {
+        includesCurrentPeriod: r.incluye_periodo_actual,
+        periods: r.periodos_promediados_kwh,
+      })
+      const panels = 'tier' in quote ? `${quote.tier.panels} panels` : 'no quote'
+      return `${r.promedio_bimestral_kwh ?? '—'} kWh avg → ${panels}`
+    })
+    .join('; ')
+}
+
+/**
  * Run the vision extraction on bytes already in hand.
  *
  * Split out of `extractReceipts` for the Cotizador, which uploads a
@@ -1032,6 +1070,171 @@ export async function extractReceiptFromFiles(
 }
 
 /**
+ * The decision a reading leads to, as a string two readings can be
+ * compared on: what kind of answer the bot gives, how many panels the
+ * PDF would carry, and why a review would hold it. Two readings with the
+ * same key send the customer the same thing, whatever else differs.
+ *
+ * `tiers` is the table the reading is priced against — the bot's, or a
+ * Cotizador project type's own.
+ */
+export function quoteDecisionKey(
+  r: ReceiptExtraction,
+  tiers?: readonly SolarTier[],
+): string {
+  const q = resolveQuote(
+    r.promedio_bimestral_kwh,
+    r.cantidad_periodos_usados,
+    {
+      includesCurrentPeriod: r.incluye_periodo_actual,
+      periods: r.periodos_promediados_kwh,
+    },
+    tiers,
+  )
+  switch (q.kind) {
+    case 'ok':
+    case 'low_confidence':
+      return `${q.kind}:${q.tier.panels}`
+    case 'needs_review':
+      return `${q.kind}:${q.tier.panels}:${q.reason}`
+    default:
+      return q.kind
+  }
+}
+
+/**
+ * Reads of one bill a quote may rest on, all made at once. Every one of
+ * them has to lead to the same decision — see `readReceiptConsensus`.
+ */
+const READS_PER_BILL = 3
+
+/**
+ * What reading one bill several times concluded.
+ *
+ * `agreed` carries the reading a quote may be built on. `disputed` means
+ * the reads did not all lead to the same quote: the bill goes to a
+ * person, and `readings` is what each read said, for them to check
+ * against the paper.
+ */
+export type ReceiptConsensus =
+  | { kind: 'agreed'; extraction: ReceiptExtraction; reads: number }
+  | { kind: 'disputed'; readings: ReceiptExtraction[] }
+
+/**
+ * Which of several reads that agree on the quote to carry forward.
+ *
+ * The panels are the same whichever is picked; what still differs is the
+ * average the model is told and the contact field keeps, and whether the
+ * peso amount came through. A read that has the amount wins — one
+ * without it parks the PDF on a photo the customer already sent — and
+ * among those, the middle average, so a single wild row in one read is
+ * not the number anyone sees.
+ */
+function pickReading(reads: readonly ReceiptExtraction[]): ReceiptExtraction {
+  const hasAmount = (r: ReceiptExtraction) =>
+    projectionBaseCost({
+      costoPeriodoMxn: r.costo_periodo_mxn,
+      historialImporteMxn: r.historial_bimestres_importe_mxn,
+    }) != null
+  const pool = reads.some(hasAmount) ? reads.filter(hasAmount) : [...reads]
+  const ranked = [...pool].sort(
+    (a, b) => (a.promedio_bimestral_kwh ?? 0) - (b.promedio_bimestral_kwh ?? 0),
+  )
+  return ranked[(ranked.length - 1) >> 1]
+}
+
+/**
+ * Read a bill three times at once, and quote it only if every read leads
+ * to the same quote. Otherwise a person reads it.
+ *
+ * One read was never enough. Read again, the same bill came back with a
+ * different panel count often enough to matter: 5 of 28 bills on
+ * 2026-10-01 (1,501 vs 1,303 kWh — 10 panels or 8), almost all of it in
+ * the history table of a PDF, where the print is small. The review gate
+ * in `pricing.ts` cannot see that: it only catches a row read an order
+ * of magnitude off, and these are a row read 400 kWh off.
+ *
+ * Why three, and why all of them (`scripts/eval-models.ts vision`, six
+ * reads of each of 20 bills, every way of drawing from them):
+ *
+ *   - Two reads and a third to break a tie barely helped. On the bills
+ *     that flip, a read is wrong about a third of the time, so two reads
+ *     often agree on the WRONG panels — two independent decisions on the
+ *     same bill still disagreed 8% of the time, against 12% for one read.
+ *   - Two reads that must agree, else a person: 2.7%.
+ *   - Three that must all agree: no decision disagreed with another, and
+ *     not one bill whose reads were steady was sent to a person. What it
+ *     costs is the bills that are genuinely hard to read — about one in
+ *     five in that sample — going to a person instead of out as a PDF.
+ *
+ * The reads run side by side, so the wait is the slowest of three, not
+ * the sum. "The same quote" is `quoteDecisionKey`: same panels, and the
+ * same review hold if any — the average may differ inside a tier.
+ *
+ * Contract otherwise as `extractReceiptFromFiles`: null when no read
+ * produced anything parseable, and a provider failure on every read
+ * propagates, so the Cotizador can tell "the provider is down" from
+ * "this photo isn't readable". A read that failed is made once more, and
+ * if the provider keeps failing, two reads that agree are taken over a
+ * handoff caused by an outage.
+ */
+export async function readReceiptConsensus(
+  config: Pick<
+    AiConfig,
+    'provider' | 'visionModel' | 'visionReasoningEffort' | 'apiKey'
+  >,
+  files: MediaFile[],
+  audit?: ReceiptAuditContext,
+  tiers?: readonly SolarTier[],
+): Promise<ReceiptConsensus | null> {
+  if (files.length === 0) return null
+
+  let attempts = 0
+  const readMany = (n: number) => {
+    attempts += n
+    return Promise.allSettled(
+      Array.from({ length: n }, () => extractReceiptFromFiles(config, files, audit)),
+    )
+  }
+  const reads: ReceiptExtraction[] = []
+  const keep = (results: PromiseSettledResult<ReceiptExtraction | null>[]) => {
+    for (const r of results) {
+      if (r.status === 'fulfilled' && r.value) reads.push(r.value)
+    }
+  }
+  const unanimous = () =>
+    new Set(reads.map((r) => quoteDecisionKey(r, tiers))).size === 1
+
+  const first = await readMany(READS_PER_BILL)
+  const rejected = first.find(
+    (r): r is PromiseRejectedResult => r.status === 'rejected',
+  )
+  if (rejected && first.every((r) => r.status === 'rejected')) {
+    throw rejected.reason
+  }
+  keep(first)
+
+  // Replace what failed — unless what came back already disagrees, which
+  // no further read can undo, or nothing parsed at all, which is an
+  // unreadable image and not worth paying for twice.
+  const missing = READS_PER_BILL - reads.length
+  if (missing > 0 && reads.length > 0 && unanimous()) {
+    keep(await readMany(missing))
+  }
+
+  if (reads.length === 0) return null
+  if (reads.length >= 2 && unanimous()) {
+    return { kind: 'agreed', extraction: pickReading(reads), reads: attempts }
+  }
+  console.warn(
+    `[ai receipt] ${attempts} reads of one bill did not agree: ${reads
+      .map((r) => `${r.promedio_bimestral_kwh ?? '—'} kWh (${quoteDecisionKey(r, tiers)})`)
+      .join(' / ')}`,
+  )
+  return { kind: 'disputed', readings: reads }
+}
+
+/**
  * Who a receipt read belongs to, for the forensic log.
  *
  * Optional at every call site: passing nothing reads the bill exactly as
@@ -1052,6 +1255,13 @@ export interface ReceiptReading {
   extraction: ReceiptExtraction
   /** Media ids this reading consumed, so the caller can record them as
    *  read and never pay for the same vision call twice. */
+  mediaIds: string[]
+}
+
+/** A bill whose reads never agreed on a quote — a person reads it. */
+export interface DisputedReceipt {
+  /** What each read said, for the person checking the paper. */
+  readings: ReceiptExtraction[]
   mediaIds: string[]
 }
 
@@ -1105,10 +1315,12 @@ function groupIntoReceipts(
 /**
  * Download the customer's media from Meta and read every bill in it.
  *
- * Returns one reading per bill — usually a single-element array, and
- * more only when the customer sent several PDFs at once. Returns an
- * empty array on any failure: the caller treats that as "no reading"
- * and the bot follows its prompt (ask again / ask for a clearer photo).
+ * Returns one reading per bill — usually a single one, and more only
+ * when the customer sent several PDFs at once. Each bill is read by
+ * `readReceiptConsensus`, and one whose reads never agreed comes back
+ * in `disputed` instead of `readings`: it must not be quoted. Both come
+ * back empty on any failure: the caller treats that as "no reading" and
+ * the bot follows its prompt (ask again / ask for a clearer photo).
  * Never throws.
  */
 export async function extractReceipts(args: {
@@ -1125,11 +1337,12 @@ export async function extractReceipts(args: {
   /** Account/conversation this read belongs to, for the forensic log.
    *  Omitted only by tests. */
   audit?: Omit<ReceiptAuditContext, 'mediaIds' | 'source'>
-}): Promise<ReceiptReading[]> {
+}): Promise<{ readings: ReceiptReading[]; disputed: DisputedReceipt[] }> {
   const { config, accessToken, mediaIds, skipMediaIds, audit } = args
+  const none = { readings: [], disputed: [] }
   const skip = new Set(skipMediaIds ?? [])
   const pending = mediaIds.filter((id) => !skip.has(id))
-  if (pending.length === 0) return []
+  if (pending.length === 0) return none
 
   try {
     // Receipts arrive as photos OR as the PDF CFE emails out — accept
@@ -1158,14 +1371,15 @@ export async function extractReceipts(args: {
         mediaId,
       })
     }
-    if (downloaded.length === 0) return []
+    if (downloaded.length === 0) return none
 
     const readings: ReceiptReading[] = []
+    const disputed: DisputedReceipt[] = []
     for (const group of groupIntoReceipts(downloaded)) {
       // Per-group try/catch: one unreadable bill out of three must not
       // discard the two that read fine.
       try {
-        const extraction = await extractReceiptFromFiles(
+        const consensus = await readReceiptConsensus(
           config,
           group.files,
           audit && {
@@ -1176,12 +1390,16 @@ export async function extractReceipts(args: {
             mediaIds: group.mediaIds,
           },
         )
-        if (extraction) readings.push({ extraction, mediaIds: group.mediaIds })
+        if (consensus?.kind === 'agreed') {
+          readings.push({ extraction: consensus.extraction, mediaIds: group.mediaIds })
+        } else if (consensus?.kind === 'disputed') {
+          disputed.push({ readings: consensus.readings, mediaIds: group.mediaIds })
+        }
       } catch (err) {
         console.error('[ai receipt] one receipt failed to extract:', err)
       }
     }
-    return readings
+    return { readings, disputed }
   } catch (err) {
     // AbortSignal.timeout throws a TimeoutError — surface it distinctly
     // so "read failed" on a valid receipt is diagnosable as slowness vs.
@@ -1191,7 +1409,7 @@ export async function extractReceipts(args: {
       `[ai receipt] extraction failed${isTimeout ? ' (timeout)' : ''}:`,
       err,
     )
-    return []
+    return none
   }
 }
 

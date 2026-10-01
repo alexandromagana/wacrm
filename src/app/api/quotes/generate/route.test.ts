@@ -145,6 +145,11 @@ const TEMPLATE = {
  * derivation would test the mock instead of the route.
  */
 let visionResult: Record<string, unknown> | null = null;
+/**
+ * Set instead of `visionResult` for a bill whose reads never agreed:
+ * what each read "returned".
+ */
+let disputedReads: Record<string, unknown>[] | null = null;
 /** The row handed back by the `quotes` insert. */
 const quoteInserts: Array<Record<string, unknown>> = [];
 
@@ -180,9 +185,21 @@ vi.mock('@/lib/ai/receipt', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/ai/receipt')>();
   return {
     ...actual,
-    extractReceiptFromFiles: vi.fn(async () =>
-      visionResult ? actual.buildExtraction(visionResult) : null
-    ),
+    readReceiptConsensus: vi.fn(async () => {
+      if (disputedReads) {
+        return {
+          kind: 'disputed',
+          readings: disputedReads.map(actual.buildExtraction),
+        };
+      }
+      return visionResult
+        ? {
+            kind: 'agreed',
+            extraction: actual.buildExtraction(visionResult),
+            reads: 2,
+          }
+        : null;
+    }),
     saveReceiptData: vi.fn(async () => undefined),
   };
 });
@@ -405,6 +422,32 @@ describe('POST /api/quotes/generate — hand-captured readings', () => {
     expect(body.readings).toHaveLength(1);
     expect(body.readings[0].historial_bimestres_kwh).toEqual([1220, 683, 328]);
     expect(body.readings[0].ciudad).toBe('Cancún');
+  });
+
+  it('opens the card on the first read, and names the others, when reads disagree', async () => {
+    // 1,000 kWh is 6 panels on this table and 1,300 is 8: no quote goes
+    // out until someone with the bill in hand says which.
+    disputedReads = [
+      { consumo_periodo_actual_kwh: 1000, historial_bimestres_kwh: [1000, 1000] },
+      { consumo_periodo_actual_kwh: 1000, historial_bimestres_kwh: [1450, 1450] },
+      { consumo_periodo_actual_kwh: 1000, historial_bimestres_kwh: [600, 600] },
+    ];
+    const form = quoteForm();
+    form.append(
+      'receipt_files_0',
+      new File(['x'], 'recibo.pdf', { type: 'application/pdf' })
+    );
+
+    const res = await post(form);
+    disputedReads = null;
+    expect(res.status).toBe(422);
+    const body = await res.json();
+    expect(body.error).toContain('1000 kWh (6 paneles)');
+    expect(body.error).toContain('1300 kWh (8 paneles)');
+    expect(body.error).toContain('historial');
+    expect(body.readings).toHaveLength(1);
+    expect(body.readings[0].historial_bimestres_kwh).toEqual([1000, 1000]);
+    expect(quoteInserts).toHaveLength(0);
   });
 
   it('opens the card on an empty block when the photo was unreadable', async () => {
