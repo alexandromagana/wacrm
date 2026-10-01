@@ -347,6 +347,46 @@ no que salga solo.** Tres razones concretas:
 Un botón de "revisar y enviar" en tu CRM con el PDF en preview resuelve las
 tres y cuesta muy poco.
 
+### Tres lecturas que coincidan
+
+El primer punto de arriba no es hipotético. El 2026-10-01, leyendo dos veces
+los mismos 28 recibos con el modelo de producción, el número de paneles cambió
+entre una lectura y otra en 5 de ellos (1,501 contra 1,303 kWh: 10 paneles o
+8). Casi todo el error está en la tabla del historial de los PDF, donde la
+letra es chica; el consumo del periodo actual salió igual en todas las
+lecturas.
+
+Por eso un recibo ya no se cotiza con una sola lectura
+(`readReceiptConsensus` en `src/lib/ai/receipt.ts`):
+
+1. Se lee **tres veces a la vez**. Si las tres llevan a la misma decisión —
+   el mismo número de paneles, y el mismo motivo si alguna lo detiene para
+   revisión— esa es la lectura. Que el promedio difiera dentro del mismo
+   rango no importa: el PDF sale igual. Se usa la del promedio de en medio.
+2. Si **una sola** no coincide, el recibo **pasa a una persona**. El bot
+   agradece el recibo sin dar ningún número, no pide que lo reenvíen, y la
+   conversación se asigna con una nota de lo que dijo cada lectura. En el
+   Cotizador, la tarjeta de revisión se abre con la primera lectura y el
+   mensaje dice a cuánto llegaron las otras.
+
+Por qué tres y por qué todas: en los recibos que cambian, una lectura se
+equivoca más o menos una de cada tres veces, así que dos lecturas coinciden
+seguido en el número **equivocado**. Medido sobre seis lecturas de cada uno de
+20 recibos: con dos lecturas y una tercera para desempatar, dos decisiones
+sobre el mismo recibo seguían sin coincidir 8% de las veces (12% con una sola
+lectura); con tres que deben coincidir, ninguna, y ningún recibo de lecturas
+estables se mandó a una persona. El costo es que los recibos de veras difíciles
+de leer —cerca de uno de cada cinco en esa muestra, casi todos PDF— los cotiza
+una persona en vez de salir solos. Pedir el JSON con esquema estricto, reglas
+más detalladas para la tabla del historial, o subir o bajar el esfuerzo de
+razonamiento no movieron esa cifra.
+
+Cada lectura queda en `ai_receipt_readings` (tres filas por recibo, con los
+mismos `media_ids`). Para medir un cambio de modelo, de esfuerzo o de prompt
+contra esta regla: `npx tsx scripts/eval-models.ts vision --arm
+<modelo:esfuerzo>+consensus --repeat 3`, y para compararlo contra lo que dice
+el papel, `vision-truth` (ver el encabezado del script).
+
 ---
 
 ## 7. Validaciones mínimas antes de renderizar
@@ -355,6 +395,7 @@ Si alguna falla, el flujo se detiene y avisa en vez de mandar.
 
 | Campo | Regla |
 | --- | --- |
+| la lectura misma | tres lecturas del recibo llegan a la misma decisión (§6, «Tres lecturas que coincidan») |
 | `kwh_bimestre` | entero, entre 100 y 5000 para residencial |
 | `tarifa` | una de `1D`, `DAC`, `PDBT`, `GDMTH` |
 | `pago_bimestre` | > 0, y `pago / kwh` dentro de un rango plausible por tarifa |
