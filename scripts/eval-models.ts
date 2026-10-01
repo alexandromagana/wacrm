@@ -65,7 +65,8 @@ async function loadApp() {
   const { generateReply } = await import('../src/lib/ai/generate')
   const { retrieveKnowledge } = await import('../src/lib/ai/knowledge')
   const { latestUserMessage } = await import('../src/lib/ai/query')
-  const { extractReceiptFromFiles } = await import('../src/lib/ai/receipt')
+  const { buildExtraction, extractReceiptFromFiles } = await import('../src/lib/ai/receipt')
+  const { lookupSolarTier, MIN_PERIODS_FOR_PDF } = await import('../src/lib/quotes/pricing')
   const { parseShadowArms, shadowMarkers } = await import('../src/lib/ai/shadow')
   const { INBOUND_MEDIA_BUCKET, inboundMediaPath } = await import(
     '../src/lib/storage/inbound-media'
@@ -79,7 +80,10 @@ async function loadApp() {
     generateReply,
     retrieveKnowledge,
     latestUserMessage,
+    buildExtraction,
     extractReceiptFromFiles,
+    lookupSolarTier,
+    MIN_PERIODS_FOR_PDF,
     parseShadowArms,
     shadowMarkers,
     INBOUND_MEDIA_BUCKET,
@@ -165,13 +169,32 @@ interface CallRecord {
 const calls = new AsyncLocalStorage<CallRecord[]>()
 const realFetch = globalThis.fetch
 
+/**
+ * A run takes the better part of an hour, and a laptop that sleeps or
+ * drops Wi-Fi in the middle turned half of one into "fetch failed" —
+ * scored, until this, as the model returning nothing. Retry a request
+ * that never got an answer; a timeout from the caller's own signal is
+ * still final.
+ */
+async function fetchThroughBlips(input: Parameters<typeof fetch>[0], init?: RequestInit) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await realFetch(input, init)
+    } catch (err) {
+      const aborted = init?.signal?.aborted || (err as Error)?.name === 'TimeoutError'
+      if (aborted || attempt >= 6) throw err
+      await new Promise((r) => setTimeout(r, 5000 * attempt))
+    }
+  }
+}
+
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
   const sink = calls.getStore()
   if (!sink || !url.includes('/v1/chat/completions')) return realFetch(input, init)
   let retries = 0
   let started = Date.now()
-  let res = await realFetch(input, init)
+  let res = await fetchThroughBlips(input, init)
   // A replay fires far more calls per minute than the bot ever does, and
   // OpenAI's per-model token limit answers with a 429 and the wait it
   // wants. Wait it out instead of scoring it as the model failing.
@@ -183,7 +206,7 @@ globalThis.fetch = async (input, init) => {
       : 2000
     await new Promise((r) => setTimeout(r, Math.max(waitMs, 500) + 250 * ++retries))
     started = Date.now()
-    res = await realFetch(input, init)
+    res = await fetchThroughBlips(input, init)
   }
   const ms = Date.now() - started
   const record: CallRecord = {
@@ -370,8 +393,11 @@ async function runVision() {
   // Only reads whose every file still exists in our bucket.
   const samples: { id: string; createdAt: string; prodModel: string; parsed: ReceiptExtraction; files: MediaFile[]; kinds: string }[] = []
   let skipped = 0
+  // --readings id,id,...: just these bills (an id prefix is enough).
+  const only = flag('readings')?.split(',').map((id) => id.trim()).filter(Boolean)
   for (const r of readings ?? []) {
     if (samples.length >= limit) break
+    if (only && !only.some((id) => (r.id as string).startsWith(id))) continue
     const mediaIds = (r.media_ids as string[]) ?? []
     if (mediaIds.length === 0) {
       skipped++
@@ -487,6 +513,77 @@ async function runVision() {
     `Rate-limit retries waited out: ${runs.reduce((a, r) => a + r.calls.reduce((b, c) => b + c.retries, 0), 0)}.`,
     '',
   )
+
+  // --truth: readings checked by hand against the bill
+  // ([{ reading_id, consumo_periodo_actual_kwh, historial_bimestres_kwh }]).
+  // Scored on the panel count, because that is what reaches the
+  // customer: right, wrong, or no quote at all (no reading, or fewer
+  // periods than a PDF needs). No quote costs a turn asking for the bill
+  // again; a wrong count is a proposal the technical visit has to undo.
+  // Bills without a checked reading are scored against production's,
+  // which is an assumption, so the two are reported apart.
+  const truthFile = flag('truth')
+  if (truthFile) {
+    const checked = new Map<string, ReceiptExtraction>()
+    for (const t of JSON.parse(readFileSync(truthFile, 'utf8')) as Record<string, unknown>[]) {
+      checked.set(
+        t.reading_id as string,
+        app.buildExtraction({
+          consumo_periodo_actual_kwh: t.consumo_periodo_actual_kwh,
+          historial_bimestres_kwh: t.historial_bimestres_kwh,
+        }),
+      )
+    }
+    const quotedPanels = (e: ReceiptExtraction | null): number | 'above' | null => {
+      if (!e || e.promedio_bimestral_kwh == null) return null
+      if (e.cantidad_periodos_usados < app.MIN_PERIODS_FOR_PDF) return null
+      return app.lookupSolarTier(e.promedio_bimestral_kwh)?.panels ?? 'above'
+    }
+    const expected = samples.map((s) => quotedPanels(checked.get(s.id) ?? s.parsed))
+    const isChecked = samples.map((s) => checked.has(s.id))
+    const head = ['arm', 'checked: right', 'checked: no quote', 'checked: WRONG', 'others: right', 'others: no quote', 'others: WRONG', 'call failed', 'wrong readings']
+    const rows: string[][] = []
+    for (const arm of arms) {
+      const label = armLabel(arm)
+      const count = { checked: { right: 0, none: 0, wrong: 0 }, others: { right: 0, none: 0, wrong: 0 } }
+      const wrong: string[] = []
+      let failed = 0
+      for (const r of runs.filter((r) => r.arm === label)) {
+        // The call itself never completed: that says nothing about the model.
+        if (r.error) {
+          failed++
+          continue
+        }
+        const bucket = isChecked[r.sample] ? count.checked : count.others
+        const got = quotedPanels(r.extraction)
+        if (got == null) bucket.none++
+        else if (got === expected[r.sample]) bucket.right++
+        else {
+          bucket.wrong++
+          wrong.push(`${samples[r.sample].id.slice(0, 8)}: ${got} vs ${expected[r.sample]}`)
+        }
+      }
+      rows.push([
+        label,
+        String(count.checked.right),
+        String(count.checked.none),
+        String(count.checked.wrong),
+        String(count.others.right),
+        String(count.others.none),
+        String(count.others.wrong),
+        String(failed),
+        wrong.join('; '),
+      ])
+    }
+    lines.push(
+      '## Panel count against the expected reading',
+      '',
+      `${isChecked.filter(Boolean).length} bills checked by hand (${truthFile}); the other ${isChecked.filter((c) => !c).length} are scored against production's reading.`,
+      '',
+      table(head, rows),
+      '',
+    )
+  }
 
   const firstErrors = runs.filter((r) => r.calls.some((c) => c.errorBody)).slice(0, 5)
   if (firstErrors.length) {
