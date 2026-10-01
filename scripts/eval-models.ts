@@ -157,6 +157,9 @@ interface CallRecord {
   completion: number
   reasoning: number
   errorBody: string | null
+  /** 429s waited out before this answer. The comparison is about the
+   *  model, not about our own burst hitting the account's rate limit. */
+  retries: number
 }
 
 const calls = new AsyncLocalStorage<CallRecord[]>()
@@ -166,8 +169,22 @@ globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
   const sink = calls.getStore()
   if (!sink || !url.includes('/v1/chat/completions')) return realFetch(input, init)
-  const started = Date.now()
-  const res = await realFetch(input, init)
+  let retries = 0
+  let started = Date.now()
+  let res = await realFetch(input, init)
+  // A replay fires far more calls per minute than the bot ever does, and
+  // OpenAI's per-model token limit answers with a 429 and the wait it
+  // wants. Wait it out instead of scoring it as the model failing.
+  while (res.status === 429 && retries < 8) {
+    const body = await res.clone().text().catch(() => '')
+    const hinted = body.match(/try again in ([\d.]+)(ms|s)/)
+    const waitMs = hinted
+      ? Number(hinted[1]) * (hinted[2] === 's' ? 1000 : 1)
+      : 2000
+    await new Promise((r) => setTimeout(r, Math.max(waitMs, 500) + 250 * ++retries))
+    started = Date.now()
+    res = await realFetch(input, init)
+  }
   const ms = Date.now() - started
   const record: CallRecord = {
     status: res.status,
@@ -178,6 +195,7 @@ globalThis.fetch = async (input, init) => {
     completion: 0,
     reasoning: 0,
     errorBody: null,
+    retries,
   }
   try {
     if (res.ok) {
@@ -466,6 +484,8 @@ async function runVision() {
       summary,
     ),
     '',
+    `Rate-limit retries waited out: ${runs.reduce((a, r) => a + r.calls.reduce((b, c) => b + c.retries, 0), 0)}.`,
+    '',
   )
 
   const firstErrors = runs.filter((r) => r.calls.some((c) => c.errorBody)).slice(0, 5)
@@ -692,6 +712,8 @@ async function runChat() {
     '## Summary',
     '',
     table(CHAT_HEAD, chatSummary(arms, runs, baselineLabel)),
+    '',
+    `Rate-limit retries waited out: ${runs.reduce((a, r) => a + r.calls.reduce((b, c) => b + c.retries, 0), 0)}.`,
     '',
   ]
 
