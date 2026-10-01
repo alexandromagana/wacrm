@@ -7,7 +7,9 @@ import { buildSystemPrompt, buildDateTimeNote } from './defaults'
 import { buildHandoffSummary, type HandoffReason } from './handoff'
 import { applyLeadStatusTag } from './lead-status'
 import {
+  describeDisputedReadings,
   extractReceipts,
+  formatDisputedReceiptNote,
   formatHeldQuoteNote,
   formatReceiptNote,
   formatStalledQuoteNote,
@@ -381,6 +383,11 @@ export async function dispatchInboundToAiReply(
     // just moved in (size it from this bimester) or a history nobody
     // explained.
     let stalledHold: QuoteHold['reason'] | null = null
+    // A bill this turn whose reads did not all agree on the quote (see
+    // `readReceiptConsensus`): what each read said, for the person it
+    // goes to. Set, nothing from this turn is quoted — not that bill,
+    // and not a batch it was meant to complete.
+    let disputedReading: string | null = null
 
     // The conversation's open batch of meters, if any. An ordinary
     // single-receipt customer parses to an empty batch and never writes
@@ -394,7 +401,7 @@ export async function dispatchInboundToAiReply(
         windowMs: 15 * 60_000,
       })
       if (receiptLimit.success) {
-        const readings = await extractReceipts({
+        const { readings, disputed } = await extractReceipts({
           config,
           accessToken: accessToken!,
           mediaIds: receiptMediaIds!,
@@ -419,7 +426,15 @@ export async function dispatchInboundToAiReply(
           conversationId,
           mediaIds: receiptMediaIds!,
         })
-        if (readings.length > 0) {
+        if (disputed.length > 0) {
+          // The bills that did agree stay out of the batch too: a quote
+          // without the disputed one would size part of the property,
+          // and a person is about to read all of them anyway.
+          disputedReading = disputed
+            .map((d) => describeDisputedReadings(d.readings))
+            .join(' | ')
+          messages.push({ role: 'user', content: formatDisputedReceiptNote() })
+        } else if (readings.length > 0) {
           meterState = mergeReadings(
             meterState,
             readings.map((r) => r.extraction),
@@ -457,7 +472,7 @@ export async function dispatchInboundToAiReply(
     // reading, and a verdict on whether that reading is the whole
     // property yet. One bill with nothing said about meters resolves to
     // `ready` immediately, so the ordinary customer's path is unchanged.
-    if (meterState.readings.length > 0) {
+    if (meterState.readings.length > 0 && disputedReading == null) {
       const gate = resolveMeterGate(meterState)
       if (gate.kind === 'handoff') {
         meterHandoff = true
@@ -630,7 +645,11 @@ export async function dispatchInboundToAiReply(
     // above says "con esos dos te preparo la propuesta", and the
     // proposal follows it seconds later rather than waiting for a
     // message the customer has no reason to send.
-    if (metersExpected != null && meterState.readings.length > 0) {
+    if (
+      metersExpected != null &&
+      meterState.readings.length > 0 &&
+      disputedReading == null
+    ) {
       meterState = { ...meterState, expected: metersExpected }
       const settled = resolveMeterGate(meterState)
       if (settled.kind === 'ready') {
@@ -801,13 +820,17 @@ export async function dispatchInboundToAiReply(
           // A parked quote the model also escalated — the account's own
           // "consumo no representativo" template ends in [[HANDOFF]] —
           // keeps the note that says what the person has to do.
-          reason: meterHandoff
-            ? 'meter_gate'
-            : holdHandoff
-              ? holdHandoffReason(stalledHold)
-              : handoff
-                ? 'model_requested'
-                : 'no_reply',
+          reason:
+            disputedReading != null
+              ? 'quote_disputed_reading'
+              : meterHandoff
+                ? 'meter_gate'
+                : holdHandoff
+                  ? holdHandoffReason(stalledHold)
+                  : handoff
+                    ? 'model_requested'
+                    : 'no_reply',
+          detail: disputedReading,
         }),
       })
       // If the model wrote a farewell alongside the sentinel ("a teammate
@@ -988,7 +1011,15 @@ export async function dispatchInboundToAiReply(
     // `capExempt` joins them for the same reason: the bot is out of
     // replies and a person has to take it from here, but not before the
     // proposal it just priced reaches the customer.
-    if (handoff || meterStillStalled || holdHandoff || capExempt) {
+    // A disputed bill joins them: the customer has been told a person is
+    // reading it, so one has to be.
+    if (
+      handoff ||
+      meterStillStalled ||
+      holdHandoff ||
+      capExempt ||
+      disputedReading != null
+    ) {
       await performHandoff(db, {
         accountId,
         conversationId,
@@ -998,13 +1029,17 @@ export async function dispatchInboundToAiReply(
         summary: buildHandoffSummary({
           messages,
           replyCount: conv.ai_reply_count ?? 0,
-          reason: meterStillStalled
-            ? 'meter_gate'
-            : holdHandoff
-              ? holdHandoffReason(stalledHold)
-              : handoff
-                ? 'model_requested'
-                : 'cap_reached',
+          reason:
+            disputedReading != null
+              ? 'quote_disputed_reading'
+              : meterStillStalled
+                ? 'meter_gate'
+                : holdHandoff
+                  ? holdHandoffReason(stalledHold)
+                  : handoff
+                    ? 'model_requested'
+                    : 'cap_reached',
+          detail: disputedReading,
         }),
       })
     }

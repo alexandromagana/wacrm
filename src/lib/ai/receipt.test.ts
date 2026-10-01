@@ -2,8 +2,11 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   buildExtraction,
+  describeDisputedReadings,
   extractReceiptFromFiles,
+  formatDisputedReceiptNote,
   parseReceiptJson,
+  readReceiptConsensus,
   isPlausibleAverage,
   formatHeldQuoteNote,
   formatReceiptNote,
@@ -14,6 +17,7 @@ import {
   type ReceiptExtraction,
 } from './receipt'
 import { CIUDAD_FIELD_NAME, PROPIEDAD_FIELD_NAME } from '@/lib/contacts/lead-form'
+import type { SolarTier } from '@/lib/quotes/pricing'
 
 /**
  * Minimal in-memory fake covering exactly the two tables + chains
@@ -1176,5 +1180,184 @@ describe('extractReceiptFromFiles — reasoning effort on the OpenAI read', () =
       files,
     )
     expect(body()).not.toHaveProperty('reasoning_effort')
+  })
+})
+
+describe('readReceiptConsensus — a bill is quoted only when every read agrees', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const files = [{ base64: 'AAAA', mimeType: 'application/pdf' }]
+  const config = {
+    provider: 'openai' as const,
+    visionModel: 'gpt-5.6-luna',
+    apiKey: 'sk-test',
+  }
+
+  /** What one read "saw": a bill whose six bimesters all read `kwh`. */
+  function bill(kwh: number, extra: Record<string, unknown> = {}) {
+    return {
+      consumo_periodo_actual_kwh: kwh,
+      historial_bimestres_kwh: [kwh, kwh, kwh, kwh, kwh],
+      importe_periodo_mxn: 4000,
+      ...extra,
+    }
+  }
+
+  /** The provider's answers, in call order: a bill, a thrown network
+   *  error, or a response with no JSON in it. */
+  function stubReads(...answers: (Record<string, unknown> | Error | 'garbage')[]) {
+    const fetchMock = vi.fn()
+    for (const a of answers) {
+      if (a instanceof Error) {
+        fetchMock.mockRejectedValueOnce(a)
+        continue
+      }
+      fetchMock.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            { message: { content: a === 'garbage' ? 'no pude leerlo' : JSON.stringify(a) } },
+          ],
+        }),
+      } as unknown as Response)
+    }
+    vi.stubGlobal('fetch', fetchMock)
+    return fetchMock
+  }
+
+  const promedio = (r: Awaited<ReturnType<typeof readReceiptConsensus>>) =>
+    r?.kind === 'agreed' ? r.extraction.promedio_bimestral_kwh : undefined
+
+  it('quotes three reads that land on the same panels, on the middle average', async () => {
+    const fetchMock = stubReads(bill(1100), bill(1300), bill(1200))
+    const result = await readReceiptConsensus(config, files)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // 1,100, 1,200 and 1,300 are all 8 panels: the same PDF either way.
+    expect(result).toMatchObject({ kind: 'agreed', reads: 3 })
+    expect(promedio(result)).toBe(1200)
+  })
+
+  it('gives the bill to a person when one read of three disagrees', async () => {
+    // 1,303 vs 1,501 — the real 8-vs-10 split this exists for. A
+    // tiebreak would have quoted 10 here; on a bill read wrong a third of
+    // the time, two of three agreeing is not enough.
+    stubReads(bill(1303), bill(1501), bill(1490))
+    const result = await readReceiptConsensus(config, files)
+
+    expect(result?.kind).toBe('disputed')
+    expect(
+      result?.kind === 'disputed' && result.readings.map((r) => r.promedio_bimestral_kwh),
+    ).toEqual([1303, 1501, 1490])
+  })
+
+  it('counts a review hold as a different answer, even on the same panels', async () => {
+    // All 8 panels — but one read misses a bimester so low it holds the
+    // PDF to ask about an empty house. The customer would get a question
+    // instead of a quote, so the reads did not say the same thing.
+    const held = bill(1300, { historial_bimestres_kwh: [1300, 1300, 1300, 1300, 200] })
+    stubReads(bill(1100), held, bill(1100))
+    expect((await readReceiptConsensus(config, files))?.kind).toBe('disputed')
+  })
+
+  it('carries a read that has the peso amount over one that does not', async () => {
+    stubReads(
+      bill(1100, { importe_periodo_mxn: null }),
+      bill(1300),
+      bill(1200, { importe_periodo_mxn: null }),
+    )
+    const result = await readReceiptConsensus(config, files)
+
+    expect(result?.kind === 'agreed' && result.extraction.costo_periodo_mxn).toBe(4000)
+    expect(promedio(result)).toBe(1300)
+  })
+
+  it('compares on the table it is given — a Cotizador project type’s own', async () => {
+    const tiers: SolarTier[] = [
+      { minKwh: 0, maxKwh: 1010, panels: 4, systemKw: 2.5, priceMxn: 40_000 },
+      { minKwh: 1011, maxKwh: 2000, panels: 6, systemKw: 3.75, priceMxn: 60_000 },
+    ]
+    // 1,000, 1,020 and 1,005 are one tier on the bot's table, two on this one.
+    stubReads(bill(1000), bill(1020), bill(1005))
+    expect((await readReceiptConsensus(config, files))?.kind).toBe('agreed')
+    stubReads(bill(1000), bill(1020), bill(1005))
+    expect((await readReceiptConsensus(config, files, undefined, tiers))?.kind).toBe('disputed')
+  })
+
+  it('throws when the provider fails every read, so the Cotizador can say so', async () => {
+    const down = new Error('network down')
+    const fetchMock = stubReads(down, down, down)
+    await expect(readReceiptConsensus(config, files)).rejects.toThrow('network down')
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('makes a failed read once more', async () => {
+    const fetchMock = stubReads(new Error('timeout'), bill(1200), bill(1200), bill(1200))
+    const result = await readReceiptConsensus(config, files)
+
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+    expect(result).toMatchObject({ kind: 'agreed', reads: 4 })
+  })
+
+  it('takes two agreeing reads over a handoff when the provider keeps failing', async () => {
+    stubReads(new Error('timeout'), bill(1200), bill(1200), new Error('timeout'))
+    expect((await readReceiptConsensus(config, files))?.kind).toBe('agreed')
+  })
+
+  it('does not pay for another read once the ones back disagree', async () => {
+    const fetchMock = stubReads(new Error('timeout'), bill(1200), bill(1500))
+    const result = await readReceiptConsensus(config, files)
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(result?.kind).toBe('disputed')
+  })
+
+  it('does not quote a lone read the others could not confirm', async () => {
+    stubReads('garbage', bill(1200), 'garbage', 'garbage', 'garbage')
+    expect((await readReceiptConsensus(config, files))?.kind).toBe('disputed')
+  })
+
+  it('returns null when no read parsed at all — an unreadable image, as before', async () => {
+    const fetchMock = stubReads('garbage', 'garbage', 'garbage')
+    expect(await readReceiptConsensus(config, files)).toBeNull()
+    // Not read twice over: an image nothing could parse costs one round.
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('agrees that a photo of something else has no reading', async () => {
+    // Not a bill: every read comes back empty. That is agreement, and the
+    // bot asks for the receipt exactly as it did before.
+    const empty = { consumo_periodo_actual_kwh: null, historial_bimestres_kwh: [] }
+    stubReads(empty, empty, empty)
+    const result = await readReceiptConsensus(config, files)
+
+    expect(result?.kind).toBe('agreed')
+    expect(promedio(result)).toBeNull()
+  })
+
+  it('reads nothing when there is nothing to read', async () => {
+    const fetchMock = stubReads()
+    expect(await readReceiptConsensus(config, [])).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('a disputed bill, told to the model and to the person', () => {
+  it('gives the model no number to repeat and no resend to ask for', () => {
+    const note = formatDisputedReceiptNote()
+    expect(note).toContain('NO des precio, ni número de paneles')
+    expect(note).toContain('NO le pidas que lo vuelva a mandar')
+    expect(note).not.toMatch(/\d{3,}/)
+  })
+
+  it('tells the person what each read came to', () => {
+    const reads = [
+      buildExtraction({ consumo_periodo_actual_kwh: 1303, historial_bimestres_kwh: [1303, 1303] }),
+      buildExtraction({ consumo_periodo_actual_kwh: 1501, historial_bimestres_kwh: [1501, 1501] }),
+    ]
+    expect(describeDisputedReadings(reads)).toBe(
+      '1303 kWh avg → 8 panels; 1501 kWh avg → 10 panels',
+    )
   })
 })

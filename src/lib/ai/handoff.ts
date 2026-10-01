@@ -21,6 +21,7 @@ export type HandoffReason =
   | 'quote_review'
   | 'quote_missing_amount'
   | 'quote_outgrown_history'
+  | 'quote_disputed_reading'
   | 'no_reply'
 
 const REASON_TEXT: Record<HandoffReason, string> = {
@@ -34,6 +35,8 @@ const REASON_TEXT: Record<HandoffReason, string> = {
     "A proposal is priced and waiting: the bill's peso amount never read, so no PDF went out. Generate it from the Cotizador.",
   quote_outgrown_history:
     "No proposal went out: this bimester is far above the bill's own history (the customer likely just moved in or added AC), so the average would undersize the system. Size it from the current consumption in the Cotizador.",
+  quote_disputed_reading:
+    'No proposal went out: the bill was read more than once and the reads disagreed on the system size, so no reading can be trusted. Check the consumption history on the bill and quote it from the Cotizador.',
   no_reply: 'It produced no reply to send.',
 }
 
@@ -55,8 +58,11 @@ export function buildHandoffSummary(args: {
   messages: ChatMessage[]
   replyCount: number
   reason: HandoffReason
+  /** Specifics of this handoff that the reason's sentence can't carry —
+   *  what each read of a disputed bill said. */
+  detail?: string | null
 }): string {
-  const { messages, replyCount, reason } = args
+  const { messages, replyCount, reason, detail } = args
 
   const lastCustomer = [...messages]
     .reverse()
@@ -72,7 +78,7 @@ export function buildHandoffSummary(args: {
       ? 'without replying'
       : `after ${replyCount} ${replyCount === 1 ? 'reply' : 'replies'}`
 
-  const base = `🤖 AI agent handed off ${replies}. ${REASON_TEXT[reason]}`
+  const base = `🤖 AI agent handed off ${replies}. ${REASON_TEXT[reason]}${detail ? ` (${detail})` : ''}`
 
   if (!lastCustomer) return base
 

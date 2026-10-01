@@ -8,8 +8,8 @@ import {
 import { loadAiConfig } from '@/lib/ai/config';
 import {
   buildExtraction,
-  extractReceiptFromFiles,
   inferPropertyType,
+  readReceiptConsensus,
   saveReceiptData,
   type MediaFile,
   type ReceiptExtraction,
@@ -142,6 +142,37 @@ function explainRefusal(
     default:
       return 'No se pudo cotizar con este recibo.';
   }
+}
+
+/**
+ * A bill read more than once that never gave the same quote twice, said
+ * the way the review card needs it: what each read came to, so the user
+ * knows which numbers on the paper to check.
+ */
+function explainDisputed(
+  disputed: { meter: number; readings: ReceiptExtraction[] }[],
+  tiers: readonly SolarTier[],
+  multiMeter: boolean
+): string {
+  const parts = disputed.map(({ meter, readings }) => {
+    const reads = readings
+      .map((r) => {
+        const q = resolveQuote(
+          r.promedio_bimestral_kwh,
+          r.cantidad_periodos_usados,
+          {
+            includesCurrentPeriod: r.incluye_periodo_actual,
+            periods: r.periodos_promediados_kwh,
+          },
+          tiers
+        );
+        const panels = 'tier' in q ? ` (${q.tier.panels} paneles)` : '';
+        return `${r.promedio_bimestral_kwh ?? 'sin promedio'} kWh${panels}`;
+      })
+      .join(', ');
+    return multiMeter ? `medidor ${meter + 1}: ${reads}` : reads;
+  });
+  return `Leímos el recibo más de una vez y el consumo no coincidió (${parts.join('; ')}). Revisa abajo los números contra el recibo — sobre todo el historial de consumo — y cotiza con los correctos.`;
 }
 
 /**
@@ -357,9 +388,12 @@ export async function POST(request: Request) {
         );
       }
 
-      // One vision call per meter. Each group is read on its own with
-      // the single-bill prompt, exactly as a one-meter quote always
-      // was, and the sum happens afterwards in code.
+      // One read per meter — more than one call each, see
+      // `readReceiptConsensus`. Each group is read on its own with the
+      // single-bill prompt, exactly as a one-meter quote always was, and
+      // the sum happens afterwards in code.
+      const disputed: { meter: number; readings: ReceiptExtraction[] }[] =
+        [];
       for (const [index, group] of meterGroups.entries()) {
         const files: MediaFile[] = await Promise.all(
           group.map(async (f) => ({
@@ -368,19 +402,26 @@ export async function POST(request: Request) {
           }))
         );
 
-        // extractReceiptFromFiles throws on a provider/network failure
-        // and returns null on an unreadable image — the two need
-        // different answers, which is why this path calls it rather
-        // than the bot's swallow-everything extractReceipts.
+        // readReceiptConsensus throws on a provider/network failure and
+        // returns null on an unreadable image — the two need different
+        // answers, which is why this path calls it rather than the
+        // bot's swallow-everything extractReceipts. Reads are compared
+        // against this project type's own table: agreeing on the bot's
+        // panel count says nothing about this one's.
         let extracted;
         try {
-          extracted = await extractReceiptFromFiles(aiConfig, files, {
-            accountId,
-            source: 'cotizador',
-            // No conversation here, and the contact is null when the
-            // quote is being drawn up before one exists.
-            contactId,
-          });
+          extracted = await readReceiptConsensus(
+            aiConfig,
+            files,
+            {
+              accountId,
+              source: 'cotizador',
+              // No conversation here, and the contact is null when the
+              // quote is being drawn up before one exists.
+              contactId,
+            },
+            tiers
+          );
         } catch (err) {
           console.error('[quotes/generate] vision call failed:', err);
           return NextResponse.json(
@@ -408,7 +449,24 @@ export async function POST(request: Request) {
             { status: 422 }
           );
         }
-        readings.push(extracted);
+        // Reads that never agreed are not refused outright: the user has
+        // the bill in front of them, so the card opens on the first read
+        // and the message says what the others came to.
+        if (extracted.kind === 'disputed') {
+          disputed.push({ meter: index, readings: extracted.readings });
+          readings.push(extracted.readings[0]);
+        } else {
+          readings.push(extracted.extraction);
+        }
+      }
+      if (disputed.length > 0) {
+        return NextResponse.json(
+          {
+            error: explainDisputed(disputed, tiers, meterGroups.length > 1),
+            readings: readings.map(toManualReading),
+          },
+          { status: 422 }
+        );
       }
     }
 

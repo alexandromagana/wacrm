@@ -51,6 +51,9 @@ vi.mock('./receipt', () => ({
   ) => `[NOTA RETOMA: promedio ${r.promedio_bimestral_kwh} motivo ${hold.reason}]`,
   formatStalledQuoteNote: (reason?: string) =>
     `[NOTA COTIZACION ESTANCADA${reason ? ` motivo ${reason}` : ''}]`,
+  formatDisputedReceiptNote: () => '[NOTA LECTURA EN DISPUTA]',
+  describeDisputedReadings: (readings: { promedio_bimestral_kwh: number | null }[]) =>
+    readings.map((r) => `${r.promedio_bimestral_kwh} kWh`).join('; '),
   METERS_MARKER_INSTRUCTION: '[marcador MEDIDORES]',
 }))
 vi.mock('./quote-pdf', () => ({ sendQuoteProposal: h.sendQuoteProposal }))
@@ -125,13 +128,17 @@ const ARGS = {
  * records so an already-read bill is never extracted twice.
  */
 function mockBills(...extractions: Record<string, unknown>[]) {
-  h.extractReceipts.mockResolvedValue(
-    extractions.map((extraction, i) => ({
+  h.extractReceipts.mockResolvedValue({
+    readings: extractions.map((extraction, i) => ({
       extraction,
       mediaIds: [`media-${i + 1}`],
     })),
-  )
+    disputed: [],
+  })
 }
+
+/** What `extractReceipts` returns for a turn that read nothing usable. */
+const NO_BILLS = { readings: [], disputed: [] }
 
 function aiConfig(overrides: Partial<AiConfig> = {}): AiConfig {
   return {
@@ -177,7 +184,7 @@ beforeEach(() => {
   h.engineSendText.mockResolvedValue({ whatsapp_message_id: 'm1' })
   h.applyLeadStatusTag.mockResolvedValue(undefined)
   h.applyQuoteSentTag.mockResolvedValue(undefined)
-  h.extractReceipts.mockResolvedValue([])
+  h.extractReceipts.mockResolvedValue(NO_BILLS)
   h.saveReceiptData.mockResolvedValue(undefined)
   h.markReceiptMediaRead.mockResolvedValue(undefined)
   h.sendQuoteProposal.mockResolvedValue({
@@ -407,7 +414,7 @@ describe('dispatchInboundToAiReply — eligibility gates', () => {
       ai_reply_count: 3,
     }
     h.state.claim = false
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply({
       ...ARGS,
       receiptMediaIds: ['media-1'],
@@ -595,7 +602,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   })
 
   it('injects a receipt-only re-ask note on failure — never offers the kWh fallback', async () => {
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.saveReceiptData).not.toHaveBeenCalled()
     const note = (
@@ -622,7 +629,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     // bill over again. Written for every media the turn carried, not
     // just the ones that parsed: an unreadable bill has had its vision
     // call, and the resend the bot asks for arrives as a new media id.
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.markReceiptMediaRead).toHaveBeenCalledWith(
       expect.anything(),
@@ -795,7 +802,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
         updatedAt: new Date().toISOString(),
       },
     }
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
     const note = (
@@ -820,7 +827,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
 
   it('hands off instead of asking a third time', async () => {
     h.state.conv = { ...STALLED_BATCH }
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
@@ -836,7 +843,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     // comparing financing offers — and escalating in silence reads as
     // being ignored.
     h.state.conv = { ...STALLED_BATCH }
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     h.generateReply.mockResolvedValue({
       text: 'Sí, manejamos financiamiento hasta 60 meses 🙌',
       handoff: false,
@@ -857,7 +864,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
     // the model gets a turn at all, that answer can land — and once the
     // quote is out there is nothing left for a person to chase.
     h.state.conv = { ...STALLED_BATCH }
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     h.generateReply.mockResolvedValue({
       text: 'Son dos, va tu propuesta 🙌',
       handoff: false,
@@ -871,7 +878,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
 
   it('tells the model to drop the meter question and answer what was asked', async () => {
     h.state.conv = { ...STALLED_BATCH }
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
 
     const note = (
@@ -939,7 +946,7 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
   })
 
   it('sends no proposal when the reading failed', async () => {
-    h.extractReceipts.mockResolvedValue([])
+    h.extractReceipts.mockResolvedValue(NO_BILLS)
     await dispatchInboundToAiReply(RECEIPT_ARGS)
     expect(h.sendQuoteProposal).not.toHaveBeenCalled()
   })
@@ -1336,6 +1343,105 @@ describe('dispatchInboundToAiReply — CFE receipt images', () => {
 // typed figure carries no tariff, no history and no pesos, and the
 // proposal needs all three.
 // ------------------------------------------------------------------
+describe('dispatchInboundToAiReply — a bill whose reads never agreed', () => {
+  const RECEIPT_ARGS = {
+    ...ARGS,
+    receiptMediaIds: ['media-1'],
+    accessToken: 'meta-token',
+  }
+
+  /** Three reads of one PDF, three different systems. */
+  const DISPUTED = {
+    readings: [],
+    disputed: [
+      {
+        readings: [
+          { promedio_bimestral_kwh: 1303 },
+          { promedio_bimestral_kwh: 1501 },
+          { promedio_bimestral_kwh: 1690 },
+        ],
+        mediaIds: ['media-1'],
+      },
+    ],
+  }
+
+  it('tells the customer a person is reading it, quotes nothing, and hands off', async () => {
+    h.extractReceipts.mockResolvedValue(DISPUTED)
+    h.generateReply.mockResolvedValue({
+      text: '¡Gracias! Un asesor revisa tu recibo y te comparte tu propuesta en breve.',
+      handoff: false,
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    const messages = h.generateReply.mock.calls[0][0].messages as { content: string }[]
+    expect(messages.at(-1)!.content).toBe('[NOTA LECTURA EN DISPUTA]')
+    // None of the three numbers is trusted enough to keep, let alone price.
+    expect(h.saveReceiptData).not.toHaveBeenCalled()
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    // Answered first, then a person: the reply promised one.
+    expect(h.engineSendText).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining('asesor') }),
+    )
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain('reads disagreed')
+    // What each read said, so whoever takes it knows where to look.
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain(
+      '1303 kWh; 1501 kWh; 1690 kWh',
+    )
+    // Read, so the next delivery in the burst doesn't read it again.
+    expect(h.markReceiptMediaRead).toHaveBeenCalledWith(expect.anything(), {
+      conversationId: 'conv-1',
+      mediaIds: ['media-1'],
+    })
+  })
+
+  it('does not quote the open batch the disputed bill was meant to complete', async () => {
+    // Meter one came in cleanly on an earlier turn; meter two is the
+    // bill that would not read. Quoting meter one alone sizes half the
+    // house — the same mistake the meter gate exists to stop.
+    h.state.conv = {
+      assigned_agent_id: null,
+      ai_autoreply_disabled: false,
+      ai_reply_count: 0,
+      ai_meter_state: {
+        expected: 2,
+        readings: [
+          {
+            promedio_bimestral_kwh: 1000,
+            cantidad_periodos_usados: 6,
+            incluye_periodo_actual: true,
+            consumo_periodo_actual_kwh: 1000,
+            periodos_promediados_kwh: [1000, 1000, 1000, 1000, 1000, 1000],
+            historial_bimestres_kwh: [1000, 1000, 1000, 1000, 1000],
+            costo_periodo_mxn: 4000,
+          },
+        ],
+        readMediaIds: ['old-media'],
+        askedCount: 0,
+        updatedAt: new Date().toISOString(),
+      },
+    }
+    h.extractReceipts.mockResolvedValue(DISPUTED)
+    h.generateReply.mockResolvedValue({
+      text: 'Gracias, un asesor revisa tus recibos.',
+      handoff: false,
+      metersExpected: 1,
+    })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.sendQuoteProposal).not.toHaveBeenCalled()
+    expect(h.state.updatePayload).toMatchObject({ ai_autoreply_disabled: true })
+  })
+
+  it('names the disputed reading when the model also asked for a person', async () => {
+    h.extractReceipts.mockResolvedValue(DISPUTED)
+    h.generateReply.mockResolvedValue({ text: '', handoff: true })
+    await dispatchInboundToAiReply(RECEIPT_ARGS)
+
+    expect(h.state.updatePayload?.ai_handoff_summary).toContain('reads disagreed')
+  })
+})
+
 describe('dispatchInboundToAiReply — a consumption typed instead of a bill', () => {
   const lastNote = () =>
     (h.generateReply.mock.calls[0][0].messages as { content: string }[]).at(-1)!

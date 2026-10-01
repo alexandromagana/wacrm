@@ -1,18 +1,35 @@
 // ============================================================
 // Compare candidate models before the bot switches to one of them.
 //
-//   npx tsx scripts/eval-models.ts vision --arm gpt-5.6-luna:default --arm gpt-6-luna:low [--limit 30] [--repeat 2]
+//   npx tsx scripts/eval-models.ts vision --arm gpt-5.6-luna:default --arm gpt-5.6-luna:default+consensus [--limit 30] [--repeat 3] [--truth eval-out/vision-truth.json]
+//   npx tsx scripts/eval-models.ts vision-truth [--limit 30]
+//   npx tsx scripts/eval-models.ts vision-rescore --from eval-out/vision-<stamp>.json [--truth eval-out/vision-truth.json]
 //   npx tsx scripts/eval-models.ts chat --arm gpt-5.6-terra:none --arm gpt-6.1-sol:low [--limit 60] [--repeat 1]
 //   npx tsx scripts/eval-models.ts shadow-report [--days 14]
 //
 // An arm is `model:effort` — `default` (or no suffix) sends the code
-// default, exactly as an account with no effort chosen would.
+// default, exactly as an account with no effort chosen would. A vision
+// arm can add `+consensus` (read the way the bot does: three reads that
+// must all agree, else a person — `readReceiptConsensus`) and request
+// variants from `VISION_VARIANTS` (`+schema`, `+hist`).
 //
 // vision  Re-reads the bills behind `ai_receipt_readings` from our own
 //         copies in `inbound-media` (reads from before migration 049 have
-//         no copy and are skipped) and compares every arm, field by
-//         field, with the extraction production built its quote on.
-//         The prompt and the files are exactly what production saw.
+//         no copy and are skipped). Scores what matters on a quote — the
+//         panel count each read resolves to — for stability across runs,
+//         against the single read production stored, and against a
+//         reading a person checked on the paper (`--truth`). With
+//         `--repeat 3` or more it also replays the bot's three-read rule
+//         over single reads. The prompt and the files are exactly what
+//         production saw.
+//
+// vision-truth  Writes the file `--truth` reads: one entry per replayed
+//         bill, pre-filled with production's read and a CRM link to the
+//         conversation, for a person to correct against the paper bill
+//         and sign (`checked_by`). Downloads nothing.
+//
+// vision-rescore  Scores a saved vision run again — against a truth file
+//         filled in since, say — without a single read.
 //
 // chat    Replays recent auto-reply turns: the conversation as it stood
 //         just before the reply, the knowledge base, the date note for
@@ -65,12 +82,16 @@ async function loadApp() {
   const { generateReply } = await import('../src/lib/ai/generate')
   const { retrieveKnowledge } = await import('../src/lib/ai/knowledge')
   const { latestUserMessage } = await import('../src/lib/ai/query')
-  const { extractReceiptFromFiles } = await import('../src/lib/ai/receipt')
+  const { buildExtraction, extractReceiptFromFiles, readReceiptConsensus } = await import('../src/lib/ai/receipt')
   const { parseShadowArms, shadowMarkers } = await import('../src/lib/ai/shadow')
   const { INBOUND_MEDIA_BUCKET, inboundMediaPath } = await import(
     '../src/lib/storage/inbound-media'
   )
+  const { resolveQuote } = await import('../src/lib/quotes/pricing')
   return {
+    buildExtraction,
+    readReceiptConsensus,
+    resolveQuote,
     loadAiConfig,
     buildConversationContext,
     aiContextMessageLimit,
@@ -162,16 +183,42 @@ interface CallRecord {
   retries: number
 }
 
-const calls = new AsyncLocalStorage<CallRecord[]>()
+/** Where a task's calls report to, and how its request bodies are
+ *  rewritten on the way out (a vision variant — see `VISION_VARIANTS`). */
+interface CallSink {
+  records: CallRecord[]
+  transform?: (body: Record<string, unknown>) => Record<string, unknown>
+}
+
+const calls = new AsyncLocalStorage<CallSink>()
 const realFetch = globalThis.fetch
 
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-  const sink = calls.getStore()
-  if (!sink || !url.includes('/v1/chat/completions')) return realFetch(input, init)
+  const store = calls.getStore()
+  if (!store || !url.includes('/v1/chat/completions')) return realFetch(input, init)
+  const sink = store.records
+  if (store.transform && typeof init?.body === 'string') {
+    init = { ...init, body: JSON.stringify(store.transform(JSON.parse(init.body))) }
+  }
   let retries = 0
   let started = Date.now()
-  let res = await realFetch(input, init)
+  // A connection that drops ("fetch failed") is our network, not the
+  // model; one outage once turned the last eight bills of a run into
+  // errors. A timeout is the model being slow, and is scored as such.
+  const send = async (): Promise<Response> => {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await realFetch(input, init)
+      } catch (err) {
+        const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')
+        if (timedOut || attempt >= 4) throw err
+        await new Promise((r) => setTimeout(r, 2000 * (attempt + 1)))
+        started = Date.now()
+      }
+    }
+  }
+  let res = await send()
   // A replay fires far more calls per minute than the bot ever does, and
   // OpenAI's per-model token limit answers with a 429 and the wait it
   // wants. Wait it out instead of scoring it as the model failing.
@@ -183,7 +230,7 @@ globalThis.fetch = async (input, init) => {
       : 2000
     await new Promise((r) => setTimeout(r, Math.max(waitMs, 500) + 250 * ++retries))
     started = Date.now()
-    res = await realFetch(input, init)
+    res = await send()
   }
   const ms = Date.now() - started
   const record: CallRecord = {
@@ -215,10 +262,13 @@ globalThis.fetch = async (input, init) => {
   return res
 }
 
-async function captured<T>(fn: () => Promise<T>): Promise<{ value: T | null; error: string | null; calls: CallRecord[] }> {
+async function captured<T>(
+  fn: () => Promise<T>,
+  transform?: CallSink['transform'],
+): Promise<{ value: T | null; error: string | null; calls: CallRecord[] }> {
   const sink: CallRecord[] = []
   try {
-    const value = await calls.run(sink, fn)
+    const value = await calls.run({ records: sink, transform }, fn)
     return { value, error: null, calls: sink }
   } catch (err) {
     const code = (err as { code?: unknown })?.code
@@ -351,140 +401,561 @@ function sameValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
 }
 
-async function runVision() {
-  const { db, accountId, config } = await setup()
-  const arms = readArms()
-  const limit = numberFlag('limit', 30)
-  const repeat = numberFlag('repeat', 1)
-  const concurrency = numberFlag('concurrency', 4)
+// ------------------------------------------------------------
+// What a quote is built on is the panel count, so that is what the
+// vision replay scores: the tier each read resolves to, through the
+// same `resolveQuote` the bot and the Cotizador use.
+// ------------------------------------------------------------
 
+/** A read's outcome as a quote. `key` is the whole decision — kind,
+ *  panels and review reason — `panels` the number on the PDF. */
+interface Verdict {
+  key: string
+  panels: number | null
+  label: string
+}
+
+const FAILED: Verdict = { key: 'failed', panels: null, label: 'ERR' }
+/** A consensus read that gave the bill to a person. */
+const PERSON: Verdict = { key: 'person', panels: null, label: 'P' }
+
+function verdictOf(e: ReceiptExtraction | null): Verdict {
+  if (!e) return FAILED
+  const q = app.resolveQuote(e.promedio_bimestral_kwh, e.cantidad_periodos_usados, {
+    includesCurrentPeriod: e.incluye_periodo_actual,
+    periods: e.periodos_promediados_kwh,
+  })
+  const panels = 'tier' in q ? q.tier.panels : null
+  switch (q.kind) {
+    case 'ok':
+      return { key: `ok:${panels}`, panels, label: `${panels}` }
+    case 'needs_review':
+      return { key: `review:${panels}:${q.reason}`, panels, label: `${panels}?` }
+    case 'low_confidence':
+      return { key: `low:${panels}`, panels, label: `${panels}~` }
+    default:
+      return { key: q.kind, panels: null, label: q.kind === 'unreadable' ? '—' : q.kind }
+  }
+}
+
+/**
+ * A reading a person checked against the paper bill, kept in a file
+ * `vision-truth` writes and a person fills in (see that mode). Only
+ * entries with `checked_by` set count. The numbers go through
+ * `buildExtraction`, so the truth is priced exactly like a read.
+ */
+interface TruthEntry {
+  checked_by?: string | null
+  consumo_periodo_actual_kwh?: number | null
+  historial_bimestres_kwh?: number[] | null
+  /** For a bill whose numbers were not typed in: just the panel count. */
+  panels?: number | null
+}
+
+function truthVerdict(entry: TruthEntry | undefined): Verdict | null {
+  if (!entry?.checked_by) return null
+  if (entry.consumo_periodo_actual_kwh != null || entry.historial_bimestres_kwh?.length) {
+    return verdictOf(
+      app.buildExtraction({
+        consumo_periodo_actual_kwh: entry.consumo_periodo_actual_kwh,
+        historial_bimestres_kwh: entry.historial_bimestres_kwh ?? [],
+      }),
+    )
+  }
+  if (typeof entry.panels === 'number') {
+    return { key: `ok:${entry.panels}`, panels: entry.panels, label: `${entry.panels}` }
+  }
+  return null
+}
+
+function loadTruth(path: string | undefined): Record<string, TruthEntry> {
+  if (!path) return {}
+  return JSON.parse(readFileSync(path, 'utf8')) as Record<string, TruthEntry>
+}
+
+/**
+ * The bot's rule, replayed on three reads already made: all three lead to
+ * the same decision, or a person reads the bill. Mirrors
+ * `readReceiptConsensus` (minus its retry of a failed read).
+ */
+function consensusOf(reads: Verdict[]): { verdict: Verdict | 'handoff'; reads: number } {
+  const [a, b, c] = reads
+  if (a.key !== 'failed' && a.key === b.key && a.key === c.key) return { verdict: a, reads: 3 }
+  return { verdict: 'handoff', reads: 3 }
+}
+
+/**
+ * Request rewrites a vision arm can carry after its effort, e.g.
+ * `gpt-5.6-luna:default+schema`. They change the request and nothing
+ * else: same prompt otherwise, same files, same parser.
+ */
+const VISION_VARIANTS: Record<string, (body: Record<string, unknown>) => Record<string, unknown>> = {
+  // Both tried on 2026-10-01 against the production read (gpt-5.6-luna,
+  // default effort; 20 bills × 6 runs) and not adopted: neither moved
+  // how often a bill's panel count flips between runs beyond the noise
+  // of the sample (12% of run pairs disagreeing; 13% with `schema`, 17%
+  // with `hist`, 10% with both). Kept so a new model can be tried
+  // against them in one flag.
+
+  /** Strict structured output (`json_schema`) instead of `json_object`. */
+  schema: (body) => ({
+    ...body,
+    response_format: {
+      type: 'json_schema',
+      json_schema: { name: 'recibo_cfe', strict: true, schema: RECEIPT_JSON_SCHEMA },
+    },
+  }),
+  /** Extra rules for transcribing the history table. */
+  hist: (body) => {
+    const messages = body.messages as { role: string; content: unknown }[]
+    const system = messages[0]
+    const anchor = '# SI LA IMAGEN NO ES UN RECIBO DE CFE'
+    if (typeof system.content !== 'string' || !system.content.includes(anchor)) {
+      throw new Error('hist variant: anchor not found in the extraction prompt')
+    }
+    return {
+      ...body,
+      messages: [{ ...system, content: system.content.replace(anchor, `${HISTORIAL_RULES}\n\n${anchor}`) }, ...messages.slice(1)],
+    }
+  },
+}
+
+const nullable = (type: string) => ({ type: [type, 'null'] })
+const RECEIPT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'consumo_periodo_actual_kwh', 'periodo_actual', 'historial_bimestres_kwh', 'historial_periodos', 'tarifa',
+    'numero_servicio', 'ciudad', 'importe_periodo_mxn', 'importe_dap_mxn', 'importe_total_a_pagar_mxn',
+    'historial_bimestres_importe_mxn', 'advertencias',
+  ],
+  properties: {
+    consumo_periodo_actual_kwh: nullable('number'),
+    periodo_actual: nullable('string'),
+    historial_bimestres_kwh: { type: 'array', items: nullable('number') },
+    historial_periodos: { type: 'array', items: nullable('string') },
+    tarifa: nullable('string'),
+    numero_servicio: nullable('string'),
+    ciudad: nullable('string'),
+    importe_periodo_mxn: nullable('number'),
+    importe_dap_mxn: nullable('number'),
+    importe_total_a_pagar_mxn: nullable('number'),
+    historial_bimestres_importe_mxn: { type: 'array', items: nullable('number') },
+    advertencias: { type: 'string' },
+  },
+}
+
+const HISTORIAL_RULES = `# CÓMO LEER LA TABLA DEL HISTORIAL (aquí es donde más se equivoca la lectura)
+- Recórrela renglón por renglón, de arriba hacia abajo, sin saltarte ni repetir ninguno. Cada renglón es un periodo distinto: dos renglones con la misma fecha casi siempre significan que copiaste uno dos veces.
+- La letra de esa tabla es chica. Lee cada número dígito por dígito y fíjate en los que se confunden: 0, 6 y 8; 1 y 7; 3 y 8; 5 y 6.
+- Si la tabla trae el importe en pesos de cada renglón, úsalo para comprobar lo que leíste: dentro de la misma tabla, un renglón con más kWh siempre cuesta más que uno con menos. Si un kWh no cuadra con su importe, vuelve a leer ese renglón.
+- El consumo del periodo actual (el de la primera página) no es un renglón del historial: no lo copies ahí salvo que de verdad esté impreso en esa tabla.`
+
+/**
+ * Arm suffixes that change how the bill is read rather than the request:
+ * `+consensus` runs `readReceiptConsensus` — the reads the bot makes —
+ * instead of one `extractReceiptFromFiles`.
+ */
+const VISION_MODES = new Set(['consensus'])
+
+interface VisionArm {
+  arm: ShadowArm
+  variants: string[]
+  consensus: boolean
+  label: string
+}
+
+function readVisionArms(): VisionArm[] {
+  const out: VisionArm[] = []
+  for (const entry of flags('arm')) {
+    const [base, ...variants] = entry.split('+')
+    const [arm] = app.parseShadowArms(base)
+    if (!arm) throw new Error(`Bad arm "${entry}".`)
+    for (const v of variants) {
+      if (!VISION_VARIANTS[v] && !VISION_MODES.has(v)) {
+        throw new Error(
+          `Unknown variant "+${v}". Known: ${[...Object.keys(VISION_VARIANTS), ...VISION_MODES].join(', ')}.`,
+        )
+      }
+    }
+    out.push({
+      arm,
+      variants: variants.filter((v) => VISION_VARIANTS[v]),
+      consensus: variants.includes('consensus'),
+      label: [armLabel(arm), ...variants].join('+'),
+    })
+  }
+  if (out.length === 0) throw new Error('Pass at least one --arm model:effort[+variant].')
+  return out
+}
+
+interface VisionSample {
+  id: string
+  createdAt: string
+  conversationId: string | null
+  prodModel: string
+  parsed: ReceiptExtraction
+  mediaIds: string[]
+  kinds: string
+  files: MediaFile[]
+}
+
+/**
+ * The bills to replay: every logged read whose files all still sit in our
+ * bucket, newest first, one per bill. A bill read more than once (the
+ * consensus read logs every attempt) counts once, with the newest read.
+ */
+async function loadVisionSamples(
+  db: SupabaseClient,
+  accountId: string,
+  limit: number,
+  download: boolean,
+): Promise<{ samples: VisionSample[]; skipped: number }> {
   const { data: readings, error } = await db
     .from('ai_receipt_readings')
-    .select('id, created_at, source, model, parsed, media_ids')
+    .select('id, created_at, conversation_id, source, model, parsed, media_ids')
     .eq('account_id', accountId)
     .not('parsed', 'is', null)
     .order('created_at', { ascending: false })
-    .limit(200)
+    .limit(500)
   if (error) throw error
 
-  // Only reads whose every file still exists in our bucket.
-  const samples: { id: string; createdAt: string; prodModel: string; parsed: ReceiptExtraction; files: MediaFile[]; kinds: string }[] = []
+  const folder = `account-${accountId}`
+  const samples: VisionSample[] = []
+  const seen = new Set<string>()
   let skipped = 0
   for (const r of readings ?? []) {
     if (samples.length >= limit) break
     const mediaIds = (r.media_ids as string[]) ?? []
+    const bill = mediaIds.join(',')
     if (mediaIds.length === 0) {
       skipped++
       continue
     }
+    if (seen.has(bill)) continue
+    seen.add(bill)
+
+    const kinds: string[] = []
     const files: MediaFile[] = []
     for (const mediaId of mediaIds) {
-      const { data: blob } = await db.storage
-        .from(app.INBOUND_MEDIA_BUCKET)
-        .download(app.inboundMediaPath(accountId, mediaId))
-      if (!blob) break
-      files.push({
-        base64: Buffer.from(await blob.arrayBuffer()).toString('base64'),
-        mimeType: blob.type || 'application/octet-stream',
-      })
+      if (download) {
+        const { data: blob } = await db.storage
+          .from(app.INBOUND_MEDIA_BUCKET)
+          .download(app.inboundMediaPath(accountId, mediaId))
+        if (!blob) break
+        const mimeType = blob.type || 'application/octet-stream'
+        files.push({ base64: Buffer.from(await blob.arrayBuffer()).toString('base64'), mimeType })
+        kinds.push(mimeType === 'application/pdf' ? 'pdf' : 'img')
+      } else {
+        // Metadata only: whether the copy exists and what it is.
+        const { data: listed } = await db.storage
+          .from(app.INBOUND_MEDIA_BUCKET)
+          .list(folder, { search: mediaId, limit: 5 })
+        const hit = listed?.find((o) => o.name === mediaId)
+        if (!hit) break
+        kinds.push(hit.metadata?.mimetype === 'application/pdf' ? 'pdf' : 'img')
+      }
     }
-    if (files.length !== mediaIds.length) {
+    if (kinds.length !== mediaIds.length) {
       skipped++
       continue
     }
     samples.push({
       id: r.id as string,
       createdAt: r.created_at as string,
+      conversationId: (r.conversation_id as string | null) ?? null,
       prodModel: r.model as string,
       parsed: r.parsed as ReceiptExtraction,
+      mediaIds,
+      kinds: kinds.join('+'),
       files,
-      kinds: files.map((f) => (f.mimeType === 'application/pdf' ? 'pdf' : 'img')).join('+'),
     })
   }
-  console.log(`vision: ${samples.length} bills (${skipped} skipped: no stored copy) × ${arms.length} arms × ${repeat}`)
+  return { samples, skipped }
+}
 
-  type Run = {
-    sample: number
-    arm: string
-    model: string
-    rep: number
-    extraction: ReceiptExtraction | null
-    error: string | null
-    calls: CallRecord[]
-  }
+async function runVision() {
+  const { db, accountId, config } = await setup()
+  const arms = readVisionArms()
+  const limit = numberFlag('limit', 30)
+  const repeat = numberFlag('repeat', 1)
+  const concurrency = numberFlag('concurrency', 4)
+  const truthPath = flag('truth')
+  const truth = loadTruth(truthPath)
+
+  const { samples, skipped } = await loadVisionSamples(db, accountId, limit, true)
+  const truths = samples.map((s) => truthVerdict(truth[s.id]))
+  const checked = truths.filter(Boolean).length
+  console.log(
+    `vision: ${samples.length} bills (${skipped} skipped: no stored copy; ${checked} checked by a person) × ${arms.length} arms × ${repeat}`,
+  )
+
   const jobs = samples.flatMap((_, s) =>
     arms.flatMap((arm) => Array.from({ length: repeat }, (_, rep) => ({ s, arm, rep }))),
   )
-  const runs: Run[] = []
+  const runs: VisionRun[] = []
   await pool(jobs, concurrency, async ({ s, arm, rep }) => {
-    const r = await captured(() =>
-      app.extractReceiptFromFiles(
-        {
-          provider: 'openai',
-          visionModel: arm.model,
-          visionReasoningEffort: arm.reasoningEffort,
-          apiKey: config.apiKey,
-        },
-        samples[s].files,
-      ),
+    const transforms = arm.variants.map((v) => VISION_VARIANTS[v])
+    const vision = {
+      provider: 'openai' as const,
+      visionModel: arm.arm.model,
+      visionReasoningEffort: arm.arm.reasoningEffort,
+      apiKey: config.apiKey,
+    }
+    const r = await captured(
+      async () => {
+        if (!arm.consensus) {
+          return { extraction: await app.extractReceiptFromFiles(vision, samples[s].files), disputed: false }
+        }
+        const c = await app.readReceiptConsensus(vision, samples[s].files)
+        return { extraction: c?.kind === 'agreed' ? c.extraction : null, disputed: c?.kind === 'disputed' }
+      },
+      transforms.length ? (body) => transforms.reduce((b, t) => t(b), body) : undefined,
     )
-    runs.push({ sample: s, arm: armLabel(arm), model: arm.model, rep, extraction: r.value, error: r.error, calls: r.calls })
+    runs.push({
+      sample: s,
+      arm: arm.label,
+      model: arm.arm.model,
+      rep,
+      extraction: r.value?.extraction ?? null,
+      disputed: r.value?.disputed ?? false,
+      error: r.error,
+      calls: r.calls,
+    })
   })
+
+  const scored: ScoredSample[] = samples.map((s, i) => ({
+    id: s.id,
+    createdAt: s.createdAt,
+    prodModel: s.prodModel,
+    kinds: s.kinds,
+    parsed: s.parsed,
+    checked: truths[i],
+  }))
+  writeReport(
+    'vision',
+    visionReport(scored, runs, arms.map((a) => a.label), truthPath, repeat).join('\n'),
+    // The bills themselves stay out of the dump; the ids lead back to them.
+    { samples: scored, runs },
+  )
+}
+
+/** One run of one arm on one bill, as the JSON dump keeps it. */
+interface VisionRun {
+  sample: number
+  arm: string
+  model: string
+  rep: number
+  extraction: ReceiptExtraction | null
+  /** A consensus run whose reads never agreed — a person reads the bill. */
+  disputed?: boolean
+  error: string | null
+  calls: CallRecord[]
+}
+
+/** A replayed bill, without its files. */
+interface ScoredSample {
+  id: string
+  createdAt: string
+  prodModel: string
+  kinds: string
+  parsed: ReceiptExtraction
+  /** What a person read off the paper, when they did. */
+  checked: Verdict | null
+}
+
+function visionReport(
+  samples: ScoredSample[],
+  runs: VisionRun[],
+  armLabels: string[],
+  truthPath: string | undefined,
+  repeat: number,
+): string[] {
+  const repsOf = (s: number, label: string) =>
+    runs.filter((r) => r.sample === s && r.arm === label).sort((a, b) => a.rep - b.rep)
+  const runVerdict = (r: VisionRun) => (r.disputed ? PERSON : verdictOf(r.extraction))
+  /** Wall time of one run, rate-limit waits excluded: a consensus run's
+   *  three reads overlap, and a read made again for a failed one follows
+   *  them. Under the replay's own load — many bills at once — this runs
+   *  slower than one bill read alone. */
+  const runMs = (r: VisionRun) => {
+    const ms = r.calls.map((c) => c.ms)
+    return Math.max(0, ...ms.slice(0, 3)) + ms.slice(3).reduce((a, b) => a + b, 0)
+  }
+  const quoted = (v: Verdict) => v.panels != null
+  const checked = samples.filter((s) => s.checked).length
 
   const lines: string[] = [
     `# Vision replay — ${new Date().toISOString()}`,
     '',
-    `${samples.length} bills (${samples.filter((s) => s.kinds.includes('pdf')).length} with a PDF), ${repeat} run(s) per arm. ` +
-      'Compared with the extraction production stored for each bill. A disagreement is not automatically the candidate\'s fault: check it against the bill.',
+    `${samples.length} bills (${samples.filter((s) => s.kinds.includes('pdf')).length} with a PDF), ${repeat} run(s) per arm, ` +
+      `${checked} checked against the paper by a person${truthPath ? ` (${truthPath})` : ' (no --truth file)'}.`,
+    '',
+    'Each run resolves to what the customer would get, through `resolveQuote`: `8` quotes 8 panels, `8?` holds 8 for review, ' +
+      '`8~` is one period only, `—` unreadable, `P` a consensus read that gave the bill to a person, `ERR` no reading. ' +
+      '"prod" is the single read production stored, not a checked one. ' +
+      'A **conflicting** bill got two different panel counts from the same arm — the failure being fixed. ' +
+      'A **wrong** quote names a panel count the checked reading does not.',
     '',
   ]
 
   const summary: string[][] = []
-  for (const arm of arms) {
-    const label = armLabel(arm)
+  const policy: string[][] = []
+  for (const label of armLabels) {
     const mine = runs.filter((r) => r.arm === label)
-    const parsedOk = mine.filter((r) => r.extraction)
+    const model = mine[0]?.model ?? ''
+    const isConsensus = label.includes('+consensus')
     const httpErrors = mine.filter((r) => r.calls.some((c) => c.status !== 200))
     const truncated = mine.filter((r) => r.calls.some((c) => c.finishReason === 'length'))
-    const fieldMatch = (field: string) =>
-      pct(
-        parsedOk.filter((r) => sameValue(r.extraction![field as keyof ReceiptExtraction], samples[r.sample].parsed[field as keyof ReceiptExtraction])).length,
-        parsedOk.length,
-      )
-    // Same arm, same bill, different run: how much it disagrees with itself.
+
+    let multi = 0
+    let conflictingBills = 0
     let pairs = 0
-    let stable = 0
+    let samePairs = 0
+    let samePromedio = 0
+    let quotedChecked = 0
+    let rightChecked = 0
+    let quotedRuns = 0
+    let panelsProd = 0
     for (let s = 0; s < samples.length; s++) {
-      const reps = parsedOk.filter((r) => r.sample === s)
-      for (let i = 1; i < reps.length; i++) {
-        pairs++
-        if (sameValue(reps[i].extraction!.promedio_bimestral_kwh, reps[0].extraction!.promedio_bimestral_kwh)) stable++
+      const reps = repsOf(s, label)
+      const verdicts = reps.map(runVerdict)
+      const quotes = verdicts.filter(quoted)
+      if (reps.length >= 2) {
+        multi++
+        if (quotes.some((q) => q.panels !== quotes[0].panels)) conflictingBills++
+        for (let i = 0; i < reps.length; i++) {
+          for (let j = i + 1; j < reps.length; j++) {
+            pairs++
+            if (verdicts[i].key !== 'failed' && verdicts[i].key !== 'person' && verdicts[i].panels === verdicts[j].panels) samePairs++
+            if (reps[i].extraction && sameValue(reps[i].extraction?.promedio_bimestral_kwh, reps[j].extraction?.promedio_bimestral_kwh)) samePromedio++
+          }
+        }
+      }
+      const prod = verdictOf(samples[s].parsed)
+      for (const v of quotes) {
+        quotedRuns++
+        if (v.panels === prod.panels) panelsProd++
+        if (samples[s].checked) {
+          quotedChecked++
+          if (v.panels === samples[s].checked!.panels) rightChecked++
+        }
       }
     }
+    const persons = mine.filter((r) => r.disputed).length
+
+    // What one run costs: every call it made.
+    const runCosts = mine
+      .map((r) => r.calls.reduce((sum, c) => sum + (costUsd(model, c) ?? NaN), 0))
+      .filter((c) => Number.isFinite(c))
     const allCalls = mine.flatMap((r) => r.calls)
-    const costs = allCalls.map((c) => costUsd(arm.model, c)).filter((c): c is number => c != null)
     summary.push([
       label,
-      `${parsedOk.length}/${mine.length}`,
+      String(mine.length),
       String(httpErrors.length),
       String(truncated.length),
-      ...['promedio_bimestral_kwh', 'tarifa', 'historial_bimestres_kwh'].map(fieldMatch),
-      pairs ? pct(stable, pairs) : '—',
+      isConsensus ? `${pct(persons, mine.length)} (${persons})` : '—',
+      multi ? `${conflictingBills}/${multi}` : '—',
+      pairs ? pct(samePairs, pairs) : '—',
+      pairs ? pct(samePromedio, pairs) : '—',
+      quotedChecked ? `${quotedChecked - rightChecked}/${quotedChecked}` : '—',
+      quotedRuns ? pct(panelsProd, quotedRuns) : '—',
+      fmt(avg(mine.map((r) => r.calls.length)), 2),
       fmt(avg(allCalls.map((c) => c.reasoning))),
-      fmt(percentile(allCalls.map((c) => c.ms), 50) ?? null),
-      fmt(percentile(allCalls.map((c) => c.ms), 95) ?? null),
-      usd(costs.length ? (avg(costs)! * 100) : null),
+      fmt(percentile(mine.map(runMs), 50) ?? null),
+      fmt(percentile(mine.map(runMs), 95) ?? null),
+      usd(runCosts.length ? avg(runCosts)! * 100 : null),
     ])
+
+    // The bot's three-read rule, replayed over consecutive triples of single
+    // reads — a preview of `+consensus` from runs already paid for.
+    if (isConsensus) continue
+    let applications = 0
+    let handoffs = 0
+    let readsSpent = 0
+    let simQuotedChecked = 0
+    let simRight = 0
+    let simConflicting = 0
+    let simBills = 0
+    for (let s = 0; s < samples.length; s++) {
+      const verdicts = repsOf(s, label).map(runVerdict)
+      const outcomes: Verdict[] = []
+      for (let i = 0; i + 3 <= verdicts.length; i += 3) {
+        const c = consensusOf(verdicts.slice(i, i + 3))
+        applications++
+        readsSpent += c.reads
+        if (c.verdict === 'handoff') {
+          handoffs++
+          continue
+        }
+        outcomes.push(c.verdict)
+        if (samples[s].checked && quoted(c.verdict)) {
+          simQuotedChecked++
+          if (c.verdict.panels === samples[s].checked!.panels) simRight++
+        }
+      }
+      const quotes = outcomes.filter(quoted)
+      if (quotes.length >= 2) {
+        simBills++
+        if (quotes.some((q) => q.panels !== quotes[0].panels)) simConflicting++
+      }
+    }
+    if (applications) {
+      const perRead = runCosts.length ? avg(runCosts)! : null
+      policy.push([
+        label,
+        String(applications),
+        `${pct(handoffs, applications)} (${handoffs})`,
+        fmt(readsSpent / applications, 2),
+        simBills ? `${simConflicting}/${simBills}` : '—',
+        simQuotedChecked ? `${simQuotedChecked - simRight}/${simQuotedChecked}` : '—',
+        usd(perRead != null ? (perRead * readsSpent * 100) / applications : null),
+      ])
+    }
   }
   lines.push(
     '## Summary',
     '',
     table(
-      ['arm', 'parsed', 'http errors', 'truncated', 'promedio = prod', 'tarifa = prod', 'historial = prod', 'promedio stable across runs', 'avg reasoning tok', 'p50 ms', 'p95 ms', 'cost / 100 bills'],
+      ['arm', 'runs', 'http errors', 'truncated', 'to a person', 'conflicting bills', 'run pairs: same panels', 'run pairs: same promedio', 'wrong quotes (vs checked)', 'panels = prod', 'reads per run', 'avg reasoning tok', 'p50 ms', 'p95 ms', 'cost / 100 bills'],
       summary,
     ),
     '',
+  )
+  if (policy.length) {
+    lines.push(
+      '## Three reads, all agree, else a person — replayed',
+      '',
+      'The bot\'s rule (`readReceiptConsensus`) over consecutive triples of the single reads above ' +
+        '(`--repeat 6` gives two decisions per bill). A preview of `+consensus`; run that arm to measure the code itself.',
+      '',
+      table(['arm', 'decisions', 'to a person', 'reads per bill', 'conflicting bills', 'wrong quotes (vs checked)', 'cost / 100 bills'], policy),
+      '',
+    )
+  }
+  lines.push(
     `Rate-limit retries waited out: ${runs.reduce((a, r) => a + r.calls.reduce((b, c) => b + c.retries, 0), 0)}.`,
+    '',
+  )
+
+  lines.push('## Panels per bill', '')
+  lines.push(
+    table(
+      ['#', 'bill', 'files', 'prod', 'checked', ...armLabels],
+      samples.map((sample, s) => [
+        String(s + 1),
+        sample.id.slice(0, 8),
+        sample.kinds,
+        verdictOf(sample.parsed).label,
+        sample.checked?.label ?? '',
+        ...armLabels.map((label) => {
+          const vs = repsOf(s, label).map(runVerdict)
+          const quotes = vs.filter(quoted)
+          const conflict = quotes.some((q) => q.panels !== quotes[0].panels) ? ' ⚠︎' : ''
+          return vs.map((v) => v.label).join(' ') + conflict
+        }),
+      ]),
+    ),
     '',
   )
 
@@ -503,7 +974,7 @@ async function runVision() {
     const diffs: string[] = []
     for (const r of runs.filter((r) => r.sample === s)) {
       if (!r.extraction) {
-        diffs.push(`- **${r.arm}** #${r.rep + 1}: no extraction${r.error ? ` (${r.error})` : ''}`)
+        diffs.push(`- **${r.arm}** #${r.rep + 1}: ${r.disputed ? 'reads never agreed — to a person' : `no extraction${r.error ? ` (${r.error})` : ''}`}`)
         continue
       }
       for (const field of VISION_FIELDS) {
@@ -520,12 +991,88 @@ async function runVision() {
       lines.push(`### Bill ${sample.id} — ${sample.createdAt.slice(0, 10)}, ${sample.kinds}, read in prod by ${sample.prodModel}`, '', ...diffs, '')
     }
   }
+  return lines
+}
 
-  writeReport('vision', lines.join('\n'), {
-    // The bills themselves stay out of the dump; the ids lead back to them.
-    samples: samples.map((s) => ({ id: s.id, createdAt: s.createdAt, prodModel: s.prodModel, kinds: s.kinds, parsed: s.parsed })),
-    runs,
+/**
+ * Score a vision run already on disk again — against a truth file filled
+ * in since, say — without paying for a single read.
+ *
+ *   npx tsx scripts/eval-models.ts vision-rescore --from eval-out/vision-….json --truth eval-out/vision-truth.json
+ */
+async function runVisionRescore() {
+  loadEnv()
+  app = await loadApp()
+  const from = flag('from')
+  if (!from) throw new Error('Pass --from eval-out/vision-<stamp>.json')
+  const dump = JSON.parse(readFileSync(from, 'utf8')) as {
+    samples: (Omit<ScoredSample, 'checked'> & { checked?: Verdict | null })[]
+    runs: VisionRun[]
+  }
+  const truthPath = flag('truth')
+  const truth = loadTruth(truthPath)
+  const samples: ScoredSample[] = dump.samples.map((s) => ({
+    ...s,
+    checked: truthPath ? truthVerdict(truth[s.id]) : (s.checked ?? null),
+  }))
+  const armLabels = [...new Set(dump.runs.map((r) => r.arm))]
+  const repeat = Math.max(...dump.runs.map((r) => r.rep)) + 1
+  writeReport('vision', visionReport(samples, dump.runs, armLabels, truthPath, repeat).join('\n'), {
+    samples,
+    runs: dump.runs,
+    rescoredFrom: from,
   })
+}
+
+/**
+ * Write (or extend) the file a person fills in to score reads against the
+ * paper: one entry per bill the vision replay would use, pre-filled with
+ * what production read. Nothing is downloaded — the bill is opened in the
+ * CRM, at the conversation link on each entry.
+ *
+ * To check a bill: open it, correct `consumo_periodo_actual_kwh` (the
+ * "Total del periodo" of page 1) and `historial_bimestres_kwh` (the five
+ * most recent rows of the history table, newest first), then put your
+ * name in `checked_by`. Or, if only the panel count matters, set `panels`.
+ * Entries without `checked_by` are ignored.
+ */
+async function runVisionTruth() {
+  const { db, accountId } = await setup()
+  const limit = numberFlag('limit', 30)
+  const path = flag('truth') ?? join(OUT_DIR, 'vision-truth.json')
+  let existing: Record<string, unknown> = {}
+  try {
+    existing = JSON.parse(readFileSync(path, 'utf8'))
+  } catch {
+    // First run: nothing to keep.
+  }
+  const { samples } = await loadVisionSamples(db, accountId, limit, false)
+  let added = 0
+  for (const s of samples) {
+    if (existing[s.id]) continue
+    added++
+    existing[s.id] = {
+      open_in_crm: s.conversationId ? `/inbox?c=${s.conversationId}` : null,
+      read_at: s.createdAt,
+      files: s.kinds,
+      prod_read: {
+        promedio_bimestral_kwh: s.parsed.promedio_bimestral_kwh,
+        panels: verdictOf(s.parsed).label,
+        historial_bimestres_periodo: s.parsed.historial_bimestres_periodo,
+      },
+      consumo_periodo_actual_kwh: s.parsed.consumo_periodo_actual_kwh,
+      historial_bimestres_kwh: s.parsed.historial_bimestres_kwh,
+      checked_by: null,
+      note: '',
+    }
+  }
+  mkdirSync(OUT_DIR, { recursive: true })
+  writeFileSync(path, JSON.stringify(existing, null, 2))
+  console.log(
+    `${path}: ${added} new bill(s), ${Object.keys(existing).length} in total. ` +
+      'Open each in the CRM, correct the two kWh fields against the paper, set checked_by. ' +
+      'Then: npx tsx scripts/eval-models.ts vision --truth ' + path + ' --arm …',
+  )
 }
 
 // ------------------------------------------------------------
@@ -867,13 +1414,15 @@ async function runShadowReport() {
 
 const MODES: Record<string, () => Promise<void>> = {
   vision: runVision,
+  'vision-truth': runVisionTruth,
+  'vision-rescore': runVisionRescore,
   chat: runChat,
   'shadow-report': runShadowReport,
 }
 
 const run = MODES[MODE]
 if (!run) {
-  console.error('Usage: npx tsx scripts/eval-models.ts <vision|chat|shadow-report> [--arm model:effort ...]')
+  console.error('Usage: npx tsx scripts/eval-models.ts <vision|vision-truth|vision-rescore|chat|shadow-report> [--arm model:effort ...]')
   process.exit(1)
 }
 run().catch((err) => {
