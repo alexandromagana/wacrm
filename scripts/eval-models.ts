@@ -39,24 +39,9 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import { loadAiConfig } from '../src/lib/ai/config'
-import { buildConversationContext } from '../src/lib/ai/context'
-import {
-  aiContextMessageLimit,
-  buildDateTimeNote,
-  buildSystemPrompt,
-} from '../src/lib/ai/defaults'
-import { generateReply } from '../src/lib/ai/generate'
-import { retrieveKnowledge } from '../src/lib/ai/knowledge'
-import { latestUserMessage } from '../src/lib/ai/query'
-import {
-  extractReceiptFromFiles,
-  type MediaFile,
-  type ReceiptExtraction,
-} from '../src/lib/ai/receipt'
-import { parseShadowArms, shadowMarkers, type ShadowArm } from '../src/lib/ai/shadow'
+import type { MediaFile, ReceiptExtraction } from '../src/lib/ai/receipt'
+import type { shadowMarkers, ShadowArm } from '../src/lib/ai/shadow'
 import type { AiConfig, GenerateResult } from '../src/lib/ai/types'
-import { INBOUND_MEDIA_BUCKET, inboundMediaPath } from '../src/lib/storage/inbound-media'
 
 const ROOT = process.cwd()
 const OUT_DIR = join(ROOT, 'eval-out')
@@ -69,6 +54,40 @@ function loadEnv(): void {
     }
   }
 }
+
+// encryption.ts reads ENCRYPTION_KEY when it loads, so the app's modules
+// are imported only once `.env` is in place — like the backfill script.
+async function loadApp() {
+  const { loadAiConfig } = await import('../src/lib/ai/config')
+  const { buildConversationContext } = await import('../src/lib/ai/context')
+  const { aiContextMessageLimit, buildDateTimeNote, buildSystemPrompt } =
+    await import('../src/lib/ai/defaults')
+  const { generateReply } = await import('../src/lib/ai/generate')
+  const { retrieveKnowledge } = await import('../src/lib/ai/knowledge')
+  const { latestUserMessage } = await import('../src/lib/ai/query')
+  const { extractReceiptFromFiles } = await import('../src/lib/ai/receipt')
+  const { parseShadowArms, shadowMarkers } = await import('../src/lib/ai/shadow')
+  const { INBOUND_MEDIA_BUCKET, inboundMediaPath } = await import(
+    '../src/lib/storage/inbound-media'
+  )
+  return {
+    loadAiConfig,
+    buildConversationContext,
+    aiContextMessageLimit,
+    buildDateTimeNote,
+    buildSystemPrompt,
+    generateReply,
+    retrieveKnowledge,
+    latestUserMessage,
+    extractReceiptFromFiles,
+    parseShadowArms,
+    shadowMarkers,
+    INBOUND_MEDIA_BUCKET,
+    inboundMediaPath,
+  }
+}
+
+let app: Awaited<ReturnType<typeof loadApp>>
 
 // ------------------------------------------------------------
 // Arguments
@@ -260,6 +279,7 @@ function leaks(text: string | null | undefined): boolean {
 
 async function setup(): Promise<{ db: SupabaseClient; accountId: string; config: AiConfig }> {
   loadEnv()
+  app = await loadApp()
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY
   if (!url || !key) throw new Error('NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required in .env')
@@ -275,14 +295,14 @@ async function setup(): Promise<{ db: SupabaseClient; accountId: string; config:
     accountId = data[0].account_id as string
   }
 
-  const config = await loadAiConfig(db, accountId, { requireActive: false })
+  const config = await app.loadAiConfig(db, accountId, { requireActive: false })
   if (!config) throw new Error(`No AI config for account ${accountId}.`)
   if (config.provider !== 'openai') throw new Error('This script compares OpenAI models only.')
   return { db, accountId, config }
 }
 
 function readArms(): ShadowArm[] {
-  const arms = parseShadowArms(flags('arm').join(','))
+  const arms = app.parseShadowArms(flags('arm').join(','))
   if (arms.length === 0) {
     throw new Error('Pass at least one --arm model:effort (the first is the baseline).')
   }
@@ -342,8 +362,8 @@ async function runVision() {
     const files: MediaFile[] = []
     for (const mediaId of mediaIds) {
       const { data: blob } = await db.storage
-        .from(INBOUND_MEDIA_BUCKET)
-        .download(inboundMediaPath(accountId, mediaId))
+        .from(app.INBOUND_MEDIA_BUCKET)
+        .download(app.inboundMediaPath(accountId, mediaId))
       if (!blob) break
       files.push({
         base64: Buffer.from(await blob.arrayBuffer()).toString('base64'),
@@ -380,7 +400,7 @@ async function runVision() {
   const runs: Run[] = []
   await pool(jobs, concurrency, async ({ s, arm, rep }) => {
     const r = await captured(() =>
-      extractReceiptFromFiles(
+      app.extractReceiptFromFiles(
         {
           provider: 'openai',
           visionModel: arm.model,
@@ -550,18 +570,18 @@ async function collectTurns(db: SupabaseClient, accountId: string, config: AiCon
         if (all[j].content_text) sent.push(all[j].content_text as string)
       }
       const createdAt = all[i].created_at as string
-      const context = await buildConversationContext(db, conversationId, aiContextMessageLimit(), { before: createdAt })
+      const context = await app.buildConversationContext(db, conversationId, app.aiContextMessageLimit(), { before: createdAt })
       if (context.length === 0) continue
       // Same order as the live bot: the knowledge query is the customer's
       // own words, read before any note joins the turn.
-      const knowledge = await retrieveKnowledge(db, accountId, config, latestUserMessage(context))
-      context.push({ role: 'user', content: buildDateTimeNote(new Date(createdAt)) })
+      const knowledge = await app.retrieveKnowledge(db, accountId, config, app.latestUserMessage(context))
+      context.push({ role: 'user', content: app.buildDateTimeNote(new Date(createdAt)) })
       turns.push({
         conversationId,
         createdAt,
         sentText: sent.join('\n\n'),
         context,
-        systemPrompt: buildSystemPrompt({ userPrompt: config.systemPrompt, mode: 'auto_reply', knowledge }),
+        systemPrompt: app.buildSystemPrompt({ userPrompt: config.systemPrompt, mode: 'auto_reply', knowledge }),
       })
     }
   }
@@ -651,7 +671,7 @@ async function runChat() {
   const runs: ChatRun[] = []
   await pool(jobs, concurrency, async ({ t, arm, rep }) => {
     const r = await captured(() =>
-      generateReply({
+      app.generateReply({
         config: { ...config, model: arm.model, reasoningEffort: arm.reasoningEffort },
         systemPrompt: turns[t].systemPrompt,
         messages: turns[t].context,
@@ -681,7 +701,7 @@ async function runChat() {
     const b = base(t)
     if (!b?.result) continue
     for (const r of runs.filter((r) => r.turn === t && r.arm !== baselineLabel)) {
-      const diff = r.result ? markerDiff(shadowMarkers(b.result), shadowMarkers(r.result)) : `failed: ${r.error}`
+      const diff = r.result ? markerDiff(app.shadowMarkers(b.result), app.shadowMarkers(r.result)) : `failed: ${r.error}`
       if (diff) lines.push(`- turn ${t + 1} (${turns[t].conversationId}, ${turns[t].createdAt.slice(0, 16)}) **${r.arm}** — ${diff}`)
     }
   }
