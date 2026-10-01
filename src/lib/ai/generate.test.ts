@@ -354,6 +354,70 @@ describe('generateReply — OpenAI', () => {
     expect(body).not.toHaveProperty('reasoning_effort')
   })
 
+  it('sends the effort the account configured, over the name-based default', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({ choices: [{ message: { content: 'Claro, con gusto te ayudo.' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateReply({
+      config: config({ model: 'gpt-5.6-terra', reasoningEffort: 'low' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.reasoning_effort).toBe('low')
+  })
+
+  it('never sends "none" to a gpt-6 model by name — GPT-6.1 Sol rejects it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      okResponse({ choices: [{ message: { content: 'Claro, con gusto te ayudo.' } }] }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await generateReply({
+      config: config({ model: 'gpt-6.1-sol', reasoningEffort: null }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('reports cached and reasoning tokens when the provider breaks them out', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        okResponse({
+          choices: [{ message: { content: 'Claro.' } }],
+          usage: {
+            prompt_tokens: 8600,
+            completion_tokens: 300,
+            total_tokens: 8900,
+            prompt_tokens_details: { cached_tokens: 7000 },
+            completion_tokens_details: { reasoning_tokens: 220 },
+          },
+        }),
+      ),
+    )
+
+    const res = await generateReply({
+      config: config({ model: 'gpt-6.1-sol', reasoningEffort: 'low' }),
+      systemPrompt: 'sys',
+      messages: [{ role: 'user', content: 'Hi' }],
+    })
+
+    expect(res.usage).toEqual({
+      promptTokens: 8600,
+      completionTokens: 300,
+      totalTokens: 8900,
+      cachedTokens: 7000,
+      reasoningTokens: 220,
+    })
+  })
+
   it('names the reasoning-budget cause when a reasoning model returns nothing', async () => {
     // The exact shape that silenced the bot in prod: gpt-5-mini spent
     // the whole budget thinking and emitted no visible token.

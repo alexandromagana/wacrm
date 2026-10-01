@@ -1,7 +1,8 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
   buildExtraction,
+  extractReceiptFromFiles,
   parseReceiptJson,
   isPlausibleAverage,
   formatHeldQuoteNote,
@@ -1136,5 +1137,44 @@ describe('buildExtraction', () => {
     expect(r.promedio_bimestral_kwh).toBeNull()
     expect(r.cantidad_periodos_usados).toBe(0)
     expect(r.costo_periodo_mxn).toBeNull()
+  })
+})
+
+describe('extractReceiptFromFiles — reasoning effort on the OpenAI read', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  const files = [{ base64: 'AAAA', mimeType: 'image/jpeg' }]
+
+  function stubOpenAi() {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: '{}' } }] }),
+    } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+    return () => JSON.parse(fetchMock.mock.calls[0][1].body)
+  }
+
+  it('sends the effort the account chose for reading bills', async () => {
+    const body = stubOpenAi()
+    await extractReceiptFromFiles(
+      {
+        provider: 'openai',
+        visionModel: 'gpt-6-luna',
+        visionReasoningEffort: 'low',
+        apiKey: 'sk-test',
+      },
+      files,
+    )
+    expect(body().reasoning_effort).toBe('low')
+  })
+
+  it('sends none when unset — the model default, as every read ran before', async () => {
+    const body = stubOpenAi()
+    await extractReceiptFromFiles(
+      { provider: 'openai', visionModel: 'gpt-5.6-luna', apiKey: 'sk-test' },
+      files,
+    )
+    expect(body()).not.toHaveProperty('reasoning_effort')
   })
 })

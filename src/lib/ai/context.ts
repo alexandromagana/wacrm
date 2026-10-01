@@ -47,16 +47,24 @@ function toContent(m: DbMessage): string | null {
  *
  * Ordered oldest-first (chronological) so the transcript reads
  * naturally and the most recent customer message lands last.
+ *
+ * `before` (an ISO timestamp) cuts the history off just ahead of that
+ * moment — the conversation as the bot saw it when it wrote a past
+ * reply. Only `scripts/eval-models.ts` replays use it; the live bot
+ * always reads up to now.
  */
 export async function buildConversationContext(
   db: SupabaseClient,
   conversationId: string,
   limit: number = aiContextMessageLimit(),
+  opts: { before?: string } = {},
 ): Promise<ChatMessage[]> {
-  const { data, error } = await db
+  let query = db
     .from('messages')
     .select('sender_type, content_type, content_text')
     .eq('conversation_id', conversationId)
+  if (opts.before) query = query.lt('created_at', opts.before)
+  const { data, error } = await query
     .order('created_at', { ascending: false })
     .limit(limit)
 

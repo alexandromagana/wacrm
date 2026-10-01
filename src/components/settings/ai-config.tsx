@@ -28,7 +28,7 @@ import {
 import { SettingsPanelHead } from './settings-panel-head';
 import { AiKnowledgeCard } from './ai-knowledge';
 import { AI_PROVIDER_DEFAULT_MODEL } from '@/lib/ai/defaults';
-import type { AiProvider } from '@/lib/ai/types';
+import { REASONING_EFFORTS, type AiProvider } from '@/lib/ai/types';
 import type { AccountMember } from '@/types';
 import { fetchAccountMembers, memberLabel } from '@/lib/account/members';
 import { useTranslations } from 'next-intl';
@@ -38,6 +38,10 @@ const MASKED_KEY = '••••••••••••••••';
 // Radix Select can't use an empty-string item value, so the "leave
 // unassigned" choice gets a sentinel that maps to null in the payload.
 const HANDOFF_QUEUE = '__queue__';
+
+// Same trick for "no effort chosen", which maps to null: the code
+// default for the chat call, nothing sent for the image read.
+const EFFORT_DEFAULT = '__default__';
 
 const PROVIDER_LABEL: Record<AiProvider, string> = {
   openai: 'OpenAI',
@@ -64,6 +68,9 @@ export function AiConfig() {
   const [model, setModel] = useState(AI_PROVIDER_DEFAULT_MODEL.openai);
   // Blank = read images with the chat model (backwards-compatible default).
   const [visionModel, setVisionModel] = useState('');
+  // Empty string = no effort chosen (null in the payload).
+  const [reasoningEffort, setReasoningEffort] = useState('');
+  const [visionReasoningEffort, setVisionReasoningEffort] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [keyEdited, setKeyEdited] = useState(false);
   const [showKey, setShowKey] = useState(false);
@@ -99,6 +106,8 @@ export function AiConfig() {
         setProvider(data.provider);
         setModel(data.model);
         setVisionModel(data.vision_model ?? '');
+        setReasoningEffort(data.reasoning_effort ?? '');
+        setVisionReasoningEffort(data.vision_reasoning_effort ?? '');
         setSystemPrompt(data.system_prompt ?? '');
         setIsActive(data.is_active);
         setAutoReplyEnabled(data.auto_reply_enabled);
@@ -149,6 +158,8 @@ export function AiConfig() {
     provider,
     model: model.trim(),
     vision_model: visionModel.trim() || null,
+    reasoning_effort: reasoningEffort || null,
+    vision_reasoning_effort: visionReasoningEffort || null,
     api_key: keyPayload(),
     embeddings_api_key: embeddingsKeyPayload(),
     system_prompt: systemPrompt.trim() || null,
@@ -167,6 +178,7 @@ export function AiConfig() {
         body: JSON.stringify({
           provider,
           model: model.trim(),
+          reasoning_effort: reasoningEffort || null,
           api_key: keyPayload(),
         }),
       });
@@ -303,18 +315,47 @@ export function AiConfig() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="ai-vision-model">{t('visionModel')}</Label>
-              <Input
-                id="ai-vision-model"
-                value={visionModel}
-                onChange={(e) => setVisionModel(e.target.value)}
-                placeholder={t('visionModelPlaceholder')}
+              <Label htmlFor="ai-reasoning">{t('reasoningEffort')}</Label>
+              <EffortSelect
+                id="ai-reasoning"
+                value={reasoningEffort}
+                onChange={setReasoningEffort}
+                defaultLabel={t('reasoningEffortDefault')}
                 disabled={disabled}
               />
               <p className="text-xs text-muted-foreground">
-                {t('visionModelHint')}
+                {t('reasoningEffortHint')}
               </p>
             </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="ai-vision-model">{t('visionModel')}</Label>
+                <Input
+                  id="ai-vision-model"
+                  value={visionModel}
+                  onChange={(e) => setVisionModel(e.target.value)}
+                  placeholder={t('visionModelPlaceholder')}
+                  disabled={disabled}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ai-vision-reasoning">
+                  {t('visionReasoningEffort')}
+                </Label>
+                <EffortSelect
+                  id="ai-vision-reasoning"
+                  value={visionReasoningEffort}
+                  onChange={setVisionReasoningEffort}
+                  defaultLabel={t('reasoningEffortDefault')}
+                  disabled={disabled}
+                />
+              </div>
+            </div>
+            <p className="-mt-2 text-xs text-muted-foreground">
+              {t('visionModelHint')} {t('visionReasoningEffortHint')}
+            </p>
 
             <div className="space-y-2">
               <Label htmlFor="ai-key">{t('apiKey')}</Label>
@@ -541,5 +582,48 @@ export function AiConfig() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Reasoning effort picker. The values are OpenAI's own, shown as-is so
+ * they read the same as the provider's docs; not every model takes
+ * every value, and saving checks the pair with the provider first.
+ */
+function EffortSelect({
+  id,
+  value,
+  onChange,
+  defaultLabel,
+  disabled,
+}: {
+  id: string;
+  value: string;
+  onChange: (next: string) => void;
+  defaultLabel: string;
+  disabled: boolean;
+}) {
+  const items = [
+    { value: EFFORT_DEFAULT, label: defaultLabel },
+    ...REASONING_EFFORTS.map((e) => ({ value: e, label: e })),
+  ];
+  return (
+    <Select
+      items={items}
+      value={value || EFFORT_DEFAULT}
+      onValueChange={(v) => onChange(!v || v === EFFORT_DEFAULT ? '' : v)}
+      disabled={disabled}
+    >
+      <SelectTrigger id={id} className="w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {items.map((item) => (
+          <SelectItem key={item.value} value={item.value}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

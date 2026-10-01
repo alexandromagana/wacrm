@@ -1,11 +1,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decrypt } from '@/lib/whatsapp/encryption'
-import type { AiConfig } from './types'
+import { isReasoningEffort, type AiConfig } from './types'
 
 interface AiConfigRow {
   provider: 'openai' | 'anthropic'
   model: string
   vision_model: string | null
+  reasoning_effort: string | null
+  vision_reasoning_effort: string | null
   api_key: string
   system_prompt: string | null
   is_active: boolean
@@ -16,7 +18,7 @@ interface AiConfigRow {
 }
 
 const CONFIG_COLUMNS =
-  'provider, model, vision_model, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
+  'provider, model, vision_model, reasoning_effort, vision_reasoning_effort, api_key, system_prompt, is_active, auto_reply_enabled, auto_reply_max_per_conversation, handoff_agent_id, embeddings_api_key'
 
 /**
  * Load and decrypt the account's AI config for *use* (draft or
@@ -76,6 +78,14 @@ export async function loadAiConfig(
     // Empty / unset means "same model as chat" — keeps every existing
     // account on today's exact behaviour until someone opts in.
     visionModel: row.vision_model?.trim() || row.model,
+    // The column CHECK already limits these; the guard keeps a value this
+    // code doesn't know from reaching the provider as-is.
+    reasoningEffort: isReasoningEffort(row.reasoning_effort)
+      ? row.reasoning_effort
+      : null,
+    visionReasoningEffort: isReasoningEffort(row.vision_reasoning_effort)
+      ? row.vision_reasoning_effort
+      : null,
     apiKey: decrypt(row.api_key),
     systemPrompt: row.system_prompt,
     isActive: row.is_active,

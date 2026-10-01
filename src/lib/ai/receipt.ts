@@ -994,7 +994,10 @@ export function formatStalledQuoteNote(reason?: QuoteHold['reason']): string {
  * readable", and only the throw carries that difference.
  */
 export async function extractReceiptFromFiles(
-  config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>,
+  config: Pick<
+    AiConfig,
+    'provider' | 'visionModel' | 'visionReasoningEffort' | 'apiKey'
+  >,
   files: MediaFile[],
   audit?: ReceiptAuditContext,
 ): Promise<ReceiptExtraction | null> {
@@ -1109,7 +1112,10 @@ function groupIntoReceipts(
  * Never throws.
  */
 export async function extractReceipts(args: {
-  config: Pick<AiConfig, 'provider' | 'visionModel' | 'apiKey'>
+  config: Pick<
+    AiConfig,
+    'provider' | 'visionModel' | 'visionReasoningEffort' | 'apiKey'
+  >
   accessToken: string
   mediaIds: string[]
   /** Media already read on an earlier turn. Skipped rather than
@@ -1195,7 +1201,7 @@ export interface MediaFile {
 }
 
 async function visionOpenAi(
-  config: Pick<AiConfig, 'visionModel' | 'apiKey'>,
+  config: Pick<AiConfig, 'visionModel' | 'visionReasoningEffort' | 'apiKey'>,
   files: MediaFile[],
 ): Promise<string | null> {
   const res = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -1233,6 +1239,12 @@ async function visionOpenAi(
       ],
       max_completion_tokens: aiVisionMaxTokens(),
       response_format: { type: 'json_object' },
+      // Only when the account chose one. Unset sends nothing, which is
+      // how every read ran before the setting existed (the model's own
+      // default) — and which a non-reasoning vision model requires.
+      ...(config.visionReasoningEffort
+        ? { reasoning_effort: config.visionReasoningEffort }
+        : {}),
     }),
     signal: AbortSignal.timeout(aiVisionTimeoutMs()),
   })

@@ -96,3 +96,34 @@ describe('buildConversationContext', () => {
     ])
   })
 })
+
+describe('buildConversationContext — replaying a past turn', () => {
+  it('reads only what came before the given moment', async () => {
+    const calls: [string, unknown][] = []
+    const chain = {
+      from: () => chain,
+      select: () => chain,
+      eq: () => chain,
+      lt: (column: string, value: unknown) => {
+        calls.push([column, value])
+        return chain
+      },
+      order: () => chain,
+      limit: () => Promise.resolve({ data: [], error: null }),
+    }
+    await buildConversationContext(
+      chain as unknown as SupabaseClient,
+      'conv-1',
+      20,
+      { before: '2026-09-30T18:00:00.000Z' },
+    )
+    expect(calls).toEqual([['created_at', '2026-09-30T18:00:00.000Z']])
+  })
+
+  it('reads up to now when no moment is given — the live bot', async () => {
+    // The default fake has no `lt`; calling it would throw.
+    await expect(
+      buildConversationContext(fakeDb([]), 'conv-1'),
+    ).resolves.toEqual([])
+  })
+})

@@ -41,6 +41,10 @@ export async function logAiUsage(
       prompt_tokens: args.usage.promptTokens,
       completion_tokens: args.usage.completionTokens,
       total_tokens: args.usage.totalTokens,
+      // NULL, not 0, when the provider didn't break these out — "not
+      // reported" and "none spent" price differently.
+      cached_tokens: args.usage.cachedTokens ?? null,
+      reasoning_tokens: args.usage.reasoningTokens ?? null,
     })
     if (error) {
       console.error('[ai usage] log insert failed:', error)

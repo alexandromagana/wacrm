@@ -42,6 +42,7 @@ import {
   TYPED_CONSUMPTION_NOTE,
 } from './typed-consumption'
 import { logAiUsage } from './usage'
+import { runShadow } from './shadow'
 import { latestUserMessage } from './query'
 import { markReceiptMediaRead } from './inbound-buffer'
 import { engineSendText } from '@/lib/flows/meta-send'
@@ -605,6 +606,13 @@ export async function dispatchInboundToAiReply(
       knowledge,
     })
 
+    const generationStartedAt = Date.now()
+    const generation = await generateReply({
+      config,
+      systemPrompt,
+      messages,
+    })
+    const generationMs = Date.now() - generationStartedAt
     const {
       text,
       handoff,
@@ -615,11 +623,7 @@ export async function dispatchInboundToAiReply(
       consumptionVerdict,
       packagePanels,
       usage,
-    } = await generateReply({
-      config,
-      systemPrompt,
-      messages,
-    })
+    } = generation
 
     // The customer just told us how many meters the property has. That
     // answer can complete the batch on this very turn — the bot's reply
@@ -754,6 +758,19 @@ export async function dispatchInboundToAiReply(
       provider: config.provider,
       model: config.model,
       usage,
+    })
+
+    // Candidate models answer this same turn — same prompt, same notes —
+    // for `ai_shadow_runs` only. Never sent, never touches the
+    // conversation, never rejects; a no-op unless AI_SHADOW_ARMS is set.
+    void runShadow(db, {
+      accountId,
+      conversationId,
+      config,
+      systemPrompt,
+      messages,
+      baseline: generation,
+      baselineLatencyMs: generationMs,
     })
 
     // The batch closed on this very turn — the customer's "sí, son esos"
