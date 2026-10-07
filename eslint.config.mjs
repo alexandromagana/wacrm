@@ -14,6 +14,9 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // Vendored minified opus-recorder encoder worker (served statically).
     "public/opus/**",
+    // Claude Code state. Its worktrees are full checkouts, `.next/` build
+    // output included, which would otherwise be linted as part of this repo.
+    ".claude/**",
   ]),
 
   // React Compiler rules: kept on, demoted to warnings.
