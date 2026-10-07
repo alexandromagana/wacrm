@@ -47,10 +47,13 @@ export function InboxStatTiles({
     return { active, unread, pending, suggested };
   }, [conversations]);
 
+  // Colour only where the count is a state: unread is the accent (it
+  // is the one to act on), pending is waiting (warning). Active and
+  // stale are plain totals.
   const tiles: { key: StatTileFilter; dot: string }[] = [
-    { key: "active", dot: "bg-sky-400" },
+    { key: "active", dot: "bg-muted-foreground" },
     { key: "unread", dot: "bg-primary" },
-    { key: "pending", dot: "bg-amber-400" },
+    { key: "pending", dot: "bg-warning" },
     { key: "suggested", dot: "bg-muted-foreground" },
   ];
 
@@ -68,7 +71,7 @@ export function InboxStatTiles({
               "rounded-lg border px-2 py-1 text-left transition-colors lg:py-1.5",
               selected
                 ? "border-primary/50 bg-primary/10"
-                : "border-border bg-card-2 hover:bg-muted",
+                : "border-border bg-card hover:bg-muted",
             )}
           >
             <span className="flex items-center gap-1">
@@ -76,7 +79,13 @@ export function InboxStatTiles({
                 className={cn("size-1.5 shrink-0 rounded-full", tile.dot)}
                 aria-hidden
               />
-              <span className="truncate text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+              <span
+                className={cn(
+                  "truncate text-[11px] font-medium uppercase tracking-wide",
+                  // On the accent tint the muted grey fell to 4.4:1.
+                  selected ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
                 {labels[tile.key]}
               </span>
             </span>

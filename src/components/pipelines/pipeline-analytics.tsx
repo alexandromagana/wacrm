@@ -2,14 +2,7 @@
 
 import { useMemo } from "react";
 import type { Deal, PipelineStage } from "@/types";
-import {
-  DollarSign,
-  FileText,
-  TrendingUp,
-  Trophy,
-  Info,
-} from "lucide-react";
-import { CircleX, Plus } from "@/components/animated-icons";
+import { Info } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -50,28 +43,24 @@ export function PipelineAnalytics({ stages, deals, range }: PipelineAnalyticsPro
     <TooltipProvider>
       <div className="grid grid-cols-2 gap-3 rounded-xl border border-border bg-card/60 p-4 sm:grid-cols-3 xl:grid-cols-6">
         <Metric
-          icon={<Plus className="h-4 w-4 text-muted-foreground" />}
           label={t("newDeals")}
           value={String(stats.newCount)}
           tooltip={t("newDealsTooltip")}
           t={t}
         />
         <Metric
-          icon={<FileText className="h-4 w-4 text-blue-400" />}
           label={t("quoted")}
           value={String(stats.quotedCount)}
           tooltip={t("quotedTooltip")}
           t={t}
         />
         <Metric
-          icon={<Trophy className="h-4 w-4 text-primary" />}
           label={t("won")}
           value={String(stats.wonCount)}
           tooltip={t("wonTooltip", { value: formatCurrency(stats.wonValue, defaultCurrency) })}
           t={t}
         />
         <Metric
-          icon={<CircleX className="h-4 w-4 text-red-400" />}
           label={t("lost")}
           value={String(stats.lostCount)}
           tooltip={
@@ -82,14 +71,12 @@ export function PipelineAnalytics({ stages, deals, range }: PipelineAnalyticsPro
           t={t}
         />
         <Metric
-          icon={<DollarSign className="h-4 w-4 text-primary" />}
           label={t("openValue")}
           value={formatCurrency(stats.openValue, defaultCurrency)}
           tooltip={t("openValueTooltip", { count: stats.openCount })}
           t={t}
         />
         <Metric
-          icon={<TrendingUp className="h-4 w-4 text-purple-400" />}
           label={t("weightedValue")}
           value={formatCurrency(stats.weightedValue, defaultCurrency)}
           tooltip={t("weightedValueTooltip")}
@@ -100,14 +87,14 @@ export function PipelineAnalytics({ stages, deals, range }: PipelineAnalyticsPro
   );
 }
 
+/** Value first, then its name — with the "how is this counted" note
+ *  one tap away, since every tile here counts within the chosen month. */
 function Metric({
-  icon,
   label,
   value,
   tooltip,
   t,
 }: {
-  icon: React.ReactNode;
   label: string;
   value: string;
   tooltip: string;
@@ -116,8 +103,15 @@ function Metric({
 }) {
   return (
     <div className="rounded-lg bg-muted/50 p-3">
-      <div className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {icon}
+      <p
+        className={cn(
+          'leading-none font-bold tracking-tight tabular-nums text-foreground',
+          panelValueSize(value),
+        )}
+      >
+        {value}
+      </p>
+      <div className="mt-1.5 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <span>{label}</span>
         <Tooltip>
           <TooltipTrigger
@@ -125,7 +119,7 @@ function Metric({
               <button
                 type="button"
                 aria-label={t("howCalculated", { label })}
-                className="ml-auto text-muted-foreground hover:text-foreground focus:outline-none"
+                className="-my-1.5 -mr-1.5 ml-auto flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
               />
             }
           >
@@ -136,14 +130,6 @@ function Metric({
           </TooltipContent>
         </Tooltip>
       </div>
-      <p
-        className={cn(
-          'mt-1 leading-none font-bold tracking-tight tabular-nums text-foreground',
-          panelValueSize(value),
-        )}
-      >
-        {value}
-      </p>
     </div>
   );
 }

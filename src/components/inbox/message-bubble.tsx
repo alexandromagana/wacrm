@@ -71,7 +71,7 @@ function StatusIcon({
               : t("failedGeneric")
           }
         >
-          <CircleX className="h-3 w-3 text-red-400" />
+          <CircleX className="h-3 w-3 text-danger" />
         </span>
       );
     default:
@@ -518,7 +518,7 @@ export function MessageBubble({
               glance. */}
           {message.ai_generated && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-bubble-out-foreground/20 px-1.5 py-px text-[9px] font-semibold uppercase leading-none tracking-wide text-bubble-out-foreground"
+              className="inline-flex items-center gap-0.5 rounded-full bg-bubble-out-foreground/20 px-1.5 py-px text-[10px] font-semibold uppercase leading-none tracking-wide text-bubble-out-foreground"
               title={t("aiBadgeTitle")}
             >
               <Sparkles className="h-2.5 w-2.5" />
@@ -527,13 +527,14 @@ export function MessageBubble({
           )}
           <span
             className={cn(
-              "text-[10px]",
+              "text-[11px] tabular-nums",
               // Each side's timestamp reads against its own bubble
               // fill — the two sides invert between light and dark, so
               // a single neutral would go low-contrast on one of them.
+              // At /60 the inbound one measured 4.4:1 on light grey.
               isAgent
                 ? "text-bubble-out-foreground/70"
-                : "text-bubble-in-foreground/60",
+                : "text-bubble-in-foreground/70",
             )}
           >
             {time}

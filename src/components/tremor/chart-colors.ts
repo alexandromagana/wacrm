@@ -68,6 +68,16 @@ export const chartColors = {
     fill: "fill-fuchsia-500",
     text: "text-fuchsia-500",
   },
+  // Local addition: the active accent theme, so a single-series chart
+  // can follow the brand colour instead of a fixed hue. Kept last so
+  // AvailableChartColors' default order (charts that pass no `colors`)
+  // is unchanged.
+  primary: {
+    bg: "bg-primary",
+    stroke: "stroke-primary",
+    fill: "fill-primary",
+    text: "text-primary",
+  },
 } as const satisfies {
   [color: string]: {
     [key in ColorUtility]: string

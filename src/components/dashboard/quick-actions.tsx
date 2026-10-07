@@ -1,55 +1,61 @@
 "use client"
 
-import Link from 'next/link'
-import { UserPlus, Briefcase, Zap } from 'lucide-react'
-import { Radio } from '@/components/animated-icons'
+import { useRouter } from 'next/navigation'
+import { Briefcase, ChevronDown, Plus, Radio, UserPlus, Zap } from 'lucide-react'
 import type { ComponentType } from 'react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 import { useTranslations } from 'next-intl'
 
-// Quick-action shortcuts. Each navigates to the page that owns the
-// relevant "create" flow. We deliberately don't try to auto-open any
-// modal on the target page, that'd require touching those pages,
-// which is out of scope here.
+// Shortcuts to the page that owns each "create" flow. We deliberately
+// don't try to auto-open any modal on the target page — that would mean
+// touching those pages, which is out of scope here.
 //
-// These sit inline in the dashboard header rather than in a row of
-// their own: as full-width tiles they cost 62px of height plus a gap
-// to carry four words, and the header had ~1280px of empty space
-// sitting right next to the title.
+// They live behind one "Create" menu: none of them is what the
+// dashboard is opened for, so four buttons in the header competed with
+// the queue for attention without being the next thing to do.
 interface Action {
   labelKey: string
   href: string
   icon: ComponentType<{ className?: string }>
-  tint: string
 }
 
 const ACTIONS: Action[] = [
-  { labelKey: 'newContact', href: '/contacts', icon: UserPlus, tint: 'text-primary' },
-  { labelKey: 'newDeal', href: '/pipelines', icon: Briefcase, tint: 'text-blue-400' },
-  { labelKey: 'newBroadcast', href: '/broadcasts/new', icon: Radio, tint: 'text-amber-400' },
-  { labelKey: 'newAutomation', href: '/automations/new', icon: Zap, tint: 'text-primary' },
+  { labelKey: 'newContact', href: '/contacts', icon: UserPlus },
+  { labelKey: 'newDeal', href: '/pipelines', icon: Briefcase },
+  { labelKey: 'newBroadcast', href: '/broadcasts/new', icon: Radio },
+  { labelKey: 'newAutomation', href: '/automations/new', icon: Zap },
 ]
 
 export function QuickActions() {
   const t = useTranslations('Dashboard.quickActions')
+  const tp = useTranslations('Dashboard.page')
+  const router = useRouter()
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      {ACTIONS.map((a) => {
-        const Icon = a.icon
-        return (
-          <Link
-            key={a.href}
-            href={a.href}
-            className="group inline-flex items-center gap-2 rounded-lg border border-border bg-card px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-muted/60"
-          >
-            <Icon className={`h-[18px] w-[18px] shrink-0 ${a.tint}`} />
-            <span className="text-sm font-medium whitespace-nowrap text-foreground">
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="lg" />}>
+        <Plus aria-hidden />
+        {tp('create')}
+        <ChevronDown className="text-muted-foreground" aria-hidden />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-auto min-w-44">
+        {ACTIONS.map((a) => {
+          const Icon = a.icon
+          return (
+            <DropdownMenuItem key={a.href} onClick={() => router.push(a.href)}>
+              <Icon className="h-4 w-4" />
               {t(a.labelKey as string)}
-            </span>
-          </Link>
-        )
-      })}
-    </div>
+            </DropdownMenuItem>
+          )
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

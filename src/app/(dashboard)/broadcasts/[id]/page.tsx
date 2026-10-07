@@ -21,16 +21,11 @@ import {
 } from '@/components/ui/dropdown-menu';
 import {
   Loader2,
-  Eye,
   AlertCircle,
   Filter,
 } from 'lucide-react';
 import {
   ArrowLeft,
-  Users,
-  Send,
-  CheckCheck,
-  MessageCircle,
   Download,
   ChevronDown,
   Trash2,
@@ -45,23 +40,27 @@ import { useTranslations } from 'next-intl';
 interface StatCardProps {
   label: string;
   value: number;
-  total: number;
-  icon: React.ReactNode;
-  color: string;
+  /** Pre-formatted "N% of M recipients"; omitted on the total itself. */
+  share?: string;
+  /** Failures get the danger colour (and an icon) once there are any. */
+  tone?: 'danger';
 }
 
-function StatCard({ label, value, total, icon, color }: StatCardProps) {
-  const pct = total > 0 ? Math.round((value / total) * 100) : 0;
+/** Value first, then what it counts, then its share of the audience. */
+function StatCard({ label, value, share, tone }: StatCardProps) {
+  const alarm = tone === 'danger' && value > 0;
   return (
     <div className="rounded-xl border border-border bg-card p-4">
-      <div className="flex items-center justify-between">
-        <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${color}`}>
-          {icon}
-        </div>
-        <span className="text-xs text-muted-foreground">{pct}%</span>
-      </div>
-      <p className="mt-3 text-2xl font-bold text-foreground">{value.toLocaleString()}</p>
-      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={`text-2xl font-bold tabular-nums ${alarm ? 'text-danger' : 'text-foreground'}`}
+      >
+        {value.toLocaleString()}
+      </p>
+      <p className="mt-1 flex items-center gap-1.5 text-sm font-medium text-foreground">
+        {alarm && <AlertCircle className="h-3.5 w-3.5 shrink-0 text-danger" aria-hidden />}
+        {label}
+      </p>
+      {share && <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">{share}</p>}
     </div>
   );
 }
@@ -69,7 +68,6 @@ function StatCard({ label, value, total, icon, color }: StatCardProps) {
 interface FunnelStep {
   label: string;
   value: number;
-  color: string;
 }
 
 /**
@@ -77,11 +75,19 @@ interface FunnelStep {
  * Width is relative to the largest step (typically Sent) so we
  * always render a full bar at the top and proportional tails.
  */
-function FunnelChart({ steps }: { steps: FunnelStep[] }) {
+function FunnelChart({
+  steps,
+  title,
+  shareLabel,
+}: {
+  steps: FunnelStep[];
+  title: string;
+  shareLabel: (pct: number) => string;
+}) {
   const max = Math.max(...steps.map((s) => s.value), 1);
   return (
     <div className="rounded-xl border border-border bg-card p-4">
-      <h3 className="mb-4 text-sm font-medium text-foreground">Funnel</h3>
+      <h3 className="mb-4 text-sm font-medium text-foreground">{title}</h3>
       <div className="space-y-2">
         {steps.map((step) => {
           const pctOfMax = Math.max(5, Math.round((step.value / max) * 100));
@@ -96,13 +102,13 @@ function FunnelChart({ steps }: { steps: FunnelStep[] }) {
               </span>
               <div className="relative h-7 flex-1 rounded-full bg-muted">
                 <div
-                  className={`h-7 rounded-full ${step.color} transition-[width] duration-500`}
+                  className="h-7 rounded-full bg-primary/25 transition-[width] duration-500 motion-reduce:transition-none"
                   style={{ width: `${pctOfMax}%` }}
                 />
                 <span className="absolute inset-0 flex items-center px-3 text-xs font-medium text-foreground">
                   {step.value.toLocaleString()}
-                  <span className="ml-2 text-muted-foreground/80">
-                    ({pctOfSent}%)
+                  <span className="ml-2 text-muted-foreground">
+                    {shareLabel(pctOfSent)}
                   </span>
                 </span>
               </div>
@@ -257,7 +263,7 @@ export default function BroadcastDetailPage() {
   if (error || !broadcast) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error ?? t('notFound')}</p>
+        <p className="text-sm text-danger">{error ?? t('notFound')}</p>
         <Button variant="outline" onClick={() => router.push('/broadcasts')}>
           {t('backToBroadcasts')}
         </Button>
@@ -268,11 +274,17 @@ export default function BroadcastDetailPage() {
   const status = getBroadcastStatus(broadcast.status);
 
   const funnelSteps: FunnelStep[] = [
-    { label: t('stats.sent'), value: broadcast.sent_count, color: 'bg-primary' },
-    { label: t('stats.delivered'), value: broadcast.delivered_count, color: 'bg-teal-500' },
-    { label: t('stats.read'), value: broadcast.read_count, color: 'bg-blue-500' },
-    { label: t('stats.replied'), value: broadcast.replied_count, color: 'bg-indigo-500' },
+    { label: t('stats.sent'), value: broadcast.sent_count },
+    { label: t('stats.delivered'), value: broadcast.delivered_count },
+    { label: t('stats.read'), value: broadcast.read_count },
+    { label: t('stats.replied'), value: broadcast.replied_count },
   ];
+  const total = broadcast.total_recipients;
+  const share = (value: number) =>
+    t('stats.shareOfRecipients', {
+      pct: total > 0 ? Math.round((value / total) * 100) : 0,
+      total: total.toLocaleString(),
+    });
 
   return (
     <div className="space-y-6">
@@ -311,8 +323,8 @@ export default function BroadcastDetailPage() {
             because orphaning in-flight Meta messages would leave the
             funnel inconsistent. */}
         {confirmDelete ? (
-          <div className="flex items-center gap-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-sm">
-            <span className="text-red-300">{t('deletePrompt')}</span>
+          <div className="flex items-center gap-2 rounded-md border border-danger/30 bg-danger/10 px-3 py-1.5 text-sm">
+            <span className="text-foreground">{t('deletePrompt')}</span>
             <Button
               variant="outline"
               size="sm"
@@ -342,7 +354,7 @@ export default function BroadcastDetailPage() {
                 ? t('cannotDeleteSending')
                 : t('deleteHover')
             }
-            className="border-red-500/30 bg-transparent text-red-400 hover:bg-red-500/10 disabled:opacity-40"
+            className="border-danger/30 bg-transparent text-danger hover:bg-danger/10 disabled:opacity-40"
           >
             <Trash2 className="h-3.5 w-3.5" />
             {t('delete')}
@@ -352,51 +364,32 @@ export default function BroadcastDetailPage() {
 
       {/* Stats — 6 cards: Total / Sent / Delivered / Read / Replied / Failed */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <StatCard
-          label={t('stats.totalRecipients')}
-          value={broadcast.total_recipients}
-          total={broadcast.total_recipients}
-          icon={<Users className="h-4 w-4" />}
-          color="bg-muted text-muted-foreground"
-        />
-        <StatCard
-          label={t('stats.sent')}
-          value={broadcast.sent_count}
-          total={broadcast.total_recipients}
-          icon={<Send className="h-4 w-4" />}
-          color="bg-primary/10 text-primary"
-        />
+        <StatCard label={t('stats.totalRecipients')} value={total} />
+        <StatCard label={t('stats.sent')} value={broadcast.sent_count} share={share(broadcast.sent_count)} />
         <StatCard
           label={t('stats.delivered')}
           value={broadcast.delivered_count}
-          total={broadcast.total_recipients}
-          icon={<CheckCheck className="h-4 w-4" />}
-          color="bg-teal-500/10 text-teal-400"
+          share={share(broadcast.delivered_count)}
         />
-        <StatCard
-          label={t('stats.read')}
-          value={broadcast.read_count}
-          total={broadcast.total_recipients}
-          icon={<Eye className="h-4 w-4" />}
-          color="bg-blue-500/10 text-blue-400"
-        />
+        <StatCard label={t('stats.read')} value={broadcast.read_count} share={share(broadcast.read_count)} />
         <StatCard
           label={t('stats.replied')}
           value={broadcast.replied_count}
-          total={broadcast.total_recipients}
-          icon={<MessageCircle className="h-4 w-4" />}
-          color="bg-indigo-500/10 text-indigo-400"
+          share={share(broadcast.replied_count)}
         />
         <StatCard
           label={t('stats.failed')}
           value={broadcast.failed_count}
-          total={broadcast.total_recipients}
-          icon={<AlertCircle className="h-4 w-4" />}
-          color="bg-red-500/10 text-red-400"
+          share={share(broadcast.failed_count)}
+          tone="danger"
         />
       </div>
 
-      <FunnelChart steps={funnelSteps} />
+      <FunnelChart
+        steps={funnelSteps}
+        title={t('funnel')}
+        shareLabel={(pct) => t('funnelShare', { pct })}
+      />
 
       {/* Recipients Table */}
       <div className="rounded-xl border border-border bg-card">
@@ -516,7 +509,7 @@ export default function BroadcastDetailPage() {
                           ? new Date(recipient.read_at).toLocaleString()
                           : '-'}
                       </TableCell>
-                      <TableCell className="max-w-xs truncate text-xs text-red-400">
+                      <TableCell className="max-w-xs truncate text-xs text-danger">
                         {recipient.error_message ?? '-'}
                       </TableCell>
                     </TableRow>

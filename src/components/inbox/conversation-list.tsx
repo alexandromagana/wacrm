@@ -16,6 +16,7 @@ import { LayoutTemplate } from "lucide-react";
 import { Search, ChevronDown, X, Clock } from "@/components/animated-icons";
 import { formatDistanceToNow } from "date-fns";
 import { useTranslations } from "next-intl";
+import { ColorDot } from "@/components/ui/color-label";
 import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
@@ -435,10 +436,7 @@ export function ConversationList({
                     className="text-sm text-popover-foreground"
                   >
                     <span className="flex items-center gap-2">
-                      <span
-                        className="h-2 w-2 shrink-0 rounded-full"
-                        style={{ backgroundColor: t.color }}
-                      />
+                      <ColorDot color={t.color} />
                       <span className="truncate">{t.name}</span>
                     </span>
                   </DropdownMenuCheckboxItem>
@@ -504,10 +502,7 @@ export function ConversationList({
                   onClick={() => toggleTag(id)}
                   className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[11px] text-foreground hover:bg-muted/70"
                 >
-                  <span
-                    className="h-1.5 w-1.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: tag?.color ?? "var(--muted-foreground)" }}
-                  />
+                  <ColorDot color={tag?.color} />
                   <span className="max-w-24 truncate">{tag?.name ?? t("tags")}</span>
                   <X className="h-3 w-3" />
                 </button>
@@ -557,7 +552,7 @@ export function ConversationList({
                 <GroupHeader
                   label={t("groupOpenWindow")}
                   count={groups.openWindow.length}
-                  dotClassName="bg-emerald-400"
+                  dotClassName="bg-success"
                 />
                 {groups.openWindow.map((conv) => renderRow(conv, false))}
               </>
@@ -567,7 +562,7 @@ export function ConversationList({
                 <GroupHeader
                   label={t("groupNeedsTemplate")}
                   count={groups.needsTemplate.length}
-                  dotClassName="bg-amber-400"
+                  dotClassName="bg-warning"
                 />
                 {groups.needsTemplate.map((conv) => renderRow(conv, true))}
               </>
@@ -599,10 +594,10 @@ function GroupHeader({
         className={cn("size-1.5 shrink-0 rounded-full", dotClassName)}
         aria-hidden
       />
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </span>
-      <span className="text-[10px] font-medium text-muted-foreground/70">
+      <span className="text-[11px] font-medium text-muted-foreground tabular-nums">
         {count}
       </span>
     </div>
@@ -660,11 +655,14 @@ const ConversationItem = memo(function ConversationItem({
     : "";
 
   return (
+    // The open thread is marked by its fill and `aria-current`, not a
+    // coloured left rule.
     <button
       onClick={handleClick}
+      aria-current={isActive ? "true" : undefined}
       className={cn(
-        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50",
-        isActive && "border-l-2 border-primary bg-muted/70"
+        "flex w-full items-start gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset",
+        isActive && "bg-muted hover:bg-muted"
       )}
     >
       {/* Avatar */}
@@ -686,7 +684,7 @@ const ConversationItem = memo(function ConversationItem({
           <span className="truncate text-sm font-medium text-foreground">
             {displayName}
           </span>
-          <span className="shrink-0 text-[10px] text-muted-foreground">{timeAgo}</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo}</span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">
@@ -703,7 +701,7 @@ const ConversationItem = memo(function ConversationItem({
               // — it answers the same question ("what can I do here?"),
               // just with the other answer.
               <span
-                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-amber-400"
+                className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-warning"
                 title={
                   neverReplied
                     ? t("neverRepliedHint")
@@ -723,7 +721,7 @@ const ConversationItem = memo(function ConversationItem({
               // a green "Open" chip) would read as a second status. A
               // bare clock + number reads as "time left" instead.
               <span
-                className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-medium text-emerald-400"
+                className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-success"
                 title={remainingLabel ?? undefined}
                 aria-label={remainingLabel ?? undefined}
               >
@@ -731,14 +729,19 @@ const ConversationItem = memo(function ConversationItem({
                 {remainingCompact}
               </span>
             )}
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[9px] font-medium leading-none whitespace-nowrap",
-                statusDisplay.classes
-              )}
-            >
-              {tStatus(`status${statusDisplay.labelKey}`)}
-            </span>
+            {/* Only the exceptions get a chip. "Open" is what nearly
+                every row in the default view is, so a chip on each one
+                was noise next to the reply-window marker. */}
+            {conversation.status !== "open" && (
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full border px-1.5 py-0.5 text-[11px] font-medium leading-none whitespace-nowrap",
+                  statusDisplay.classes
+                )}
+              >
+                {tStatus(`status${statusDisplay.labelKey}`)}
+              </span>
+            )}
           </div>
         </div>
       </div>

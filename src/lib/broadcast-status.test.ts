@@ -25,14 +25,19 @@ describe("getBroadcastStatus", () => {
     expect(getBroadcastStatus("")).toBe(broadcastStatusConfig.draft);
   });
 
-  it("each variant has the dark-theme class triple", () => {
-    // Accept both fixed-shade Tailwind names (bg-red-500/10) and
-    // token-backed names without a shade number (bg-primary/10) since
-    // the brand-accent statuses now ride the active color theme.
+  it("each variant sets a background, text and border class", () => {
     for (const v of Object.values(broadcastStatusConfig)) {
-      expect(v.classes).toMatch(/bg-[a-z]+(-\d+)?\/10/);
-      expect(v.classes).toMatch(/text-[a-z]+(-\d+)?/);
-      expect(v.classes).toMatch(/border-[a-z]+(-\d+)?\/20/);
+      expect(v.classes).toMatch(/\bbg-/);
+      expect(v.classes).toMatch(/\btext-/);
+      expect(v.classes).toMatch(/\bborder-/);
+    }
+  });
+
+  it("colours only outcomes: sent is success, failed is danger", () => {
+    expect(broadcastStatusConfig.sent.classes).toContain("text-success");
+    expect(broadcastStatusConfig.failed.classes).toContain("text-danger");
+    for (const s of ["draft", "scheduled"] as const) {
+      expect(broadcastStatusConfig[s].classes).not.toMatch(/success|warning|danger/);
     }
   });
 });

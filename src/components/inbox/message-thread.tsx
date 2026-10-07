@@ -34,7 +34,6 @@ import {
 } from "@/components/animated-icons";
 import { format, isToday, isYesterday } from "date-fns";
 import { useTranslations } from "next-intl";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -997,18 +996,23 @@ export function MessageThread({
             <h2 className="truncate text-sm font-semibold text-foreground">{displayName}</h2>
             <p className="truncate text-xs text-muted-foreground">{contact.phone}</p>
           </div>
-          {/* Session timer badge — hidden on the narrowest phones so
-              the name + back arrow keep their room. */}
-          <Badge
-            variant="outline"
+          {/* Session timer — hidden on the narrowest phones so the
+              name + back arrow keep their room. Bare clock + text, not
+              a pill: the same marker the conversation list uses, and
+              the pill shape is kept for statuses. Green while a
+              free-form reply can go out, amber once only a template
+              will — the reading the list and the dashboard share. */}
+          <span
+            title={tTimer("windowLabel", { state: sessionInfo.remaining })}
             className={cn(
-              "ml-1 hidden gap-1 border-border text-[10px] sm:inline-flex sm:ml-2",
-              sessionInfo.expired ? "text-red-400" : "text-primary"
+              "ml-1 hidden shrink-0 items-center gap-1 text-xs font-medium whitespace-nowrap sm:ml-2 sm:inline-flex",
+              sessionInfo.expired ? "text-warning" : "text-success"
             )}
           >
-            <Clock className="h-3 w-3" />
+            <Clock className="h-3.5 w-3.5" aria-hidden />
+            <span className="sr-only">{tTimer("windowLabel", { state: "" })}</span>
             {sessionInfo.remaining}
-          </Badge>
+          </span>
         </div>
 
         <div className="flex items-center gap-2">
@@ -1187,7 +1191,7 @@ export function MessageThread({
               <div key={group.date}>
                 {/* Date separator */}
                 <div className="mb-4 flex items-center justify-center">
-                  <span className="rounded-full bg-muted px-3 py-1 text-[10px] font-medium text-muted-foreground">
+                  <span className="rounded-full bg-muted px-3 py-1 text-[11px] font-medium text-muted-foreground">
                     {formatDateSeparator(group.date, t)}
                   </span>
                 </div>

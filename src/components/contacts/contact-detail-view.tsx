@@ -10,6 +10,7 @@ import {
   TemplatePicker,
   type TemplateSendValues,
 } from '@/components/inbox/template-picker';
+import { ColorLabel, ColorLabelToggle } from '@/components/ui/color-label';
 import {
   Sheet,
   SheetContent,
@@ -558,7 +559,7 @@ export function ContactDetailView({
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-muted-foreground text-xs">
-                      {t('phone')} <span className="text-red-400">*</span>
+                      {t('phone')} <span className="text-danger">*</span>
                     </Label>
                     <Input
                       value={editPhone}
@@ -613,23 +614,14 @@ export function ContactDetailView({
                       {allTags.map((tag) => {
                         const selected = contactTagIds.includes(tag.id);
                         return (
-                          <button
+                          <ColorLabelToggle
                             key={tag.id}
+                            name={tag.name}
+                            color={tag.color}
+                            selected={selected}
                             onClick={() => toggleTag(tag.id)}
                             disabled={savingTags}
-                            className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-all cursor-pointer ${
-                              selected
-                                ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                                : 'opacity-50 hover:opacity-80'
-                            }`}
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {selected && <Check className="size-3 mr-1" />}
-                            {tag.name}
-                          </button>
+                          />
                         );
                       })}
                     </div>
@@ -682,7 +674,7 @@ export function ContactDetailView({
                           </p>
                           <button
                             onClick={() => deleteNote(note.id)}
-                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-red-400 transition-all cursor-pointer shrink-0"
+                            className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-danger transition-all cursor-pointer shrink-0"
                           >
                             <Trash2 className="size-3.5" />
                           </button>
@@ -769,15 +761,11 @@ export function ContactDetailView({
                             {deal.title}
                           </p>
                           {deal.stage && (
-                            <span
-                              className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
-                              style={{
-                                backgroundColor: `${deal.stage.color}20`,
-                                color: deal.stage.color,
-                              }}
-                            >
-                              {deal.stage.name}
-                            </span>
+                            <ColorLabel
+                              name={deal.stage.name}
+                              color={deal.stage.color}
+                              className="shrink-0"
+                            />
                           )}
                         </div>
                         <div className="mt-1.5 flex items-center justify-between text-xs text-muted-foreground">
@@ -792,8 +780,8 @@ export function ContactDetailView({
                             <span
                               className={
                                 deal.status === 'won'
-                                  ? 'text-primary'
-                                  : 'text-red-400'
+                                  ? 'text-success'
+                                  : 'text-danger'
                               }
                             >
                               {deal.status}

@@ -7,8 +7,10 @@ import { cn } from "@/lib/utils";
 import type { DealMilestone } from "@/lib/deals/milestones";
 
 /**
- * The accent-coloured card in the record's right column: what happens
- * next on this deal.
+ * The card in the record's right column: what happens next on this
+ * deal. A neutral surface rather than an accent fill, so the one thing
+ * that does take colour — an overdue date, in warning — stands out.
+ *
  *
  * Driven by the deal's scheduled work — the site survey or the install
  * — plus the latest thing anyone wrote down. The reference design puts
@@ -59,32 +61,32 @@ export function NextStepCard({
           }
         : {})}
       className={cn(
-        "rounded-xl bg-primary p-3 text-primary-foreground",
+        "rounded-xl border border-border bg-card-2 p-3 text-foreground",
         onEdit &&
-          "w-full text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "w-full text-left transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         className,
       )}
     >
-      <p className="text-[10px] font-medium uppercase tracking-wider opacity-70">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
         {t("title")}
       </p>
 
       {isEmpty ? (
-        <p className="mt-1.5 text-xs opacity-80">{t("empty")}</p>
+        <p className="mt-1.5 text-xs text-muted-foreground">{t("empty")}</p>
       ) : (
         <div className="mt-2 space-y-2">
           {due && milestone && (
             <div className="flex items-start gap-1.5">
               {milestone.kind === "installation" ? (
-                <Wrench className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                <Wrench className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
               ) : (
                 <CalendarClock
-                  className="mt-0.5 size-3.5 shrink-0"
+                  className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
                   aria-hidden
                 />
               )}
               <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-wider opacity-70">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                   {t(
                     milestone.kind === "installation"
                       ? "installation"
@@ -100,7 +102,16 @@ export function NextStepCard({
                     : format(due, "MMM d, yyyy · HH:mm")}
                 </p>
                 {daysOut !== null && (
-                  <p className="text-[11px] opacity-75">
+                  <p
+                    className={cn(
+                      "text-[11px]",
+                      daysOut < 0
+                        ? "font-medium text-warning"
+                        : daysOut === 0
+                          ? "font-medium text-foreground"
+                          : "text-muted-foreground",
+                    )}
+                  >
                     {daysOut < 0
                       ? t("overdue", { days: Math.abs(daysOut) })
                       : daysOut === 0
@@ -114,10 +125,10 @@ export function NextStepCard({
 
           {latestNote && (
             <div className="flex items-start gap-1.5">
-              <StickyNote className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <StickyNote className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden />
               {/* Clamped: the column is narrow and a long note would
                   push the rest of the sidebar out of view. */}
-              <p className="line-clamp-3 min-w-0 text-xs leading-relaxed opacity-90">
+              <p className="line-clamp-3 min-w-0 text-xs leading-relaxed text-muted-foreground">
                 {latestNote}
               </p>
             </div>

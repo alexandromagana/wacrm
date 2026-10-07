@@ -1,47 +1,89 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { useTranslations } from 'next-intl'
+import { RefreshCw } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useAuth } from '@/hooks/use-auth'
-import { formatCurrency } from '@/lib/currency'
-import {
-  UserPlus,
-  DollarSign,
-} from 'lucide-react'
-import { MessageSquare, Send } from '@/components/animated-icons'
+import { cn } from '@/lib/utils'
 
 import {
   loadActivity,
   loadConversationsSeries,
+  loadFollowUps,
+  loadHealth,
   loadMetrics,
   loadPipelineDonut,
+  loadReplyQueue,
   loadResponseTime,
 } from '@/lib/dashboard/queries'
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
+  FollowUpSummary,
+  HealthSummary,
   MetricsBundle,
   PipelineDonutData,
+  ReplyQueue as ReplyQueueData,
   ResponseTimeSummary,
 } from '@/lib/dashboard/types'
 
-import { MetricCard } from '@/components/dashboard/metric-card'
-import { SkeletonCard } from '@/components/dashboard/skeleton'
+import { Button } from '@/components/ui/button'
 import { QuickActions } from '@/components/dashboard/quick-actions'
+import { ReplyQueue } from '@/components/dashboard/reply-queue'
+import { FollowUps, comparison } from '@/components/dashboard/follow-ups'
+import { HealthPanel, WhatsAppAlert } from '@/components/dashboard/health-panel'
 import { ConversationsChart } from '@/components/dashboard/conversations-chart'
-import { PipelineDonut } from '@/components/dashboard/pipeline-donut'
+import { PipelineStages } from '@/components/dashboard/pipeline-stages'
 import { ResponseTimeChart } from '@/components/dashboard/response-time-chart'
 import { ActivityFeed } from '@/components/dashboard/activity-feed'
 
-import { useTranslations } from 'next-intl'
-
 type RangeDays = 7 | 30 | 90
+
+/**
+ * One independently loaded block. `data` is the last good result and
+ * survives a refresh, so a section never blanks back to a skeleton
+ * while it reloads; `failed` lets it say so in place instead of
+ * spinning forever while the rest of the page renders.
+ */
+interface Section<T> {
+  data: T | null
+  loading: boolean
+  failed: boolean
+}
+
+function useSection<T>() {
+  const [state, setState] = useState<Section<T>>({ data: null, loading: true, failed: false })
+  // State only changes when the promise settles, so this is safe to
+  // call from an effect.
+  const run = useCallback((promise: Promise<T>, label: string) => {
+    promise
+      .then((data) => setState({ data, loading: false, failed: false }))
+      .catch((err) => {
+        console.error(`[dashboard] ${label} failed:`, err)
+        setState((s) => ({ ...s, loading: false, failed: true }))
+      })
+  }, [])
+  const markLoading = useCallback(() => setState((s) => ({ ...s, loading: true, failed: false })), [])
+  return [state, run, markLoading] as const
+}
 
 export default function DashboardPage() {
   const t = useTranslations('Dashboard.page')
-  const { defaultCurrency } = useAuth()
-  const [metrics, setMetrics] = useState<MetricsBundle | null>(null)
-  const [metricsLoading, setMetricsLoading] = useState(true)
+  const tTrends = useTranslations('Dashboard.trends')
+  const tChart = useTranslations('Dashboard.conversationsChart')
+  const tCompare = useTranslations('Dashboard.comparison')
+  const { defaultCurrency, accountId, profile, profileLoading, canSendMessages, canEditSettings } =
+    useAuth()
+
+  // Ordered by the tier each block sits in, top of the page first.
+  const [queue, runQueue, queueLoading] = useSection<ReplyQueueData>()
+  const [health, runHealth, healthLoading] = useSection<HealthSummary>()
+  const [followUps, runFollowUps, followUpsLoading] = useSection<FollowUpSummary>()
+  const [metrics, runMetrics, metricsLoading] = useSection<MetricsBundle>()
+  const [pipeline, runPipeline, pipelineLoading] = useSection<PipelineDonutData>()
+  const [responseTime, runResponseTime, responseTimeLoading] = useSection<ResponseTimeSummary>()
+  const [activity, runActivity, activityLoading] = useSection<ActivityItem[]>()
 
   const [range, setRange] = useState<RangeDays>(30)
   // Keep a cache per range so switching tabs doesn't re-fetch what we
@@ -53,54 +95,58 @@ export default function DashboardPage() {
     90: null,
   })
   const [seriesLoading, setSeriesLoading] = useState(true)
+  const [seriesFailed, setSeriesFailed] = useState(false)
 
-  const [pipeline, setPipeline] = useState<PipelineDonutData | null>(null)
-  const [pipelineLoading, setPipelineLoading] = useState(true)
+  // When the data on screen was asked for — the header's "Updated".
+  const [updatedAt, setUpdatedAt] = useState(() => new Date())
 
-  const [responseTime, setResponseTime] = useState<ResponseTimeSummary | null>(null)
-  const [responseTimeLoading, setResponseTimeLoading] = useState(true)
-
-  const [activity, setActivity] = useState<ActivityItem[] | null>(null)
-  const [activityLoading, setActivityLoading] = useState(true)
-
-  const loadAll = useCallback(() => {
-    const db = createClient()
-
-    // Kick everything off in parallel. Each block has its own
-    // setState + finally so a slow query doesn't hold up faster
-    // sections — each widget shows its own skeleton independently.
-    void loadMetrics(db)
-      .then((m) => setMetrics(m))
-      .catch((err) => console.error('[dashboard] metrics failed:', err))
-      .finally(() => setMetricsLoading(false))
-
-    void loadConversationsSeries(db, 30)
-      .then((s) => setSeries((prev) => ({ ...prev, 30: s })))
-      .catch((err) => console.error('[dashboard] series failed:', err))
+  const fetchSeries = useCallback((r: RangeDays) => {
+    loadConversationsSeries(createClient(), r)
+      .then((s) => {
+        setSeries((prev) => ({ ...prev, [r]: s }))
+        setSeriesFailed(false)
+      })
+      .catch((err) => {
+        console.error('[dashboard] series failed:', err)
+        setSeriesFailed(true)
+      })
       .finally(() => setSeriesLoading(false))
-
-    void loadPipelineDonut(db)
-      .then((p) => setPipeline(p))
-      .catch((err) => console.error('[dashboard] pipeline failed:', err))
-      .finally(() => setPipelineLoading(false))
-
-    void loadResponseTime(db)
-      .then((r) => setResponseTime(r))
-      .catch((err) => console.error('[dashboard] response time failed:', err))
-      .finally(() => setResponseTimeLoading(false))
-
-    // Fetch up to 50 so the biggest page-size option in the feed
-    // (50 rows) is already in memory — switching sizes then becomes
-    // a pure client-side slice with no extra round trip.
-    void loadActivity(db, 50)
-      .then((a) => setActivity(a))
-      .catch((err) => console.error('[dashboard] activity failed:', err))
-      .finally(() => setActivityLoading(false))
   }, [])
 
+  const fetchQueue = useCallback(() => runQueue(loadReplyQueue(createClient()), 'reply queue'), [runQueue])
+  const fetchFollowUps = useCallback(() => runFollowUps(loadFollowUps(createClient()), 'follow-ups'), [runFollowUps])
+  const fetchMetrics = useCallback(() => runMetrics(loadMetrics(createClient()), 'metrics'), [runMetrics])
+  const fetchPipeline = useCallback(() => runPipeline(loadPipelineDonut(createClient()), 'pipeline'), [runPipeline])
+  const fetchResponseTime = useCallback(
+    () => runResponseTime(loadResponseTime(createClient()), 'response time'),
+    [runResponseTime],
+  )
+  // Fetch up to 50 so the biggest page-size option in the feed (50
+  // rows) is already in memory — switching sizes is then a pure
+  // client-side slice with no extra round trip.
+  const fetchActivity = useCallback(() => runActivity(loadActivity(createClient(), 50), 'activity'), [runActivity])
+  const fetchHealth = useCallback(
+    () => runHealth(loadHealth(createClient(), accountId), 'health'),
+    [runHealth, accountId],
+  )
+
+  // Kick everything off in parallel. Each block settles on its own, so
+  // a slow query doesn't hold up the faster sections.
   useEffect(() => {
-    loadAll()
-  }, [loadAll])
+    fetchQueue()
+    fetchFollowUps()
+    fetchMetrics()
+    fetchPipeline()
+    fetchResponseTime()
+    fetchActivity()
+    fetchSeries(30)
+  }, [fetchQueue, fetchFollowUps, fetchMetrics, fetchPipeline, fetchResponseTime, fetchActivity, fetchSeries])
+
+  // WhatsApp status is read per account, so it waits for the profile.
+  useEffect(() => {
+    if (profileLoading) return
+    fetchHealth()
+  }, [profileLoading, fetchHealth])
 
   // Range switch handler — kept in an event callback (not an effect)
   // so the setState calls stay out of the react-hooks/set-state-in-effect
@@ -111,141 +157,161 @@ export default function DashboardPage() {
       setRange(r)
       if (series[r] !== null) return
       setSeriesLoading(true)
-      const db = createClient()
-      loadConversationsSeries(db, r)
-        .then((s) => setSeries((prev) => ({ ...prev, [r]: s })))
-        .catch((err) => console.error('[dashboard] series failed:', err))
-        .finally(() => setSeriesLoading(false))
+      fetchSeries(r)
     },
-    [series],
+    [series, fetchSeries],
   )
 
-  // Only these two metrics have stored daily history (the conversations
-  // series, for whichever range is selected). New contacts and
-  // open-deals value are point-in-time, so their cards render without a
-  // trend rather than inventing a shape.
-  const currentSeries = series[range]
-  const incomingSpark = useMemo(
-    () => currentSeries?.map((d) => d.incoming),
-    [currentSeries],
-  )
-  const outgoingSpark = useMemo(
-    () => currentSeries?.map((d) => d.outgoing),
-    [currentSeries],
-  )
+  // Event-handler reloads: flag the block as loading, then fetch.
+  const reload = (markLoading: () => void, fetch: () => void) => () => {
+    markLoading()
+    fetch()
+  }
+  const retry = {
+    queue: reload(queueLoading, fetchQueue),
+    health: reload(healthLoading, fetchHealth),
+    followUps: reload(followUpsLoading, fetchFollowUps),
+    metrics: reload(metricsLoading, fetchMetrics),
+    pipeline: reload(pipelineLoading, fetchPipeline),
+    responseTime: reload(responseTimeLoading, fetchResponseTime),
+    activity: reload(activityLoading, fetchActivity),
+    series: reload(() => setSeriesLoading(true), () => fetchSeries(range)),
+  }
+
+  function refreshAll() {
+    setUpdatedAt(new Date())
+    for (const run of Object.values(retry)) run()
+    // Other ranges would now be older than the one on screen; drop them
+    // so they refetch when opened.
+    setSeries((prev) => ({ 7: null, 30: null, 90: null, [range]: prev[range] }))
+  }
+
+  const refreshing =
+    queue.loading ||
+    health.loading ||
+    followUps.loading ||
+    metrics.loading ||
+    pipeline.loading ||
+    responseTime.loading ||
+    activity.loading ||
+    seriesLoading
+
+  const sentToday = metrics.data?.messagesSentToday
+  const todayNote = sentToday
+    ? tChart('sentToday', { count: sentToday.current, comparison: comparison(sentToday, tCompare) })
+    : undefined
+
+  const date = updatedAt.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
+  const time = updatedAt.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const period = dayPeriod(updatedAt)
+  const firstName = profile?.full_name?.trim().split(/\s+/)[0]
 
   return (
-    <div className="space-y-5">
-      {/* Header. The quick actions sit inline on the right: this row
-          had ~1280px of empty space next to the title, and as a band of
-          their own the actions cost 62px of height plus a gap. */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="space-y-6">
+      <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
         <div className="min-w-0">
-          <h1 className="text-4xl font-bold tracking-tight text-foreground">{t('title')}</h1>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {t('description')}
+          {/* The greeting is the headline; what the page is, for when
+              and for whom, sits right under it. */}
+          <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+            {firstName ? t('greetingNamed', { period, name: firstName }) : t('greeting', { period })}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {t('scope', { title: t('title'), date })}
           </p>
         </div>
-        <QuickActions />
-      </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
+            {t('updatedAt', { time })}
+          </span>
+          <Button variant="ghost" size="lg" onClick={refreshAll} disabled={refreshing}>
+            <RefreshCw aria-hidden className={cn(refreshing && 'motion-safe:animate-spin')} />
+            {t('refresh')}
+          </Button>
+          <QuickActions />
+        </div>
+      </header>
 
-      {/* Metric cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {metricsLoading || !metrics ? (
-          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
-        ) : (
-          <>
-            <MetricCard
-              title={t('activeConversations')}
-              value={metrics.activeConversations.current.toLocaleString()}
-              icon={MessageSquare}
-              spark={incomingSpark}
-              delta={{
-                sign: metrics.activeConversations.previous,
-                label: deltaLabel(
-                  metrics.activeConversations.previous, 
-                  t('newTodayVsYesterday'), 
-                  t('noChange', { suffix: t('newTodayVsYesterday') })
-                ),
-              }}
-            />
-            <MetricCard
-              title={t('newContactsToday')}
-              value={metrics.newContactsToday.current.toLocaleString()}
-              icon={UserPlus}
-              delta={{
-                sign:
-                  metrics.newContactsToday.current - metrics.newContactsToday.previous,
-                label: deltaLabel(
-                  metrics.newContactsToday.current - metrics.newContactsToday.previous,
-                  t('vsYesterday'),
-                  t('noChange', { suffix: t('vsYesterday') })
-                ),
-              }}
-            />
-            <MetricCard
-              title={t('openDealsValue')}
-              value={formatCurrency(metrics.openDealsValue, defaultCurrency)}
-              icon={DollarSign}
-              subtitle={t('openDeals', { count: metrics.openDealsCount })}
-            />
-            <MetricCard
-              title={t('messagesSentToday')}
-              value={metrics.messagesSentToday.current.toLocaleString()}
-              icon={Send}
-              spark={outgoingSpark}
-              delta={{
-                sign:
-                  metrics.messagesSentToday.current - metrics.messagesSentToday.previous,
-                label: deltaLabel(
-                  metrics.messagesSentToday.current - metrics.messagesSentToday.previous,
-                  t('vsYesterday'),
-                  t('noChange', { suffix: t('vsYesterday') })
-                ),
-              }}
-            />
-          </>
-        )}
-      </div>
+      {health.data?.whatsapp === 'disconnected' && <WhatsAppAlert canFix={canEditSettings} />}
 
-      {/* Charts row */}
-      {/* items-stretch (the grid default) stretches the two columns to
-          match the tallest sibling; adding h-full on each wrapper and
-          on the inner panels makes both cards actually fill that
-          stretched height so their rounded borders line up. Without
-          this, the pipeline card rendered at its natural (shorter)
-          height while the line chart drove the row height. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
-        <div className="h-full lg:col-span-3">
-          <ConversationsChart
-            series={series}
-            loading={seriesLoading}
-            range={range}
-            onRangeChange={handleRangeChange}
+      {/* Tier 1 — the customers waiting right now. */}
+      <ReplyQueue
+        data={queue.data}
+        loading={queue.loading}
+        failed={queue.failed}
+        onRetry={retry.queue}
+        canReply={canSendMessages}
+      />
+
+      {/* Tier 2 — next steps that are due but not on fire. */}
+      <FollowUps
+        data={followUps.data}
+        loading={followUps.loading}
+        failed={followUps.failed}
+        onRetry={retry.followUps}
+        newContacts={metrics.data?.newContactsToday ?? null}
+        newContactsFailed={!metrics.data && metrics.failed && !metrics.loading}
+      />
+
+      {/* Tier 3 — history and context. */}
+      <section aria-labelledby="trends-title" className="space-y-4 pt-2">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+          <h2 id="trends-title" className="text-base font-semibold text-foreground">
+            {tTrends('title')}
+          </h2>
+          <p className="text-xs text-muted-foreground">{tTrends('description')}</p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
+          <div className="h-full lg:col-span-3">
+            <ConversationsChart
+              series={series}
+              loading={seriesLoading}
+              failed={seriesFailed}
+              onRetry={retry.series}
+              range={range}
+              onRangeChange={handleRangeChange}
+              todayNote={todayNote}
+            />
+          </div>
+          <div className="h-full lg:col-span-2">
+            <PipelineStages
+              data={pipeline.data}
+              loading={pipeline.loading}
+              failed={pipeline.failed}
+              onRetry={retry.pipeline}
+              currency={defaultCurrency}
+            />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <ResponseTimeChart
+            data={responseTime.data}
+            loading={responseTime.loading}
+            failed={responseTime.failed}
+            onRetry={retry.responseTime}
+          />
+          <ActivityFeed
+            items={activity.data}
+            loading={activity.loading}
+            failed={activity.failed}
+            onRetry={retry.activity}
           />
         </div>
-        <div className="h-full lg:col-span-2">
-          <PipelineDonut
-            data={pipeline}
-            loading={pipelineLoading}
-            currency={defaultCurrency}
-          />
-        </div>
-      </div>
+      </section>
 
-      {/* Response time */}
-      <ResponseTimeChart data={responseTime} loading={responseTimeLoading} />
-
-      {/* Activity feed */}
-      <ActivityFeed items={activity} loading={activityLoading} />
+      {/* At the foot: the per-line states and its red border say when
+          something broke; the WhatsApp-disconnected alert, the one
+          failure that stops everything, still sits at the top. */}
+      <HealthPanel data={health.data} loading={health.loading} failed={health.failed} onRetry={retry.health} />
     </div>
   )
 }
 
-// ------------------------------------------------------------
-
-function deltaLabel(delta: number, suffix: string, noChangeLabel: string): string {
-  if (delta === 0) return noChangeLabel
-  const sign = delta > 0 ? '+' : ''
-  return `${sign}${delta.toLocaleString()} ${suffix}`
+/** Greeting period from the local hour the data was asked for. */
+function dayPeriod(at: Date): 'morning' | 'afternoon' | 'evening' {
+  const hour = at.getHours()
+  if (hour >= 5 && hour < 12) return 'morning'
+  if (hour >= 12 && hour < 19) return 'afternoon'
+  return 'evening'
 }

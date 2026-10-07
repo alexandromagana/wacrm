@@ -9,8 +9,9 @@ import {
   StickyNote,
   Wrench,
 } from "lucide-react";
-import { Check, ExternalLink, X } from "@/components/animated-icons";
+import { Check, ExternalLink } from "@/components/animated-icons";
 import { cn } from "@/lib/utils";
+import { ColorDot } from "@/components/ui/color-label";
 import { formatCurrency } from "@/lib/currency";
 import { dealMilestones } from "@/lib/deals/milestones";
 import type { Deal, PipelineStage } from "@/types";
@@ -78,10 +79,10 @@ export function DealProgressCard({
 }: DealProgressCardProps) {
   const t = useTranslations("DealProgress");
 
-  const currentPosition =
-    stages.find((s) => s.id === deal.stage_id)?.position ??
-    deal.stage?.position ??
-    -1;
+  const currentStage =
+    stages.find((s) => s.id === deal.stage_id) ?? deal.stage ?? null;
+  const currentPosition = currentStage?.position ?? -1;
+  const currentIndex = stages.findIndex((s) => s.id === currentStage?.id);
 
   const checks: ReadinessCheck[] = [
     { label: t("checkValue"), met: deal.value > 0 },
@@ -117,42 +118,46 @@ export function DealProgressCard({
           )}
         </span>
 
-        {/* Stage pills — everything up to and including the current
-            stage reads as done; the rest are still ahead. */}
+        {/* Where the deal stands, as one line plus a stepped bar. It
+            used to be a pill per stage — five wrapping chips in a 280px
+            column to say one thing. The stage keeps its board colour as
+            the dot; every stage up to the current one fills in. */}
         {stages.length > 0 && (
-          <span className="mt-2.5 flex flex-wrap gap-1">
-            {stages.map((stage) => {
-              const done =
-                currentPosition >= 0 && stage.position <= currentPosition;
-              const current = stage.id === deal.stage_id;
-              return (
+          <span className="mt-2.5 block">
+            <span className="flex items-center justify-between gap-2 text-xs">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <ColorDot color={currentStage?.color} />
+                <span className="truncate font-medium text-foreground">
+                  {currentStage?.name ?? "—"}
+                </span>
+              </span>
+              {currentIndex >= 0 && (
+                <span className="shrink-0 text-muted-foreground tabular-nums">
+                  {t("stageOf", { current: currentIndex + 1, total: stages.length })}
+                </span>
+              )}
+            </span>
+            <span className="mt-1.5 flex gap-1" aria-hidden>
+              {stages.map((stage) => (
                 <span
                   key={stage.id}
+                  title={stage.name}
                   className={cn(
-                    "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium",
-                    current
-                      ? "border-primary/50 bg-primary/15 text-primary"
-                      : done
-                        ? "border-border bg-muted text-muted-foreground"
-                        : "border-dashed border-border text-muted-foreground/70",
+                    "h-1 flex-1 rounded-full",
+                    currentPosition >= 0 && stage.position <= currentPosition
+                      ? "bg-primary"
+                      : "bg-muted",
                   )}
-                >
-                  {done ? (
-                    <Check className="size-2.5" aria-hidden />
-                  ) : (
-                    <Circle className="size-2.5" aria-hidden />
-                  )}
-                  {stage.name}
-                </span>
-              );
-            })}
+                />
+              ))}
+            </span>
           </span>
         )}
       </HeadingWrapper>
 
       <div className="mt-3 flex items-end justify-between gap-2">
         <div className="min-w-0">
-          <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
             {t("potentialValue")}
           </p>
           <p className="text-lg font-semibold text-foreground">
@@ -161,7 +166,7 @@ export function DealProgressCard({
         </div>
         {typeof deal.panel_count === "number" && (
           <div className="shrink-0 text-right">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {t("panels")}
             </p>
             <p className="text-lg font-semibold text-foreground">
@@ -184,7 +189,7 @@ export function DealProgressCard({
                 <CalendarClock className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
               )}
               <div className="min-w-0">
-                <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
                   {t(m.kind === "installation" ? "installation" : "visit")}
                 </p>
                 <p
@@ -221,7 +226,7 @@ export function DealProgressCard({
         <div className="mt-3 flex items-start gap-1.5">
           <StickyNote className="mt-0.5 size-3 shrink-0 text-muted-foreground" />
           <div className="min-w-0">
-            <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
               {t("dealNotes")}
             </p>
             <p className="whitespace-pre-wrap break-words text-xs text-foreground">
@@ -250,13 +255,17 @@ export function DealProgressCard({
             key={check.label}
             className="flex items-center gap-1.5 text-xs text-muted-foreground"
           >
+            {/* Something not filled in yet is a to-do, not an error:
+                an empty ring, with the word for screen readers, rather
+                than a red cross on half the list. */}
             {check.met ? (
-              <Check className="size-3 shrink-0 text-primary" aria-hidden />
+              <Check className="size-3 shrink-0 text-success" aria-hidden />
             ) : (
-              <X className="size-3 shrink-0 text-destructive" aria-hidden />
+              <Circle className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
             )}
             <span className={cn(check.met && "text-foreground")}>
               {check.label}
+              {!check.met && <span className="sr-only"> ({t("readinessMissing")})</span>}
             </span>
           </li>
         ))}

@@ -47,6 +47,13 @@ import {
 import { getYAxisDomain } from "./get-y-axis-domain"
 import { useOnWindowResize } from "./use-on-window-resize"
 
+// Local fix: Recharts 3 renders tick labels in their own layer, outside
+// the axis <g> that carries the `fill-muted-foreground` class, and the
+// empty `fill=""` on the axis leaves each label's fill unset — so axis
+// numbers came out black, near-invisible in dark mode. The colour goes
+// on the label itself, through the theme token so it follows the mode.
+const AXIS_TICK_STYLE = { fill: "var(--muted-foreground)" }
+
 //#region Shape
 
 function deepEqual<T>(obj1: T, obj2: T): boolean {
@@ -695,6 +702,7 @@ const BarChart = React.forwardRef<HTMLDivElement, BarChartProps>(
               tick={{
                 transform:
                   layout !== "vertical" ? "translate(0, 6)" : undefined,
+                style: AXIS_TICK_STYLE,
               }}
               fill=""
               stroke=""
@@ -752,6 +760,7 @@ const BarChart = React.forwardRef<HTMLDivElement, BarChartProps>(
                   layout !== "vertical"
                     ? "translate(-3, 0)"
                     : "translate(0, 0)",
+                style: AXIS_TICK_STYLE,
               }}
               {...(layout !== "vertical"
                 ? {

@@ -66,16 +66,15 @@
   },
   "Dashboard": {
     "page": {
-      "title": "Dashboard",
-      "description": "Live analytics across conversations, contacts, deals, broadcasts, and automations.",
-      "activeConversations": "Active Conversations",
-      "newContactsToday": "New Contacts Today",
-      "openDealsValue": "Open Deals Value",
-      "messagesSentToday": "Messages Sent Today",
-      "newTodayVsYesterday": "new today vs yesterday",
-      "vsYesterday": "vs yesterday",
-      "openDeals": "{count} open {count, plural, =1 {deal} other {deals}}",
-      "noChange": "No change {suffix}"
+      "title": "Customer attention",
+      "scope": "{title} · {date} · All conversations and open deals on this account",
+      "updatedAt": "Updated {time}",
+      "refresh": "Refresh",
+      "create": "Create",
+      "loadError": "This section couldn't load.",
+      "retry": "Retry",
+      "greeting": "{period, select, morning {Good morning} afternoon {Good afternoon} other {Good evening}}",
+      "greetingNamed": "{period, select, morning {Good morning} afternoon {Good afternoon} other {Good evening}}, {name}"
     },
     "quickActions": {
       "newContact": "New Contact",
@@ -83,9 +82,100 @@
       "newBroadcast": "New Broadcast",
       "newAutomation": "New Automation"
     },
+    "replyQueue": {
+      "headline": "{count, plural, =0 {Nobody is waiting on a reply} =1 {<n>#</n> conversation is waiting on a reply} other {<n>#</n> conversations are waiting on a reply}}",
+      "definition": "The customer sent the last message and nobody has answered it yet.",
+      "universe": "{waiting} of {active} active {active, plural, =1 {conversation} other {conversations}}",
+      "inWindow": "{count} still inside the 24-hour reply window",
+      "needTemplate": "{count} {count, plural, =1 {needs} other {need}} an approved template",
+      "handedOff": "{count} handed off by the AI",
+      "unassigned": "{count} without an owner",
+      "emptyHint": "In every active conversation, the last message came from your team or the bot.",
+      "openInbox": "Open inbox",
+      "colContact": "Contact",
+      "colMessage": "Customer's last message",
+      "colWaiting": "Waiting",
+      "colWindow": "Reply window",
+      "colOwner": "Owner",
+      "hoursLeft": "{hours}h left",
+      "templateOnly": "Template only",
+      "templateOnlyHint": "More than 24 hours since the customer wrote. Only an approved template will send.",
+      "unassignedOwner": "Unassigned",
+      "assignedOwner": "Assigned",
+      "handoffTag": "AI handoff",
+      "reply": "Reply",
+      "open": "Open",
+      "replyTo": "Reply to {name}",
+      "openConversation": "Open the conversation with {name}",
+      "showAll": "Show all {count}",
+      "showLess": "Show the first {count}",
+      "capped": "Showing the first {shown} of {total}. The inbox has the rest.",
+      "sortNote": "Sorted by time left to reply freely, then expired windows newest first.",
+      "noMessageText": "Media or template message",
+      "unknownContact": "Unknown contact",
+      "waitedMinutes": "{n}m",
+      "waitedHours": "{n}h",
+      "waitedDays": "{n}d",
+      "loadingTitle": "Conversations waiting on a reply"
+    },
+    "followUps": {
+      "title": "Follow-ups",
+      "description": "Open deals and chats that need a next step. Counts are as of now.",
+      "overdue": "Overdue",
+      "visitDoneLabel": "Visits done, no install booked",
+      "visitDoneContext": "Open deals whose site visit date has passed",
+      "scheduledLabel": "Visits and installs in the next 7 days",
+      "scheduledContext": "{visits} site {visits, plural, =1 {visit} other {visits}} · {installs} {installs, plural, =1 {install} other {installs}}",
+      "quotedLabel": "Quoted deals still open",
+      "quotedContext": "Quote sent, not won or lost yet · {open} open deals in total",
+      "closeLabel": "Chats ready to close",
+      "closeContext": "Flagged after a long silence and not kept open",
+      "newContactsLabel": "New contacts today",
+      "reviewPipelines": "Review in Pipelines",
+      "reviewInbox": "Review in Inbox",
+      "seeContacts": "See contacts"
+    },
+    "comparison": {
+      "more": "{count} more than yesterday ({previous})",
+      "fewer": "{count} fewer than yesterday ({previous})",
+      "same": "Same as yesterday ({previous})"
+    },
+    "health": {
+      "title": "Delivery and automations",
+      "period": "Last 7 days",
+      "incidentsTitle": "Delivery and automation incidents",
+      "whatsappConnected": "WhatsApp connected",
+      "whatsappDisconnected": "WhatsApp not connected",
+      "whatsappUnknown": "WhatsApp status unavailable",
+      "failedSends": "{failed} of {total} sent messages failed",
+      "failedRuns": "{failed} of {total} automation runs failed",
+      "failedBroadcasts": "{count, plural, =0 {No broadcasts failed} =1 {# broadcast failed} other {# broadcasts failed}}",
+      "disconnectedTitle": "WhatsApp is not connected",
+      "disconnectedBody": "Replies, templates, broadcasts and automations can't send until it's reconnected.",
+      "disconnectedBodyAskAdmin": "Replies, templates, broadcasts and automations can't send until it's reconnected. Ask an admin to reconnect it in Settings.",
+      "openSettings": "Open WhatsApp settings",
+      "reviewBroadcasts": "Review broadcasts",
+      "failedSendsTitle": "Failed messages · newest first",
+      "failingAutomationsTitle": "Automations with failed runs",
+      "openConversation": "Open conversation",
+      "openConversationWith": "Open the conversation with {name}",
+      "viewLogs": "View logs",
+      "viewLogsFor": "View the logs of {name}",
+      "automationFailures": "{count, plural, =1 {# failed run} other {# failed runs}}",
+      "moreFailedSends": "Showing the latest {shown} of {total}.",
+      "typeTemplate": "Template",
+      "typeMessage": "Message",
+      "noReason": "WhatsApp gave no reason",
+      "unknownContact": "Unknown contact",
+      "unnamedAutomation": "Unnamed automation"
+    },
+    "trends": {
+      "title": "Trends and context",
+      "description": "History behind the numbers above. Nothing here needs action on its own."
+    },
     "activityFeed": {
-      "title": "Recent Activity",
-      "viewAll": "View all →",
+      "title": "Recent activity",
+      "viewAll": "Open inbox",
       "noActivity": "No activity yet",
       "noActivityHint": "Activity from messages, deals, broadcasts, and automations will appear here.",
       "showingOf": "Showing {visible} of {totalLoaded}{plus}",
@@ -93,37 +183,43 @@
       "timeS": "{sec}s ago",
       "timeM": "{min}m ago",
       "timeH": "{hr}h ago",
-      "timeD": "{day}d ago"
+      "timeD": "{day}d ago",
+      "description": "The latest messages, contacts, deal changes, broadcasts and automation runs, newest first.",
+      "failed": "Failed"
     },
     "conversationsChart": {
-      "title": "Conversations Over Time",
-      "description": "Daily message volume by direction",
+      "title": "Messages per day",
+      "description": "From customers against replies from your team and the bot · last {count} days",
+      "rangeLabel": "Period",
       "days": "{count} days",
-      "noActivity": "No message activity in this range",
-      "noActivityHint": "Send or receive messages to start populating this chart.",
-      "incoming": "Incoming",
-      "outgoing": "Outgoing",
-      "tooltipIncoming": "{count} incoming",
-      "tooltipOutgoing": "{count} outgoing",
-      "ariaLabel": "Conversations per day"
+      "noActivity": "No messages in this period",
+      "noActivityHint": "Messages sent or received in this period will show up here.",
+      "incoming": "From customers",
+      "outgoing": "From team and bot",
+      "total": "{count} total",
+      "tooltipIncoming": "{count} from customers",
+      "tooltipOutgoing": "{count} from team and bot",
+      "ariaLabel": "Messages per day, from customers and from your team and the bot",
+      "sentToday": "Agents sent {count} {count, plural, =1 {message} other {messages}} today · {comparison}"
     },
-    "pipelineDonut": {
-      "title": "Pipeline Value",
-      "description": "Open deals by stage",
-      "noOpenDeals": "No open deals yet",
-      "noOpenDealsHint": "Create deals in Pipelines to see stage breakdowns here.",
-      "dealCount": "{count} {count, plural, =1 {deal} other {deals}}",
-      "total": "Total",
-      "ariaLabel": "Pipeline value by stage"
+    "pipelineStages": {
+      "title": "Open pipeline by stage",
+      "description": "{count} open {count, plural, =1 {deal} other {deals}} across all pipelines · current value",
+      "total": "Total open value",
+      "noOpenDeals": "No open deals",
+      "noOpenDealsHint": "Deals you add in Pipelines will be broken down by stage here.",
+      "colStage": "Stage",
+      "colDeals": "Deals",
+      "colValue": "Value",
+      "share": "{share}% of open value"
     },
     "responseTimeChart": {
-      "title": "Average First Response Time",
-      "description": "Minutes to reply to a customer's first unreplied message, by weekday",
-      "target": "target {minutes}m",
-      "thisWeek": "This week:",
-      "lastWeek": "Last week:",
-      "noReplies": "No replies recorded yet",
-      "noRepliesHint": "This chart fills in as you reply to customer messages."
+      "title": "Time to first reply",
+      "description": "Average time from a customer's first unanswered message to the next reply from your team or the bot · by weekday, last 14 days",
+      "thisWeek": "This week: {value}",
+      "lastWeek": "Last week: {value}",
+      "noReplies": "No replies in the last 14 days",
+      "noRepliesHint": "This fills in as your team and the bot reply to customers."
     },
     "emptyState": {
       "title": "Not enough data yet"
@@ -189,7 +285,8 @@
       "expired": "Expired",
       "xhRemaining": "{hours}h remaining",
       "xmRemaining": "{minutes}m remaining",
-      "noCustomerMessages": "No customer messages"
+      "noCustomerMessages": "No customer messages",
+      "windowLabel": "WhatsApp 24-hour reply window: {state}"
     },
     "composer": {
       "draftHint": "Tap the ✨ to draft a reply with AI. You can edit it before sending",
@@ -286,7 +383,8 @@
       "deals": "Deals",
       "noTags": "No tags",
       "noDeals": "No deals",
-      "addNotePlaceholder": "Add a note..."
+      "addNotePlaceholder": "Add a note...",
+      "addNote": "Add note"
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
@@ -311,8 +409,8 @@
   "Contacts": {
     "page": {
       "title": "Contacts",
-      "subtitle": "Manage your contact list. {count} total contacts.",
-      "subtitleZero": "Manage your contact list.",
+      "subtitle": "{count, plural, =1 {# contact} other {# contacts}} on this account",
+      "subtitleZero": "No contacts yet. Add one or import a list.",
       "customFieldsBtn": "Custom fields",
       "importBtn": "Import",
       "addContactBtn": "Add Contact",
@@ -355,7 +453,14 @@
       "toastBulkDeleted": "{count} contacts deleted",
       "filterByField": "Filter by field",
       "noFieldsYet": "No custom fields yet",
-      "fieldValuePlaceholder": "Value… (e.g. Cancún)"
+      "fieldValuePlaceholder": "Value… (e.g. Cancún)",
+      "subtitleFiltered": "{count, plural, =0 {No contacts match these filters} =1 {# contact matches these filters} other {# contacts match these filters}}",
+      "moreTags": "+{count}",
+      "moreTagsAria": "{count, plural, =1 {# more tag} other {# more tags}}: {names}",
+      "openContact": "Open {name}",
+      "rowActions": "Actions for {name}",
+      "previousPage": "Previous page",
+      "nextPage": "Next page"
     },
     "form": {
       "addTitle": "Add Contact",
@@ -731,10 +836,12 @@
         "delivered": "Delivered",
         "read": "Read",
         "replied": "Replied",
-        "failed": "Failed"
+        "failed": "Failed",
+        "shareOfRecipients": "{pct}% of {total} recipients"
       },
       "toastFailedDelete": "Failed to delete: {error}",
-      "toastDeleted": "Broadcast deleted"
+      "toastDeleted": "Broadcast deleted",
+      "funnelShare": "{pct}% of sent"
     },
     "new": {
       "title": "New Broadcast",
@@ -853,15 +960,15 @@
   "Automations": {
     "list": {
       "title": "Automations",
-      "subtitle": "Build workflows that react to WhatsApp® events automatically.",
+      "subtitle": "{active} of {total} active",
       "create": "Create Automation",
       "retry": "Retry",
       "templatesTitle": "Quick-start templates",
       "emptyTitle": "No automations yet",
       "emptyDesc": "Pick a template above or create one from scratch.",
-      "runs": "{count} run",
-      "runsPlural": "{count} runs",
-      "lastRun": "last {time}",
+      "runs": "{count} run in total",
+      "runsPlural": "{count} runs in total",
+      "lastRun": "last run {time}",
       "activate": "Activate",
       "deactivate": "Deactivate",
       "edit": "Edit",
@@ -882,7 +989,11 @@
         "grouped": "Moved to {group}."
       },
       "groupCount": "{active} of {total} active",
-      "moveToGroup": "Move to group"
+      "moveToGroup": "Move to group",
+      "subtitleFailures": "{active} of {total} active · {failed, plural, =0 {no failed runs} =1 {# failed run} other {# failed runs}} in the last 7 days",
+      "statusActive": "Active",
+      "statusPaused": "Paused",
+      "failedRecently": "{count, plural, =1 {# failed run} other {# failed runs}} in the last 7 days"
     },
     "edit": {
       "loading": "Loading...",
@@ -900,11 +1011,14 @@
       "noSteps": "No steps recorded.",
       "status": {
         "success": "success",
-        "partial": "partial",
+        "partial": "waiting",
         "failed": "failed"
       },
       "back": "Back",
-      "backAria": "Back"
+      "backAria": "Back",
+      "partialHint": "Reached a wait step. It continues when the wait ends, unless the wait was cancelled.",
+      "stepSkipped": "skipped",
+      "subtitle": "Execution log · latest {count, plural, =1 {# run} other {# runs}}, newest first"
     },
     "builder": {
       "steps": {
@@ -1848,7 +1962,9 @@
     "checkPanels": "Panel count set",
     "checkQuote": "Quote link added",
     "editDeal": "Edit deal",
-    "dealNotes": "Deal notes"
+    "dealNotes": "Deal notes",
+    "stageOf": "Stage {current} of {total}",
+    "readinessMissing": "Missing"
   },
   "NextStep": {
     "title": "Next step",
