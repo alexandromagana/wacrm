@@ -8,11 +8,9 @@ import { Loader2, FileText } from 'lucide-react';
 import { ArrowRight } from '@/components/animated-icons';
 import { useTranslations } from 'next-intl';
 
-const categoryColors: Record<string, string> = {
-  Marketing: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
-  Utility: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
-  Authentication: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
-};
+/** One neutral badge for every Meta category: a category is a filing,
+ *  not a state, and the status hues are reserved for states. */
+const CATEGORY_BADGE = 'bg-muted text-muted-foreground border-border';
 
 interface Step1Props {
   selectedTemplate: MessageTemplate | null;
@@ -63,7 +61,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-danger">{error}</p>
       </div>
     );
   }
@@ -87,7 +85,6 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {templates.map((template) => {
             const isSelected = selectedTemplate?.id === template.id;
-            const catColor = categoryColors[template.category] ?? categoryColors.Utility;
 
             return (
               <button
@@ -102,7 +99,7 @@ export function Step1ChooseTemplate({ selectedTemplate, onSelect, onNext, onBack
                 <div className="flex items-start justify-between">
                   <h3 className="text-sm font-medium text-foreground">{template.name}</h3>
                   <span
-                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${catColor}`}
+                    className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium ${CATEGORY_BADGE}`}
                   >
                     {template.category}
                   </span>

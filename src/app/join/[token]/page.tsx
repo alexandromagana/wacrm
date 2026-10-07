@@ -234,8 +234,8 @@ export default function JoinPage() {
     return (
       <Card className="w-full max-w-md border-border bg-card">
         <CardHeader className="items-center text-center">
-          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-red-500/10">
-            <MailX className="h-6 w-6 text-red-400" />
+          <div className="mb-2 flex h-12 w-12 items-center justify-center rounded-xl bg-danger/10">
+            <MailX className="h-6 w-6 text-danger" />
           </div>
           <CardTitle className="text-xl text-foreground">{copy.title}</CardTitle>
           <CardDescription className="text-muted-foreground">
@@ -361,7 +361,7 @@ export default function JoinPage() {
           <DialogContent className="bg-popover border-border sm:max-w-md">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2 text-popover-foreground">
-                <AlertTriangle className="size-4 text-amber-400" />
+                <AlertTriangle className="size-4 text-warning" />
                 Can&apos;t join {peek.account_name} with this account
               </DialogTitle>
               <DialogDescription className="text-muted-foreground">

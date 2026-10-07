@@ -125,7 +125,7 @@ export function TemplatesPanel() {
                     <p className="mt-0.5 text-xs text-muted-foreground">
                       {template.detected_tags.length} marcadores
                       {unknown.length > 0 && (
-                        <span className="text-amber-600 dark:text-amber-500">
+                        <span className="text-warning">
                           {' '}
                           · {unknown.length} sin datos: {unknown.join(', ')}
                         </span>
