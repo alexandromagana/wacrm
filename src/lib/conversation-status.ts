@@ -13,6 +13,8 @@
  * under the "Amber" theme — two different statuses became visually
  * indistinguishable. Fixed hues make the three statuses stay distinct
  * from each other no matter which of the 5 accent themes is active.
+ * They are the shared status tokens from globals.css (success /
+ * warning), which also keeps them legible on white in light mode.
  */
 
 import type { ConversationStatus } from "@/types";
@@ -30,17 +32,17 @@ export interface ConversationStatusDisplay {
 export const conversationStatusConfig: Record<ConversationStatus, ConversationStatusDisplay> = {
   open: {
     labelKey: "Open",
-    classes: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
-    textColor: "text-emerald-400",
+    classes: "bg-success/10 text-success border-success/20",
+    textColor: "text-success",
   },
   pending: {
     labelKey: "Pending",
-    classes: "bg-amber-500/10 text-amber-400 border-amber-500/20",
-    textColor: "text-amber-400",
+    classes: "bg-warning/10 text-warning border-warning/20",
+    textColor: "text-warning",
   },
   closed: {
     labelKey: "Closed",
-    classes: "bg-slate-500/10 text-muted-foreground border-slate-500/20",
+    classes: "bg-muted text-muted-foreground border-border",
     textColor: "text-muted-foreground",
   },
 };

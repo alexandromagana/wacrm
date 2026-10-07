@@ -65,6 +65,10 @@
   --color-primary-hover: var(--primary-hover);
   --color-primary-soft: var(--primary-soft);
   --color-primary-soft-2: var(--primary-soft-2);
+  /* Status hues — see the STATUS note below the MODE blocks. */
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -145,6 +149,9 @@ html[data-mode="dark"] {
   --bubble-in-foreground: oklch(0.985 0 0);
   --bubble-out: color-mix(in oklab, var(--primary) 26%, var(--background));
   --bubble-out-foreground: oklch(0.97 0 0);
+  --success: oklch(0.78 0.14 155);
+  --warning: oklch(0.83 0.14 78);
+  --danger: oklch(0.72 0.17 25);
 }
 
 /* --background is a soft gray canvas (not near-white) so white --card
@@ -184,7 +191,23 @@ html[data-mode="light"] {
   --bubble-in-foreground: oklch(0.21 0.01 260);
   --bubble-out: oklch(0.24 0.01 260);
   --bubble-out-foreground: oklch(0.985 0 0);
+  --success: oklch(0.5 0.12 155);
+  --warning: oklch(0.55 0.12 65);
+  --danger: oklch(0.55 0.2 27);
 }
+
+/* ---- STATUS: the only green, amber and red in the app ----
+ *
+ * The accent (--primary) is the one brand colour and marks what is
+ * actionable or selected. These three mean something else, and only
+ * that: success = working / done, warning = needs attention soon,
+ * danger = broken or failed. Use them as text, or as a /10 tint
+ * behind that same text — always next to a word or icon that says the
+ * state, never as the only signal.
+ *
+ * Values are per mode because the stock -400 shades read on charcoal
+ * but drop under 3:1 on white; each of these clears 4.5:1 as text on
+ * --card in its own mode. */
 
 /* ---- RAIL: mode-invariant nav surface ----
  *
@@ -322,6 +345,24 @@ html[data-theme="rose"] {
   }
   html {
     @apply font-sans;
+    /* Native controls and the scrollbars that inherit this take the
+     * accent and the border tone instead of the browser's defaults. */
+    accent-color: var(--primary);
+    scrollbar-color: var(--border) transparent;
+  }
+  /* Scrollbars, date pickers and autofill follow the app's own mode,
+   * not the OS setting — the layout meta only lists both as allowed,
+   * so dark mode on a light-mode Mac drew light scrollbars. */
+  :root,
+  html[data-mode="dark"] {
+    color-scheme: dark;
+  }
+  html[data-mode="light"] {
+    color-scheme: light;
+  }
+  ::selection {
+    background-color: var(--primary-soft-2);
+    color: var(--foreground);
   }
   /* Every semantic heading renders in Eudoxus Sans. The `font-heading`
    * utility stays for the shadcn primitives whose titles are divs

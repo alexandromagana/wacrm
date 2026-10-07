@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessageSquare } from '@/components/animated-icons'
 import type { ConversationsSeriesPoint } from '@/lib/dashboard/types'
-import { EmptyState } from './empty-state'
+import { EmptyState, LoadError } from './empty-state'
 import { Skeleton } from './skeleton'
 import { cn } from '@/lib/utils'
 
@@ -13,25 +13,53 @@ interface ConversationsChartProps {
   /** Per-range data, so switching tabs never re-fetches. */
   series: Record<RangeDays, ConversationsSeriesPoint[] | null>
   loading: boolean
+  failed: boolean
+  onRetry: () => void
   range: RangeDays
   onRangeChange: (r: RangeDays) => void
+  /** Pre-formatted "Agents sent 12 messages today · …" line. */
+  todayNote?: string
 }
 
+// Customer messages carry the accent; replies are the neutral second
+// series, drawn dashed so the two read apart without colour.
+const INCOMING = 'var(--primary)'
+const OUTGOING = 'var(--muted-foreground)'
+const OUTGOING_DASH = '5 4'
+
 // ------------------------------------------------------------
-// Layout constants. The SVG renders into a fixed viewBox and scales
-// via CSS (preserveAspectRatio default). Everything inside uses
-// viewBox coordinates so the drawing math stays simple even as the
-// container resizes.
+// Layout constants. The viewBox width tracks the container's real
+// width (see LineSvg), so one unit is one pixel and the axis text
+// renders at its set size. A fixed 760-wide viewBox scaled down to a
+// phone shrank the labels to ~4px. VB_W is only the first-paint guess.
 // ------------------------------------------------------------
 const VB_W = 760
 const VB_H = 240
+/** Roughly one x-axis label per this many pixels. */
+const LABEL_SPACING = 72
 const PADDING = { top: 16, right: 16, bottom: 28, left: 40 }
 
 import { useTranslations } from 'next-intl'
 
-export function ConversationsChart({ series, loading, range, onRangeChange }: ConversationsChartProps) {
+export function ConversationsChart({
+  series,
+  loading,
+  failed,
+  onRetry,
+  range,
+  onRangeChange,
+  todayNote,
+}: ConversationsChartProps) {
   const t = useTranslations('Dashboard.conversationsChart')
   const data = series[range]
+  const totals = useMemo(
+    () =>
+      (data ?? []).reduce(
+        (acc, p) => ({ incoming: acc.incoming + p.incoming, outgoing: acc.outgoing + p.outgoing }),
+        { incoming: 0, outgoing: 0 },
+      ),
+    [data],
+  )
 
   // Memoise the max so per-day hover math doesn't recompute it.
   const { maxY, niceTicks } = useMemo(() => {
@@ -49,22 +77,24 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
   }, [data])
 
   return (
-    <section className="flex h-full flex-col rounded-xl border border-border bg-card">
-      <header className="flex items-center justify-between border-b border-border px-5 py-4">
-        <div>
-          <h2 className="text-sm font-semibold text-foreground">{t('title')}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{t('description')}</p>
+    <section aria-labelledby="messages-chart-title" className="flex h-full flex-col rounded-xl border border-border bg-card">
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+        <div className="min-w-0">
+          <h3 id="messages-chart-title" className="text-sm font-semibold text-foreground">{t('title')}</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">{t('description', { count: range })}</p>
+          {todayNote && <p className="mt-1 text-xs text-muted-foreground tabular-nums">{todayNote}</p>}
         </div>
-        <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
+        <div role="group" aria-label={t('rangeLabel')} className="flex items-center gap-1 rounded-lg bg-muted/60 p-1">
           {[7, 30, 90].map((r) => (
             <button
               key={r}
               type="button"
               onClick={() => onRangeChange(r as RangeDays)}
+              aria-pressed={range === r}
               className={cn(
-                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors',
+                'rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none',
                 range === r
-                  ? 'bg-secondary text-secondary-foreground'
+                  ? 'bg-card text-foreground ring-1 ring-border'
                   : 'text-muted-foreground hover:text-foreground',
               )}
             >
@@ -75,7 +105,9 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
       </header>
 
       <div className="p-5">
-        {loading || !data ? (
+        {!data && failed && !loading ? (
+          <LoadError onRetry={onRetry} />
+        ) : !data ? (
           <Skeleton className="h-[240px] w-full" />
         ) : data.every((p) => p.incoming === 0 && p.outgoing === 0) ? (
           <EmptyState
@@ -88,9 +120,9 @@ export function ConversationsChart({ series, loading, range, onRangeChange }: Co
         )}
       </div>
 
-      <footer className="flex items-center gap-4 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-        <LegendDot color="#3b82f6" label={t('incoming')} />
-        <LegendDot color="#7c3aed" label={t('outgoing')} />
+      <footer className="mt-auto flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-border px-5 py-3 text-xs text-muted-foreground">
+        <LegendLine color={INCOMING} label={t('incoming')} total={data ? totals.incoming : null} t={t} />
+        <LegendLine color={OUTGOING} dash={OUTGOING_DASH} label={t('outgoing')} total={data ? totals.outgoing : null} t={t} />
       </footer>
     </section>
   )
@@ -119,8 +151,20 @@ function LineSvg({
   const [hover, setHover] = useState<{ idx: number; tooltipLeftPx: number } | null>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const [vbW, setVbW] = useState(VB_W)
 
-  const chartW = VB_W - PADDING.left - PADDING.right
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const observer = new ResizeObserver(([entry]) => {
+      const width = Math.round(entry.contentRect.width)
+      if (width > 0) setVbW(width)
+    })
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [])
+
+  const chartW = vbW - PADDING.left - PADDING.right
   const chartH = VB_H - PADDING.top - PADDING.bottom
 
   // x step can be fractional for 90-day views; points are positioned
@@ -154,7 +198,7 @@ function LineSvg({
       pt.y = e.clientY
       const local = pt.matrixTransform(ctm.inverse())
       const xVb = local.x
-      if (xVb < PADDING.left - 8 || xVb > VB_W - PADDING.right + 8) {
+      if (xVb < PADDING.left - 8 || xVb > vbW - PADDING.right + 8) {
         setHover(null)
         return
       }
@@ -184,20 +228,22 @@ function LineSvg({
       svg.removeEventListener('mouseleave', onLeave)
     }
     // xFor + yFor close over stepX, so stepX covers them.
-  }, [data, stepX])
+  }, [data, stepX, vbW])
 
   const hovered = hover !== null ? data[hover.idx] : null
   const hoverX = hover !== null ? xFor(hover.idx) : 0
 
-  // X-axis label strategy: show ~6 evenly-spaced labels regardless
-  // of range so the axis never looks crowded.
-  const labelStride = Math.max(1, Math.ceil(data.length / 6))
+  // X-axis label strategy: as many evenly spaced labels as the width
+  // holds (one per LABEL_SPACING px, at most 6), so a phone gets fewer
+  // rather than overlapping ones.
+  const labelSlots = Math.min(6, Math.max(2, Math.floor(chartW / LABEL_SPACING)))
+  const labelStride = Math.max(1, Math.ceil(data.length / labelSlots))
 
   return (
     <div ref={wrapRef} className="relative w-full">
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${VB_W} ${VB_H}`}
+        viewBox={`0 0 ${vbW} ${VB_H}`}
         className="h-[240px] w-full"
         role="img"
         aria-label={t('ariaLabel')}
@@ -209,7 +255,7 @@ function LineSvg({
             <g key={t}>
               <line
                 x1={PADDING.left}
-                x2={VB_W - PADDING.right}
+                x2={vbW - PADDING.right}
                 y1={y}
                 y2={y}
                 stroke="var(--border)"
@@ -220,7 +266,7 @@ function LineSvg({
                 y={y}
                 textAnchor="end"
                 dominantBaseline="middle"
-                className="fill-muted-foreground text-[10px]"
+                className="fill-muted-foreground text-[11px]"
               >
                 {t}
               </text>
@@ -236,27 +282,28 @@ function LineSvg({
               x={xFor(i)}
               y={VB_H - 8}
               textAnchor="middle"
-              className="fill-muted-foreground text-[10px]"
+              className="fill-muted-foreground text-[11px]"
             >
               {shortDayLabel(p.day)}
             </text>
           ) : null,
         )}
 
-        {/* Outgoing polyline (violet) */}
+        {/* Outgoing polyline (neutral, dashed) */}
         <path
           d={outgoingPath}
           fill="none"
-          stroke="#7c3aed"
+          stroke={OUTGOING}
           strokeWidth={2}
+          strokeDasharray={OUTGOING_DASH}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
-        {/* Incoming polyline (blue) */}
+        {/* Incoming polyline (accent) */}
         <path
           d={incomingPath}
           fill="none"
-          stroke="#3b82f6"
+          stroke={INCOMING}
           strokeWidth={2}
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -273,8 +320,8 @@ function LineSvg({
               stroke="var(--muted-foreground)"
               strokeDasharray="3 3"
             />
-            <circle cx={hoverX} cy={yFor(data[hover.idx].incoming)} r={3.5} fill="#3b82f6" />
-            <circle cx={hoverX} cy={yFor(data[hover.idx].outgoing)} r={3.5} fill="#7c3aed" />
+            <circle cx={hoverX} cy={yFor(data[hover.idx].incoming)} r={3.5} fill={INCOMING} />
+            <circle cx={hoverX} cy={yFor(data[hover.idx].outgoing)} r={3.5} fill={OUTGOING} />
           </g>
         )}
       </svg>
@@ -289,13 +336,13 @@ function LineSvg({
           style={{ left: `${hover.tooltipLeftPx}px` }}
         >
           <div className="font-medium text-popover-foreground">{longDayLabel(hovered.day)}</div>
-          <div className="mt-1 flex flex-col gap-0.5">
-            <span className="flex items-center gap-1.5 text-blue-300">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" />
+          <div className="mt-1 flex flex-col gap-0.5 text-popover-foreground tabular-nums">
+            <span className="flex items-center gap-1.5">
+              <Swatch color={INCOMING} />
               {t('tooltipIncoming', { count: hovered.incoming })}
             </span>
-            <span className="flex items-center gap-1.5 text-primary">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary" />
+            <span className="flex items-center gap-1.5">
+              <Swatch color={OUTGOING} dash={OUTGOING_DASH} />
               {t('tooltipOutgoing', { count: hovered.outgoing })}
             </span>
           </div>
@@ -305,11 +352,33 @@ function LineSvg({
   )
 }
 
-function LegendDot({ color, label }: { color: string; label: string }) {
+function Swatch({ color, dash }: { color: string; dash?: string }) {
+  return (
+    <svg width="16" height="4" viewBox="0 0 16 4" className="shrink-0" aria-hidden>
+      <line x1="1" y1="2" x2="15" y2="2" stroke={color} strokeWidth={2} strokeDasharray={dash} strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function LegendLine({
+  color,
+  dash,
+  label,
+  total,
+  t,
+}: {
+  color: string
+  dash?: string
+  label: string
+  /** Messages in the selected range; null while it loads. */
+  total: number | null
+  t: ReturnType<typeof useTranslations>
+}) {
   return (
     <span className="flex items-center gap-1.5">
-      <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
-      {label}
+      <Swatch color={color} dash={dash} />
+      <span className="text-foreground">{label}</span>
+      {total !== null && <span className="tabular-nums">· {t('total', { count: total.toLocaleString() })}</span>}
     </span>
   )
 }

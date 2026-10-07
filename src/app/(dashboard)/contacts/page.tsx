@@ -19,6 +19,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ColorDot, ColorLabel } from '@/components/ui/color-label';
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -456,7 +457,18 @@ export default function ContactsPage() {
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground">{t('title')}</h1>
           <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {totalCount > 0 ? t('subtitle', { count: totalCount }) : t('subtitleZero')}
+            {/* totalCount is the filtered count, so the sentence says
+                which universe it is counting. Nothing until the first
+                load lands, rather than a flash of "no contacts". */}
+            {search.trim() !== '' ||
+            selectedTagIds.length > 0 ||
+            (!!fieldFilterId && fieldFilterValue.trim() !== '')
+              ? t('subtitleFiltered', { count: totalCount })
+              : totalCount > 0
+                ? t('subtitle', { count: totalCount })
+                : loading
+                  ? '\u00a0'
+                  : t('subtitleZero')}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -557,10 +569,7 @@ export default function ContactsPage() {
                         onCheckedChange={() => toggleTagFilter(tag.id)}
                         aria-label={`Filter by ${tag.name}`}
                       />
-                      <span
-                        className="size-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: tag.color }}
-                      />
+                      <ColorDot color={tag.color} />
                       <span className="text-sm text-popover-foreground truncate">
                         {tag.name}
                       </span>
@@ -668,23 +677,15 @@ export default function ContactsPage() {
               const tag = tagsMap[id];
               if (!tag) return null;
               return (
-                <span
-                  key={id}
-                  className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                  style={{
-                    backgroundColor: tag.color + '20',
-                    color: tag.color,
-                  }}
-                >
-                  {tag.name}
+                <ColorLabel key={id} name={tag.name} color={tag.color} size="md" className="pr-1">
                   <button
                     onClick={() => toggleTagFilter(id)}
                     aria-label={`Remove ${tag.name} filter`}
-                    className="hover:opacity-70"
+                    className="-my-1 flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <X className="size-3" />
                   </button>
-                </span>
+                </ColorLabel>
               );
             })}
             <button
@@ -744,7 +745,7 @@ export default function ContactsPage() {
               <TableHead className="text-muted-foreground">{t('tableColumns.phone')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.email')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.company')}</TableHead>
-              <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.consumption')}</TableHead>
+              <TableHead className="text-muted-foreground hidden text-right md:table-cell">{t('tableColumns.consumption')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.city')}</TableHead>
               <TableHead className="text-muted-foreground hidden md:table-cell">{t('tableColumns.tags')}</TableHead>
               <TableHead className="text-muted-foreground hidden lg:table-cell">{t('tableColumns.createdAt')}</TableHead>
@@ -802,7 +803,19 @@ export default function ContactsPage() {
                     />
                   </TableCell>
                   <TableCell className="text-foreground font-medium">
-                    {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
+                    {/* The row is clickable for the mouse; this is the
+                        same action for the keyboard and screen readers. */}
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openDetail(contact.id);
+                      }}
+                      aria-label={t('openContact', { name: contact.name || contact.phone })}
+                      className="rounded-sm text-left hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                    >
+                      {contact.name || <span className="text-muted-foreground italic">{t('unnamed')}</span>}
+                    </button>
                   </TableCell>
                   <TableCell className="text-muted-foreground font-mono text-xs">
                     {contact.phone}
@@ -813,7 +826,7 @@ export default function ContactsPage() {
                   <TableCell className="text-muted-foreground hidden lg:table-cell text-sm">
                     {contact.company || <span className="text-muted-foreground">-</span>}
                   </TableCell>
-                  <TableCell className="text-muted-foreground hidden md:table-cell text-sm font-mono">
+                  <TableCell className="text-muted-foreground hidden text-right md:table-cell text-sm tabular-nums">
                     {contact.customValues?.['Consumo promedio (kWh)'] || (
                       <span className="text-muted-foreground">-</span>
                     )}
@@ -824,26 +837,27 @@ export default function ContactsPage() {
                     )}
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
-                    <div className="flex flex-wrap gap-1">
+                    {/* Two labels keep the row to one line; the rest are
+                        counted, named for screen readers, and all shown
+                        in the contact's detail panel. */}
+                    <div className="flex max-w-64 flex-wrap items-center gap-1">
                       {contact.tags && contact.tags.length > 0 ? (
-                        contact.tags.slice(0, 3).map((tag) => (
-                          <span
-                            key={tag.id}
-                            className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium"
-                            style={{
-                              backgroundColor: tag.color + '20',
-                              color: tag.color,
-                            }}
-                          >
-                            {tag.name}
-                          </span>
+                        contact.tags.slice(0, 2).map((tag) => (
+                          <ColorLabel key={tag.id} name={tag.name} color={tag.color} className="max-w-32" />
                         ))
                       ) : (
                         <span className="text-muted-foreground text-xs">-</span>
                       )}
-                      {contact.tags && contact.tags.length > 3 && (
-                        <span className="text-[10px] text-muted-foreground">
-                          +{contact.tags.length - 3}
+                      {contact.tags && contact.tags.length > 2 && (
+                        <span
+                          className="text-xs text-muted-foreground tabular-nums"
+                          title={contact.tags.slice(2).map((tag) => tag.name).join(', ')}
+                          aria-label={t('moreTagsAria', {
+                            count: contact.tags.length - 2,
+                            names: contact.tags.slice(2).map((tag) => tag.name).join(', '),
+                          })}
+                        >
+                          {t('moreTags', { count: contact.tags.length - 2 })}
                         </span>
                       )}
                     </div>
@@ -862,6 +876,7 @@ export default function ContactsPage() {
                           <Button
                             variant="ghost"
                             size="icon-sm"
+                            aria-label={t('rowActions', { name: contact.name || contact.phone })}
                             className="text-muted-foreground hover:text-foreground"
                             onClick={(e) => e.stopPropagation()}
                           />
@@ -920,6 +935,7 @@ export default function ContactsPage() {
               size="icon-sm"
               disabled={!hasPrev}
               onClick={() => setPage((p) => p - 1)}
+              aria-label={t('previousPage')}
               className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
             >
               <ChevronLeft className="size-4" />
@@ -930,6 +946,7 @@ export default function ContactsPage() {
             <Button
               variant="outline"
               size="icon-sm"
+              aria-label={t('nextPage')}
               disabled={!hasNext}
               onClick={() => setPage((p) => p + 1)}
               className="border-border text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"

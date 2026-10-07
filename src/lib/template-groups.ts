@@ -6,7 +6,7 @@
  * both follow-up nudges but sort nowhere near each other. The
  * `template_group` column (migration 042) is the editable filing on top
  * of that frozen name, and this module is the single place that knows
- * the group vocabulary, its display order, and its badge colors, so the
+ * the group vocabulary, its display order, and its badge style, so the
  * settings manager, the inbox picker, and the automations list all
  * render the same groups in the same order.
  *
@@ -15,11 +15,15 @@
  * not chrome, so they don't route through next-intl.
  */
 
+/** The one badge style every group shares — see `GroupDisplay.classes`. */
+const GROUP_BADGE = 'bg-muted text-muted-foreground border-border';
+
 /** Filing shown for a row whose `template_group` is NULL. */
 export const UNGROUPED = 'Sin categoría';
 
 export interface GroupDisplay {
-  /** Badge classes, matching the dark-theme palette of templateStatusConfig. */
+  /** Badge classes. One neutral style for every group: a group is a
+   *  filing, not a state, and the status hues are reserved for states. */
   classes: string;
   /** One line on the group header — what belongs in here, and why. */
   hint: string;
@@ -31,42 +35,42 @@ export interface GroupDisplay {
  */
 export const TEMPLATE_GROUP_CONFIG: Record<string, GroupDisplay> = {
   Seguimiento: {
-    classes: 'bg-primary/20 text-primary border-primary/30',
+    classes: GROUP_BADGE,
     hint: 'Nudges after a quote or a fresh lead',
   },
   'Sin respuesta': {
-    classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
+    classes: GROUP_BADGE,
     hint: 'Last push when the customer has gone quiet',
   },
   Visitas: {
-    classes: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
+    classes: GROUP_BADGE,
     hint: 'Before and after a site visit',
   },
   Recibo: {
-    classes: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
+    classes: GROUP_BADGE,
     hint: 'Asking for the electricity bill so we can quote',
   },
   Sistema: {
-    classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
+    classes: GROUP_BADGE,
     hint: 'Meta samples and test templates, not for customers',
   },
 };
 
 export const AUTOMATION_GROUP_CONFIG: Record<string, GroupDisplay> = {
   'Leads nuevos': {
-    classes: 'bg-primary/20 text-primary border-primary/30',
+    classes: GROUP_BADGE,
     hint: 'First contact, routing a lead into the pipeline',
   },
   'Seguimiento de cotización': {
-    classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
+    classes: GROUP_BADGE,
     hint: 'The 48h / 5-day nudges and the tag bookkeeping that stops them',
   },
   'Respuestas de botón': {
-    classes: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
+    classes: GROUP_BADGE,
     hint: 'What happens when the customer taps a template button',
   },
   Pipeline: {
-    classes: 'bg-purple-600/20 text-purple-400 border-purple-600/30',
+    classes: GROUP_BADGE,
     hint: 'Moving deals between stages',
   },
 };
@@ -76,7 +80,7 @@ export const TEMPLATE_GROUPS = Object.keys(TEMPLATE_GROUP_CONFIG);
 export const AUTOMATION_GROUPS = Object.keys(AUTOMATION_GROUP_CONFIG);
 
 const FALLBACK_DISPLAY: GroupDisplay = {
-  classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
+  classes: GROUP_BADGE,
   hint: '',
 };
 

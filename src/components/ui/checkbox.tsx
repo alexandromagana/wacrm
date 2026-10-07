@@ -9,6 +9,10 @@ import { cn } from "@/lib/utils"
 
 // Root: primary token when checked or indeterminate (responds to the active
 // color theme), input border when unchecked. Mirrors switch.tsx conventions.
+//
+// The root renders a <span>, so it needs its own inline-flex: outside a
+// flex parent (a table cell, say) an inline span ignores `size-4` and
+// collapsed to a 2px sliver — the contacts table's select column.
 function Checkbox({
   className,
   ...props
@@ -17,7 +21,7 @@ function Checkbox({
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer size-4 shrink-0 cursor-pointer rounded-[4px] border border-input bg-card shadow-sm transition-colors",
+        "peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-[4px] border border-input bg-card align-middle transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         "disabled:cursor-not-allowed disabled:opacity-50",
         "data-[checked]:border-primary data-[checked]:bg-primary data-[checked]:text-primary-foreground",

@@ -716,9 +716,14 @@ export default function InboxPage() {
       {/* WhatsApp connection banner — in the flex column, not absolute,
           so it pushes the panels down instead of overlapping them. */}
       {whatsappConnected === false && (
-        <div className="flex shrink-0 items-center justify-center gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-2">
-          <WifiOff className="h-4 w-4 text-amber-400" />
-          <p className="text-xs text-amber-400">
+        // Danger, not warning: with WhatsApp disconnected nothing in
+        // this screen can send.
+        <div
+          role="alert"
+          className="flex shrink-0 items-center justify-center gap-2 border-b border-danger/30 bg-danger/10 px-4 py-2"
+        >
+          <WifiOff className="h-4 w-4 text-danger" aria-hidden />
+          <p className="text-xs text-foreground">
             {t("whatsappNotConnected")}
           </p>
         </div>

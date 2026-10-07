@@ -4,6 +4,7 @@ import type { Deal, PipelineStage } from "@/types";
 import { Calendar, PanelsTopLeft, Wrench } from "lucide-react";
 import { Check, X } from "@/components/animated-icons";
 import { formatCurrency } from "@/lib/currency";
+import { ColorDot } from "@/components/ui/color-label";
 import { nextDealMilestone } from "@/lib/deals/milestones";
 import {
   formatMonth,
@@ -71,31 +72,34 @@ export function DealCard({ deal, stage, range, onEdit, isOverlay }: DealCardProp
         e.stopPropagation();
         onEdit(deal);
       }}
-      className={`group relative w-full cursor-pointer rounded-xl border border-border/50 bg-muted/70 pl-4 pr-3 py-3 text-left shadow-sm transition-all ${
-        isOverlay
-          ? "shadow-xl"
-          : "hover:-translate-y-0.5 hover:border-border hover:bg-muted hover:shadow-lg"
+      // Flat at rest; only the copy under the pointer while dragging
+      // floats, so that is the one place a shadow means something.
+      className={`group relative w-full cursor-pointer rounded-xl border border-border/50 bg-muted/70 px-3 py-3 text-left transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none ${
+        isOverlay ? "shadow-xl" : "hover:border-border hover:bg-muted"
       }`}
     >
-      {/* 4px left accent bar using stage color */}
-      <span
-        aria-hidden
-        className="absolute left-0 top-0 h-full w-1 rounded-l-xl"
-        style={{ backgroundColor: stage?.color ?? "#94a3b8" }}
-      />
+      {/* No stage-coloured edge: the card sits under its column's
+          header, which carries the stage dot. While dragging, the
+          lifted copy shows the dot itself, since it has left the column. */}
+      {isOverlay && stage && (
+        <span className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+          <ColorDot color={stage.color} />
+          {stage.name}
+        </span>
+      )}
 
       <div className="flex items-start justify-between gap-2">
         <h4 className="flex-1 text-sm font-semibold leading-snug text-foreground break-words">
           {deal.title}
         </h4>
         {status === "won" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-semibold text-primary">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-semibold text-success">
             <Check className="h-3 w-3" />
             {t("won")}
           </span>
         )}
         {status === "lost" && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-red-500/15 px-2 py-0.5 text-[10px] font-semibold text-red-400">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-danger/15 px-2 py-0.5 text-[11px] font-semibold text-danger">
             <X className="h-3 w-3" />
             {t("lost")}
           </span>
@@ -105,17 +109,17 @@ export function DealCard({ deal, stage, range, onEdit, isOverlay }: DealCardProp
       {(carriedFrom || closedLater || (status === "lost" && deal.lost_reason)) && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1">
           {carriedFrom && (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
               {t("carriedFrom", { month: carriedFrom })}
             </span>
           )}
           {closedLater && (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
               {t(closedLater.status === "won" ? "wonIn" : "lostIn", { month: closedLater.month })}
             </span>
           )}
           {status === "lost" && deal.lost_reason && (
-            <span className="truncate rounded-full bg-red-500/10 px-2 py-0.5 text-[10px] font-medium text-red-400">
+            <span className="truncate rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger">
               {lostReasonLabel(deal.lost_reason)}
             </span>
           )}
@@ -131,7 +135,7 @@ export function DealCard({ deal, stage, range, onEdit, isOverlay }: DealCardProp
       </div>
 
       <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="text-sm font-bold text-primary">
+        <span className="text-sm font-bold text-foreground tabular-nums">
           {formatCurrency(deal.value, deal.currency)}
         </span>
         {typeof deal.panel_count === "number" && (
@@ -164,7 +168,7 @@ export function DealCard({ deal, stage, range, onEdit, isOverlay }: DealCardProp
         <div className="mt-2 flex items-center justify-end">
           <span
             title={assigneeLabel}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-primary/15 text-[10px] font-semibold text-primary"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-foreground"
           >
             {initials(assigneeLabel)}
           </span>

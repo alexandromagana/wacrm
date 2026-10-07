@@ -755,7 +755,7 @@ export function GeneratePanel({ onGoToRules, onGoToTemplates }: Props) {
               Cotización {result.folio} lista
             </div>
             {result.warning && (
-              <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-700 dark:text-amber-500">
+              <div className="flex gap-2 rounded-md border border-warning/30 bg-warning/5 p-2.5 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
                 <p>{result.warning}</p>
               </div>

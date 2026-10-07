@@ -11,15 +11,6 @@
  * prefix.
  */
 
-/** Dashboard KPI cards: ~296px of content width at every breakpoint. */
-export function heroValueSize(value: string): string {
-  const n = value.length
-  if (n <= 6) return 'text-[40px] lg:text-[44px]'
-  if (n <= 9) return 'text-[34px] lg:text-[38px]'
-  if (n <= 13) return 'text-[28px] lg:text-[30px]'
-  return 'text-[24px]'
-}
-
 /**
  * Dense analytics strips (pipeline header, and anything else laying
  * six stats across one row). These tiles are only ~125px wide on a

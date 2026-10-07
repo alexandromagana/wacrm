@@ -1,5 +1,7 @@
+import { CircleAlert } from 'lucide-react'
 import { ChartColumn } from '@/components/animated-icons'
 import type { ComponentType } from 'react'
+import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { useTranslations } from 'next-intl'
@@ -31,11 +33,35 @@ export function EmptyState({
         className,
       )}
     >
-      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-        <Icon className="h-5 w-5" />
-      </div>
-      <p className="text-xs font-medium text-muted-foreground">{title || defaultTitle}</p>
+      <Icon className="h-5 w-5 text-muted-foreground" />
+      <p className="text-sm font-medium text-foreground">{title || defaultTitle}</p>
       {hint && <p className="max-w-xs text-xs text-muted-foreground">{hint}</p>}
+    </div>
+  )
+}
+
+/**
+ * A section whose query failed. Every dashboard block loads on its
+ * own, so one failure says so in place (with a retry) instead of
+ * leaving that block on a skeleton forever while the rest render.
+ */
+export function LoadError({ onRetry, className }: { onRetry?: () => void; className?: string }) {
+  const t = useTranslations('Dashboard.page')
+  return (
+    <div
+      role="alert"
+      className={cn(
+        'flex flex-wrap items-center gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-foreground',
+        className,
+      )}
+    >
+      <CircleAlert className="size-4 shrink-0 text-danger" aria-hidden />
+      <span className="min-w-0 flex-1">{t('loadError')}</span>
+      {onRetry && (
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          {t('retry')}
+        </Button>
+      )}
     </div>
   )
 }

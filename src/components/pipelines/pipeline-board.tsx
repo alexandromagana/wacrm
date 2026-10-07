@@ -17,6 +17,7 @@ import {
 import type { Deal, PipelineStage } from "@/types";
 import { DealCard } from "./deal-card";
 import { Button } from "@/components/ui/button";
+import { ColorDot } from "@/components/ui/color-label";
 import { Plus, ChevronDown } from "@/components/animated-icons";
 import { useAuth } from "@/hooks/use-auth";
 import { formatCurrency } from "@/lib/currency";
@@ -235,16 +236,14 @@ function StageColumn({
     // on the inner messages region below — intentionally NOT here, so
     // a drag over the column header doesn't highlight the whole column.
     <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-border bg-card/60 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
-      {/* 3px colored top border — sits above the column's padding */}
-      <div
-        className="-mx-4 -mt-4 h-[3px] rounded-t-xl"
-        style={{ backgroundColor: stage.color }}
-      />
-      <div className="flex items-center justify-between pt-3">
-        <h3 className="truncate text-sm font-semibold text-foreground">
-          {stage.name}
+      {/* The stage's colour is its dot — the same reference the
+          inbox, contacts and dashboard use for a stage. */}
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+          <ColorDot color={stage.color} />
+          <span className="truncate">{stage.name}</span>
         </h3>
-        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground tabular-nums">
           {deals.length}
         </span>
       </div>
@@ -318,7 +317,9 @@ function LostColumn({
         aria-label={t("showLost")}
         className="flex w-12 shrink-0 snap-start flex-col items-center gap-3 rounded-xl border border-dashed border-border bg-card/40 py-4 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
       >
-        <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-400">
+        {/* Neutral like every other column count; the word beside it
+            says what is counted. Red on its own red tint measured 4:1. */}
+        <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-semibold text-foreground tabular-nums">
           {deals.length}
         </span>
         <span className="text-xs font-semibold [writing-mode:vertical-rl]">
@@ -330,9 +331,11 @@ function LostColumn({
 
   return (
     <div className="flex w-[85vw] min-w-[260px] max-w-[320px] shrink-0 snap-start flex-col rounded-xl border border-dashed border-border bg-card/40 p-4 lg:w-auto lg:max-w-none lg:flex-1 lg:basis-[260px] lg:shrink lg:snap-none">
-      <div className="-mx-4 -mt-4 h-[3px] rounded-t-xl bg-red-400/60" />
-      <div className="flex items-center justify-between gap-2 pt-3">
-        <h3 className="truncate text-sm font-semibold text-foreground">{t("lostColumn")}</h3>
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
+          <ColorDot color="var(--danger)" />
+          <span className="truncate">{t("lostColumn")}</span>
+        </h3>
         <div className="flex shrink-0 items-center gap-1">
           <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
             {deals.length}
@@ -341,7 +344,7 @@ function LostColumn({
             type="button"
             onClick={() => setExpanded(false)}
             aria-label={t("hideLost")}
-            className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="flex size-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <ChevronDown className="h-4 w-4 rotate-90" />
           </button>

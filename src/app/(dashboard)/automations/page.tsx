@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ComponentType } from "react"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
 import {
+  CircleAlert,
   Zap,
   Pencil,
   FileText,
@@ -23,6 +24,7 @@ import {
 } from "@/components/animated-icons"
 
 import { createClient } from "@/lib/supabase/client"
+import { daysAgoStart } from "@/lib/dashboard/date-utils"
 import { useCan } from "@/hooks/use-can"
 import { useTranslations } from "next-intl"
 import type { Automation } from "@/types"
@@ -85,6 +87,10 @@ export default function AutomationsPage() {
   const canCreate = useCan("send-messages")
   const t = useTranslations("Automations.list")
   const [automations, setAutomations] = useState<Automation[] | null>(null)
+  /** automation_id → failed runs in the last 7 days. Null until loaded,
+   *  and left null if that read fails — the page then makes no claim
+   *  about failures rather than implying there were none. */
+  const [failedRuns, setFailedRuns] = useState<Record<string, number> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Automation | null>(null)
   const [deleting, setDeleting] = useState(false)
@@ -103,8 +109,27 @@ export default function AutomationsPage() {
     }
   }
 
+  // Same 7-day window the dashboard's health line counts over.
+  async function loadFailures() {
+    const { data, error: fetchErr } = await createClient()
+      .from("automation_logs")
+      .select("automation_id")
+      .eq("status", "failed")
+      .gte("created_at", daysAgoStart(6).toISOString())
+    if (fetchErr) {
+      console.error("[automations] failed-run counts:", fetchErr)
+      return
+    }
+    const counts: Record<string, number> = {}
+    for (const row of (data ?? []) as { automation_id: string }[]) {
+      counts[row.automation_id] = (counts[row.automation_id] ?? 0) + 1
+    }
+    setFailedRuns(counts)
+  }
+
   useEffect(() => {
     load()
+    loadFailures()
   }, [])
 
   async function toggleActive(a: Automation, next: boolean) {
@@ -200,7 +225,7 @@ export default function AutomationsPage() {
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-2">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-danger">{error}</p>
         <Button variant="outline" onClick={() => window.location.reload()}>
           {t("retry")}
         </Button>
@@ -217,14 +242,32 @@ export default function AutomationsPage() {
   }
 
   const showTemplates = automations.length < 3
+  const activeTotal = automations.filter((a) => a.is_active).length
+  const failedTotal = failedRuns
+    ? Object.values(failedRuns).reduce((sum, n) => sum + n, 0)
+    : null
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-4xl font-bold tracking-tight text-foreground">{t("title")}</h1>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {t("subtitle")}
+          <p
+            className={cn(
+              "mt-1 flex items-center gap-1.5 text-xs leading-relaxed tabular-nums",
+              failedTotal ? "text-foreground" : "text-muted-foreground",
+            )}
+          >
+            {failedTotal ? (
+              <CircleAlert className="h-3.5 w-3.5 shrink-0 text-danger" aria-hidden />
+            ) : null}
+            {failedTotal === null
+              ? t("subtitle", { active: activeTotal, total: automations.length })
+              : t("subtitleFailures", {
+                  active: activeTotal,
+                  total: automations.length,
+                  failed: failedTotal,
+                })}
           </p>
         </div>
         <GatedButton
@@ -251,9 +294,7 @@ export default function AutomationsPage() {
                   onClick={() => startFromTemplate(slug)}
                   className="group flex flex-col items-start rounded-xl border border-border bg-card p-4 text-left transition-colors hover:border-primary/50 hover:bg-card/80"
                 >
-                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary group-hover:bg-primary/15">
-                    <Icon className="h-5 w-5" />
-                  </div>
+                  <Icon className="mb-3 h-5 w-5 text-muted-foreground group-hover:text-foreground" />
                   <div className="text-sm font-semibold text-foreground">{t.name}</div>
                   <p className="mt-1 text-xs text-muted-foreground">{t.description}</p>
                 </button>
@@ -265,9 +306,7 @@ export default function AutomationsPage() {
 
       {automations.length === 0 ? (
         <div className="flex h-48 flex-col items-center justify-center rounded-xl border border-dashed border-border bg-card/40">
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-            <Zap className="h-6 w-6 text-primary" />
-          </div>
+          <Zap className="h-6 w-6 text-muted-foreground" />
           <p className="mt-3 text-sm font-medium text-foreground">{t("emptyTitle")}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             {t("emptyDesc")}
@@ -324,6 +363,7 @@ export default function AutomationsPage() {
                         onEdit={() => router.push(`/automations/${a.id}/edit`)}
                         onDuplicate={() => duplicate(a)}
                         onLogs={() => router.push(`/automations/${a.id}/logs`)}
+                        failedRecently={failedRuns?.[a.id] ?? 0}
                         onDelete={() => setPendingDelete(a)}
                         onChangeGroup={(name) => changeGroup(a, name)}
                         t={t}
@@ -376,9 +416,12 @@ function AutomationCard({
   onLogs,
   onDelete,
   onChangeGroup,
+  failedRecently,
   t,
 }: {
   automation: Automation
+  /** Failed runs in the last 7 days. */
+  failedRecently: number
   onToggle: (next: boolean) => void
   onEdit: () => void
   onDuplicate: () => void
@@ -391,41 +434,35 @@ function AutomationCard({
   return (
     <li className="rounded-xl border border-border bg-card transition-colors hover:border-border">
       <div className="flex items-center gap-4 p-4">
-        <div
-          className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-primary/10"
-          aria-hidden
-        >
-          <Zap className="h-5 w-5 text-primary" />
-        </div>
-
+        <div className="min-w-0 flex-1">
         <button
           type="button"
           onClick={onEdit}
-          className="min-w-0 flex-1 text-left"
+          className="w-full rounded-sm text-left focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
         >
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-foreground">
               {automation.name}
             </span>
-            {automation.is_active && (
-              <span className="relative flex h-2 w-2" aria-label="active">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary opacity-75" />
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-              </span>
-            )}
+            {/* Spelled out rather than a pulsing dot: the switch on the
+                right already shows it, and a word reads without colour. */}
+            <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+              <span
+                aria-hidden
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full",
+                  automation.is_active ? "bg-success" : "bg-muted-foreground/50",
+                )}
+              />
+              {automation.is_active ? t("statusActive") : t("statusPaused")}
+            </span>
           </div>
           {automation.description && (
             <p className="mt-0.5 truncate text-xs text-muted-foreground">{automation.description}</p>
           )}
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-            <span
-              className={cn(
-                "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                meta.pillClass,
-              )}
-            >
-              {meta.label}
-            </span>
+            <span className="text-foreground">{meta.label}</span>
+            <span aria-hidden>·</span>
             <span className="tabular-nums">
               {automation.execution_count === 1
                 ? t("runs", { count: automation.execution_count })
@@ -435,6 +472,18 @@ function AutomationCard({
             <span>{t("lastRun", { time: formatRelative(automation.last_executed_at) })}</span>
           </div>
         </button>
+        {failedRecently > 0 && (
+          <button
+            type="button"
+            onClick={onLogs}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-sm text-xs font-medium text-danger hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            <CircleAlert className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {t("failedRecently", { count: failedRecently })}
+            <span className="text-muted-foreground">· {t("viewLogs")}</span>
+          </button>
+        )}
+        </div>
 
         <div className="flex items-center gap-3">
           <Switch

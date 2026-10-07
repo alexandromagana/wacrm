@@ -3,8 +3,12 @@
  *
  * The DB stores Meta's raw enum (DRAFT / APPROVED / PENDING / REJECTED /
  * PAUSED / DISABLED / IN_APPEAL / PENDING_DELETION) — the UI maps it to
- * a human label + dark-theme badge classes here so the template manager,
- * inbox picker, and broadcast picker stay aligned.
+ * a human label + badge classes here, kept apart from the template
+ * manager so any other surface that shows a status reads the same
+ * badge. Status hues follow STATUS in globals.css: approved is done
+ * (success); pending, paused and in appeal are waiting on Meta
+ * (warning); rejected and disabled can't be sent (danger). Draft and
+ * pending deletion stay neutral.
  */
 
 import type { MessageTemplateStatus } from '@/types';
@@ -20,34 +24,34 @@ export const templateStatusConfig: Record<
 > = {
   DRAFT: {
     label: 'Draft',
-    classes: 'bg-slate-600/20 text-muted-foreground border-slate-600/30',
+    classes: 'bg-muted text-muted-foreground border-border',
   },
   PENDING: {
     label: 'Pending',
-    classes: 'bg-yellow-600/20 text-yellow-400 border-yellow-600/30',
+    classes: 'bg-warning/15 text-warning border-warning/30',
   },
   APPROVED: {
     label: 'Approved',
-    classes: 'bg-primary/20 text-primary border-primary/30',
+    classes: 'bg-success/15 text-success border-success/30',
   },
   REJECTED: {
     label: 'Rejected',
-    classes: 'bg-red-600/20 text-red-400 border-red-600/30',
+    classes: 'bg-danger/15 text-danger border-danger/30',
   },
   PAUSED: {
     label: 'Paused',
-    classes: 'bg-orange-600/20 text-orange-400 border-orange-600/30',
+    classes: 'bg-warning/15 text-warning border-warning/30',
   },
   DISABLED: {
     label: 'Disabled',
-    classes: 'bg-red-900/30 text-red-500 border-red-900/40',
+    classes: 'bg-danger/10 text-danger border-danger/30',
   },
   IN_APPEAL: {
     label: 'In Appeal',
-    classes: 'bg-blue-600/20 text-blue-400 border-blue-600/30',
+    classes: 'bg-warning/15 text-warning border-warning/30',
   },
   PENDING_DELETION: {
     label: 'Pending Deletion',
-    classes: 'bg-slate-700/30 text-muted-foreground border-slate-700/40',
+    classes: 'bg-muted/60 text-muted-foreground border-border',
   },
 };

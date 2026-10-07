@@ -36,9 +36,10 @@ const ROLE_CHIP: Record<
   owner: {
     icon: Crown,
     labelKey: "roleOwner",
-    // Amber: scarce, immutable, "the boss" — gets visual emphasis.
+    // Neutral: a role is not a state, so no status hue — the crown
+    // icon is what sets the owner apart.
     className:
-      "border-amber-500/40 bg-amber-500/10 text-amber-300",
+      "border-border bg-muted text-muted-foreground",
   },
   admin: {
     icon: Shield,
@@ -227,7 +228,7 @@ export function Sidebar({
                     {item.beta && (
                       <span
                         aria-label={t("beta")}
-                        className="rounded-full border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-amber-300"
+                        className="rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground"
                       >
                         {t("beta")}
                       </span>

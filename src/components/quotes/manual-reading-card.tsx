@@ -311,7 +311,7 @@ export function ManualReadingCard({
                 </span>{' '}
                 sobre {periods} {periods === 1 ? 'periodo' : 'periodos'}
                 {periods < 2 && (
-                  <span className="text-amber-700 dark:text-amber-500">
+                  <span className="text-warning">
                     {' '}
                     hacen falta al menos 2
                   </span>

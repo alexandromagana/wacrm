@@ -11,6 +11,7 @@ import {
   isUniqueViolation,
   type ExistingContact,
 } from '@/lib/contacts/dedupe';
+import { ColorLabelToggle } from '@/components/ui/color-label';
 import {
   Dialog,
   DialogContent,
@@ -262,7 +263,7 @@ export function ContactForm({
 
           <div className="space-y-2">
             <Label htmlFor="cf-phone" className="text-muted-foreground">
-              {t('phoneLabel')} <span className="text-red-400">*</span>
+              {t('phoneLabel')} <span className="text-danger">*</span>
             </Label>
             <Input
               id="cf-phone"
@@ -279,8 +280,8 @@ export function ContactForm({
               <div
                 className={`flex items-start gap-2 rounded-md border px-2.5 py-2 text-xs ${
                   dupMatch.exact
-                    ? 'border-red-500/40 bg-red-500/10 text-red-300'
-                    : 'border-amber-500/40 bg-amber-500/10 text-amber-300'
+                    ? 'border-danger/40 bg-danger/10 text-danger'
+                    : 'border-warning/40 bg-warning/10 text-warning'
                 }`}
               >
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -351,23 +352,13 @@ export function ContactForm({
                 {tags.map((tag) => {
                   const selected = selectedTagIds.includes(tag.id);
                   return (
-                    <button
+                    <ColorLabelToggle
                       key={tag.id}
-                      type="button"
+                      name={tag.name}
+                      color={tag.color}
+                      selected={selected}
                       onClick={() => toggleTag(tag.id)}
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium transition-colors cursor-pointer ${
-                        selected
-                          ? 'ring-2 ring-primary ring-offset-1 ring-offset-border'
-                          : 'opacity-60 hover:opacity-100'
-                      }`}
-                      style={{
-                        backgroundColor: tag.color + '20',
-                        color: tag.color,
-                        borderColor: tag.color,
-                      }}
-                    >
-                      {tag.name}
-                    </button>
+                    />
                   );
                 })}
               </div>

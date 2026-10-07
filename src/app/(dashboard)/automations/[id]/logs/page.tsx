@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   Loader2,
+  Minus,
 } from "lucide-react"
 import {
   ArrowLeft,
@@ -69,7 +70,7 @@ export default function AutomationLogsPage({
   if (error) {
     return (
       <div className="flex h-64 flex-col items-center justify-center gap-3">
-        <p className="text-sm text-red-400">{error}</p>
+        <p className="text-sm text-danger">{error}</p>
         <Button variant="outline" onClick={() => router.push("/automations")}>
           {t("back")}
         </Button>
@@ -98,7 +99,9 @@ export default function AutomationLogsPage({
         </button>
         <div>
           <h1 className="text-4xl font-bold tracking-tight text-foreground">{automation.name}</h1>
-          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">{t("title")}</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            {logs.length > 0 ? t("subtitle", { count: logs.length }) : t("title")}
+          </p>
         </div>
       </div>
 
@@ -145,13 +148,13 @@ export default function AutomationLogsPage({
                 {isOpen && (
                   <div className="border-t border-border px-4 py-3">
                     {log.error_message && (
-                      <p className="mb-3 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                      <p className="mb-3 rounded-md border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-foreground">
                         {log.error_message}
                       </p>
                     )}
                     <ul className="space-y-1.5">
                       {(log.steps_executed ?? []).map((r, i) => (
-                        <StepRow key={i} result={r} />
+                        <StepRow key={i} result={r} t={t} />
                       ))}
                       {(log.steps_executed ?? []).length === 0 && (
                         <li className="text-xs text-muted-foreground">{t("noSteps")}</li>
@@ -168,15 +171,19 @@ export default function AutomationLogsPage({
   )
 }
 
+// `partial` is the engine parking a run at a wait step (engine.ts),
+// not a half-failure, so it reads as neutral "waiting" — amber here
+// used to make every follow-up sequence look like an incident.
 function StatusBadge({ status, t }: { status: AutomationLog["status"], t: ReturnType<typeof useTranslations> }) {
   const classes =
     status === "success"
-      ? "border-primary/30 bg-primary/10 text-primary"
+      ? "border-success/30 bg-success/10 text-success"
       : status === "partial"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
-      : "border-red-500/30 bg-red-500/10 text-red-300"
+      ? "border-border bg-muted text-muted-foreground"
+      : "border-danger/30 bg-danger/10 text-danger"
   return (
     <span
+      title={status === "partial" ? t("partialHint") : undefined}
       className={cn(
         "inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium",
         classes,
@@ -187,20 +194,34 @@ function StatusBadge({ status, t }: { status: AutomationLog["status"], t: Return
   )
 }
 
-function StepRow({ result }: { result: AutomationLogStepResult }) {
-  const ok = result.status === "success"
+function StepRow({
+  result,
+  t,
+}: {
+  result: AutomationLogStepResult
+  t: ReturnType<typeof useTranslations>
+}) {
+  // A skipped step (a branch not taken) isn't a failure; only `failed`
+  // gets the danger mark.
+  const failed = result.status === "failed"
+  const skipped = result.status === "skipped"
   return (
     <li className="flex items-start gap-2 text-xs">
       <span
         className={cn(
           "mt-0.5 flex h-4 w-4 flex-shrink-0 items-center justify-center rounded-full",
-          ok ? "bg-primary/20 text-primary" : "bg-red-500/20 text-red-400",
+          failed
+            ? "bg-danger/15 text-danger"
+            : skipped
+              ? "bg-muted text-muted-foreground"
+              : "bg-success/15 text-success",
         )}
         aria-hidden
       >
-        {ok ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+        {failed ? <X className="h-3 w-3" /> : skipped ? <Minus className="h-3 w-3" /> : <Check className="h-3 w-3" />}
       </span>
       <span className="text-muted-foreground">{result.step_type}</span>
+      {skipped && <span className="text-muted-foreground">({t("stepSkipped")})</span>}
       {result.detail && (
         <span className="truncate text-muted-foreground">{result.detail}</span>
       )}

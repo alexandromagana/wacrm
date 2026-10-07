@@ -549,14 +549,14 @@ export function MessageComposer({
         </div>
       )}
       {sessionExpired && (
-        <div className="mb-2 flex items-center justify-between rounded-lg bg-amber-500/10 px-3 py-2">
-          <p className="text-xs text-amber-400">
+        <div className="mb-2 flex items-center justify-between rounded-lg bg-warning/10 px-3 py-2">
+          <p className="text-xs text-warning">
             {t("sessionExpiredHint")}
           </p>
           <Button
             variant="ghost"
             size="sm"
-            className="h-7 text-xs text-amber-400 hover:text-amber-300"
+            className="h-7 text-xs text-warning hover:text-warning"
             onClick={onOpenTemplates}
           >
             <LayoutTemplate className="mr-1 h-3 w-3" />
@@ -610,7 +610,7 @@ export function MessageComposer({
       ) : recording ? (
         // Recording bar — replaces the composer while the mic is live.
         <div className="flex items-center gap-3 rounded-xl border border-border bg-muted px-4 py-2.5">
-          <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-red-500" />
+          <span className="flex h-2.5 w-2.5 shrink-0 animate-pulse rounded-full bg-danger" />
           <span className="flex-1 text-sm text-foreground">
             {t("recording", { current: formatDuration(recordSeconds), max: formatDuration(MAX_RECORDING_SECONDS) })}
           </span>
@@ -680,6 +680,9 @@ export function MessageComposer({
           <DropdownMenu>
             <DropdownMenuTrigger
               disabled={inputsDisabled}
+              // Icon-only: the title goes away in some states, the
+              // accessible name must not.
+              aria-label={t("moreActions")}
               title={
                 readOnly
                   ? t("readOnlyTitle")
@@ -708,6 +711,7 @@ export function MessageComposer({
             size="sm"
             canAct={!readOnly}
             gateReason="send messages"
+            aria-label={t("sendTemplate")}
             title={readOnly ? undefined : t("sendTemplate")}
             className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground"
             onClick={onOpenTemplates}
@@ -721,6 +725,7 @@ export function MessageComposer({
             canAct={!readOnly}
             gateReason="send messages"
             disabled={drafting}
+            aria-label={t("draftWithAI")}
             title={readOnly ? undefined : t("draftWithAI")}
             className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-primary"
             onClick={handleDraft}
@@ -762,6 +767,7 @@ export function MessageComposer({
             gateReason="send messages"
             disabled={!text.trim() || sessionExpired || sending}
             onClick={handleSend}
+            aria-label={t("send")}
             className="h-9 w-9 shrink-0 bg-primary p-0 hover:bg-primary/90 disabled:opacity-40"
           >
             <Send className="h-4 w-4" />
@@ -773,7 +779,7 @@ export function MessageComposer({
           `items-end` buttons below the textarea. Indented to line up
           under the textarea left edge. */}
       {!draft && !recording && (
-        <p className="mt-1 hidden pl-[5.5rem] text-[10px] text-muted-foreground sm:block">
+        <p className="mt-1 hidden pl-[5.5rem] text-[11px] text-muted-foreground sm:block">
           {t("draftHint")}
         </p>
       )}

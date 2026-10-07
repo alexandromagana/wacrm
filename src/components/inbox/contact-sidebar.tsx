@@ -21,6 +21,7 @@ import {
   StickyNote,
 } from "lucide-react";
 import { Copy, Check, User, Plus } from "@/components/animated-icons";
+import { ColorLabel } from "@/components/ui/color-label";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
@@ -233,7 +234,7 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
               <Phone className="h-4 w-4 text-muted-foreground" />
               <span className="flex-1 text-left">{contact.phone}</span>
               {copied ? (
-                <Check className="h-3 w-3 text-primary" />
+                <Check className="h-3 w-3 text-success" />
               ) : (
                 <Copy className="h-3 w-3 text-muted-foreground" />
               )}
@@ -281,16 +282,7 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
                 <p className="px-1 text-xs text-muted-foreground">{tSidebar("noTags")}</p>
               ) : (
                 tags.map((tag) => (
-                  <span
-                    key={tag.contact_tag_id}
-                    className="rounded-full px-2 py-0.5 text-[10px] font-medium"
-                    style={{
-                      backgroundColor: `${tag.color}20`,
-                      color: tag.color,
-                    }}
-                  >
-                    {tag.name}
-                  </span>
+                  <ColorLabel key={tag.contact_tag_id} name={tag.name} color={tag.color} />
                 ))
               )}
             </div>
@@ -317,18 +309,10 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
                     <p className="text-sm font-medium text-foreground">
                       {deal.title}
                     </p>
-                    <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
-                      <span>{formatCurrency(deal.value, deal.currency)}</span>
+                    <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span className="tabular-nums">{formatCurrency(deal.value, deal.currency)}</span>
                       {deal.stage && (
-                        <span
-                          className="rounded-full px-1.5 py-0.5 text-[10px]"
-                          style={{
-                            backgroundColor: `${deal.stage.color}20`,
-                            color: deal.stage.color,
-                          }}
-                        >
-                          {deal.stage.name}
-                        </span>
+                        <ColorLabel name={deal.stage.name} color={deal.stage.color} className="shrink-0" />
                       )}
                     </div>
                   </div>
@@ -360,6 +344,7 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
                   className="h-auto bg-primary px-2 hover:bg-primary/90"
                   onClick={handleAddNote}
                   disabled={!newNote.trim() || addingNote}
+                  aria-label={tSidebar("addNote")}
                 >
                   <Plus className="h-3 w-3" />
                 </Button>
@@ -374,7 +359,7 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
                     <p className="whitespace-pre-wrap text-xs text-muted-foreground">
                       {note.note_text}
                     </p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">
+                    <p className="mt-1 text-[11px] text-muted-foreground tabular-nums">
                       {format(new Date(note.created_at), "MMM d, yyyy HH:mm")}
                     </p>
                   </div>

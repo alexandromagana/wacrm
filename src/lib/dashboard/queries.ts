@@ -1,5 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
+  buildReplyQueue,
+  summarizeFollowUps,
+  type FollowUpDealRow,
+  type ReplyQueueRow,
+} from './attention'
+import {
   daysAgoStart,
   DOW_SHORT_MON_FIRST,
   lastNDayKeys,
@@ -10,9 +16,14 @@ import {
 import type {
   ActivityItem,
   ConversationsSeriesPoint,
+  FailedSend,
+  FailingAutomation,
+  FollowUpSummary,
+  HealthSummary,
   MetricsBundle,
   PipelineDonutData,
   PipelineStageSlice,
+  ReplyQueue,
   ResponseTimeBucket,
   ResponseTimeSummary,
 } from './types'
@@ -389,10 +400,177 @@ export async function loadActivity(db: DB, limit = 20): Promise<ActivityItem[]> 
       kind: 'automation',
       text: `Automation "${autoName}" ${l.status === 'failed' ? 'failed for' : 'triggered for'} ${who}`,
       at: l.created_at,
+      failed: l.status === 'failed',
     })
   }
 
   return items
     .sort((a, b) => (a.at > b.at ? -1 : a.at < b.at ? 1 : 0))
     .slice(0, limit)
+}
+
+// --- 6. Reply queue ----------------------------------------------------
+
+export async function loadReplyQueue(db: DB): Promise<ReplyQueue> {
+  const [convRes, profilesRes] = await Promise.all([
+    db
+      .from('conversations')
+      .select(
+        'id, assigned_agent_id, last_customer_message_at, last_message_text, ai_autoreply_disabled, ai_handoff_summary, contact:contacts(name, phone), messages(sender_type, created_at)',
+        { count: 'exact' },
+      )
+      .neq('status', 'closed')
+      // Only each thread's newest message: that is all "who spoke
+      // last" needs, and it keeps the payload one row per thread.
+      .order('created_at', { referencedTable: 'messages', ascending: false })
+      .limit(1, { referencedTable: 'messages' }),
+    db.from('profiles').select('user_id, full_name'),
+  ])
+  if (convRes.error) throw convRes.error
+
+  // Names are a nicety for the owner column; without them the row
+  // still says it has an owner, so a failed lookup isn't fatal.
+  const agentNames: Record<string, string> = {}
+  for (const p of (profilesRes.data ?? []) as { user_id: string; full_name: string | null }[]) {
+    if (p.full_name) agentNames[p.user_id] = p.full_name
+  }
+
+  const rows = (convRes.data ?? []) as unknown as ReplyQueueRow[]
+  return {
+    items: buildReplyQueue(rows),
+    activeCount: convRes.count ?? rows.length,
+    agentNames,
+  }
+}
+
+// --- 7. Pipeline follow-ups --------------------------------------------
+
+export async function loadFollowUps(db: DB): Promise<FollowUpSummary> {
+  const [dealsRes, suggestedRes] = await Promise.all([
+    db
+      .from('deals')
+      .select('technical_visit_at, installation_date, quoted_at')
+      .eq('status', 'open'),
+    db
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .neq('status', 'closed')
+      .not('close_suggested_at', 'is', null),
+  ])
+  if (dealsRes.error) throw dealsRes.error
+  if (suggestedRes.error) throw suggestedRes.error
+
+  return {
+    ...summarizeFollowUps((dealsRes.data ?? []) as FollowUpDealRow[]),
+    closeSuggested: suggestedRes.count ?? 0,
+  }
+}
+
+// --- 8. Delivery + automation health -----------------------------------
+
+/** Failed sends listed by name on the dashboard; the count covers the rest. */
+const RECENT_FAILED_SENDS = 5
+
+type OneOrMany<T> = T | T[] | null
+
+export async function loadHealth(db: DB, accountId: string | null): Promise<HealthSummary> {
+  // Seven local days including today, the same window the 7-day chart uses.
+  const since = daysAgoStart(6).toISOString()
+  const count = { count: 'exact' as const, head: true }
+
+  const [config, failedSends, outbound, failedList, failedRunRows, totalRuns, failedBroadcasts] =
+    await Promise.all([
+      accountId
+        ? db.from('whatsapp_config').select('status').eq('account_id', accountId).maybeSingle()
+        : Promise.resolve(null),
+      db
+        .from('messages')
+        .select('id', count)
+        .neq('sender_type', 'customer')
+        .eq('status', 'failed')
+        .gte('created_at', since),
+      db.from('messages').select('id', count).neq('sender_type', 'customer').gte('created_at', since),
+      // A count alone left nowhere to go: these are the rows behind it,
+      // so each one can link to the conversation it failed in.
+      db
+        .from('messages')
+        .select(
+          'id, conversation_id, created_at, content_type, status_error, conversation:conversations(contact:contacts(name, phone))',
+        )
+        .neq('sender_type', 'customer')
+        .eq('status', 'failed')
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(RECENT_FAILED_SENDS),
+      db
+        .from('automation_logs')
+        .select('automation_id, automation:automations(name)')
+        .eq('status', 'failed')
+        .gte('created_at', since),
+      db.from('automation_logs').select('id', count).gte('created_at', since),
+      db.from('broadcasts').select('id', count).eq('status', 'failed').gte('created_at', since),
+    ])
+
+  for (const res of [failedSends, outbound, failedList, failedRunRows, totalRuns, failedBroadcasts]) {
+    if (res.error) throw res.error
+  }
+
+  const recentFailedSends: FailedSend[] = []
+  for (const m of (failedList.data ?? []) as unknown as Array<{
+    id: string
+    conversation_id: string
+    created_at: string
+    content_type: string
+    status_error: string | null
+    conversation:
+      | { contact: OneOrMany<{ name: string | null; phone: string }> }
+      | { contact: OneOrMany<{ name: string | null; phone: string }> }[]
+      | null
+  }>) {
+    const conv = Array.isArray(m.conversation) ? m.conversation[0] : m.conversation
+    const contact = Array.isArray(conv?.contact) ? conv?.contact[0] : conv?.contact
+    recentFailedSends.push({
+      messageId: m.id,
+      conversationId: m.conversation_id,
+      contactName: contact?.name || contact?.phone || '',
+      at: m.created_at,
+      contentType: m.content_type,
+      reason: m.status_error,
+    })
+  }
+
+  const byAutomation = new Map<string, FailingAutomation>()
+  for (const row of (failedRunRows.data ?? []) as unknown as Array<{
+    automation_id: string
+    automation: { name: string } | { name: string }[] | null
+  }>) {
+    const automation = Array.isArray(row.automation) ? row.automation[0] : row.automation
+    const entry = byAutomation.get(row.automation_id) ?? {
+      automationId: row.automation_id,
+      name: automation?.name ?? '',
+      failedRuns: 0,
+    }
+    entry.failedRuns += 1
+    byAutomation.set(row.automation_id, entry)
+  }
+  const failingAutomations = [...byAutomation.values()].sort((a, b) => b.failedRuns - a.failedRuns)
+
+  // Same reading as the Inbox banner: no config row means not connected.
+  const whatsapp =
+    !config || config.error
+      ? 'unknown'
+      : config.data?.status === 'connected'
+        ? 'connected'
+        : 'disconnected'
+
+  return {
+    whatsapp,
+    failedSends: failedSends.count ?? 0,
+    outboundMessages: outbound.count ?? 0,
+    recentFailedSends,
+    failedRuns: (failedRunRows.data ?? []).length,
+    totalRuns: totalRuns.count ?? 0,
+    failingAutomations,
+    failedBroadcasts: failedBroadcasts.count ?? 0,
+  }
 }

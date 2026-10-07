@@ -217,13 +217,12 @@ export function InviteMemberDialog({
                 </Button>
               </div>
 
-              {/* Higher-contrast amber than the original 10% / amber-200.
-                  Reviewed against slate-900 to meet WCAG AAA for body
-                  text (target ratio 7:1). Border bumped to /50, bg to
-                  /15, foreground promoted to amber-100 for the strong
-                  intro, amber-200 for the body. */}
-              <div className="rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-2 text-xs text-amber-200">
-                <strong className="font-semibold text-amber-100">
+              {/* The warning tint and border carry the state; the text
+                  stays on the foreground token so this body copy keeps
+                  AAA contrast (7:1) in both modes, which the warning
+                  token itself can't promise as text on a /15 tint. */}
+              <div className="rounded-md border border-warning/50 bg-warning/15 px-3 py-2 text-xs text-foreground">
+                <strong className="font-semibold">
                   {t('saveLinkNow')}
                 </strong>{' '}
                 {t('saveLinkHint')}

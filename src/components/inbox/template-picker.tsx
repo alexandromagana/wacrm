@@ -301,7 +301,7 @@ export function TemplatePicker({
                           {tpl.body_text}
                         </p>
                         {unsendable && (
-                          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-amber-400">
+                          <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-warning">
                             <AlertTriangle className="mt-px h-3 w-3 flex-shrink-0" />
                             <span>{t("mediaHeaderMissing")}</span>
                           </p>
