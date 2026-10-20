@@ -8,7 +8,7 @@ import {
   CONVERSATION_SELECT,
   normalizeConversation,
 } from "@/lib/inbox/conversations";
-import type { Conversation, Message, Contact, ConversationStatus } from "@/types";
+import type { Conversation, Message, Contact, ConversationStatus, Tag } from "@/types";
 import { useRealtime } from "@/hooks/use-realtime";
 import {
   playNotifySound,
@@ -702,6 +702,22 @@ export default function InboxPage() {
     [activeConversation]
   );
 
+  // A tag edited in the contact panel. The list filters by tag from
+  // its own copy of each contact, so patch that copy rather than wait
+  // for the next resync to notice.
+  const handleContactTagsChange = useCallback(
+    (contactId: string, tags: Tag[]) => {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.contact_id === contactId && c.contact
+            ? { ...c, contact: { ...c.contact, tags } }
+            : c
+        )
+      );
+    },
+    []
+  );
+
   // On mobile (<lg) we show a SINGLE pane — either the list or the
   // thread — rather than cramming both side-by-side. Selecting a
   // conversation slides the thread in; the thread's back button pops
@@ -793,7 +809,10 @@ export default function InboxPage() {
             toggle — which is itself desktop-only — never affects it. */}
         {contactPanelOpen && (
           <div className="hidden lg:block">
-            <ContactSidebar contact={activeContact} />
+            <ContactSidebar
+              contact={activeContact}
+              onTagsChange={handleContactTagsChange}
+            />
           </div>
         )}
 
@@ -815,6 +834,7 @@ export default function InboxPage() {
             <ContactSidebar
               contact={activeContact}
               className="w-full border-l-0"
+              onTagsChange={handleContactTagsChange}
             />
           </SheetContent>
         </Sheet>
