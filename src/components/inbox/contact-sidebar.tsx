@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { useCan } from "@/hooks/use-can";
 import { cn } from "@/lib/utils";
 import type { Contact, Deal, ContactNote, PipelineStage, Tag } from "@/types";
 import { formatCurrency } from "@/lib/currency";
@@ -20,9 +22,14 @@ import {
   DollarSign,
   StickyNote,
 } from "lucide-react";
-import { Copy, Check, User, Plus } from "@/components/animated-icons";
-import { ColorLabel } from "@/components/ui/color-label";
+import { Copy, Check, User, Plus, X } from "@/components/animated-icons";
+import { ColorLabel, ColorLabelToggle } from "@/components/ui/color-label";
 import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { format } from "date-fns";
 import { useTranslations } from "next-intl";
@@ -35,6 +42,13 @@ interface ContactSidebarProps {
    * edge to edge inside the slide-over instead of as a docked column.
    */
   className?: string;
+  /**
+   * Called after a tag is added or removed here, with the contact's
+   * full tag list. The inbox list filters by tag from its own copy of
+   * each contact, so without this a chip removed here would leave the
+   * conversation under a tag filter it no longer matches.
+   */
+  onTagsChange?: (contactId: string, tags: Tag[]) => void;
 }
 
 /**
@@ -47,19 +61,33 @@ function pickHeadlineDeal(deals: Deal[]): Deal | null {
   return deals.find((d) => (d.status ?? "open") === "open") ?? deals[0];
 }
 
-export function ContactSidebar({ contact, className }: ContactSidebarProps) {
+export function ContactSidebar({ contact, className, onTagsChange }: ContactSidebarProps) {
   const tSidebar = useTranslations("Inbox.sidebar");
   const tThread = useTranslations("Inbox.messageThread");
   const tDeal = useTranslations("DealProgress");
 
   const { accountId } = useAuth();
+  // Same gate as the server route (agent+); viewers keep the read-only chips.
+  const canEditTags = useCan("send-messages");
   const [copied, setCopied] = useState(false);
   const [deals, setDeals] = useState<Deal[]>([]);
   // Board-ordered stages of the headline deal's pipeline — what the
   // progress card needs to show what's done and what's still ahead.
   const [stages, setStages] = useState<PipelineStage[]>([]);
   const [notes, setNotes] = useState<ContactNote[]>([]);
-  const [tags, setTags] = useState<(Tag & { contact_tag_id: string })[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  // Every tag in the account, for the picker. Editing tags here is what
+  // spares the agent a trip to Contacts in the middle of a chat.
+  const [allTags, setAllTags] = useState<Tag[]>([]);
+  const [tagPickerOpen, setTagPickerOpen] = useState(false);
+  const [savingTagId, setSavingTagId] = useState<string | null>(null);
+  // The contact on screen right now. A tag request still in flight when
+  // the agent opens another chat must not write its result onto the
+  // next contact's chips.
+  const contactIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    contactIdRef.current = contact?.id ?? null;
+  }, [contact]);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   // The deal editor opens as a sheet over the inbox rather than
@@ -73,7 +101,7 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
     const supabase = createClient();
 
     // Fetch deals, notes, and tags in parallel
-    const [dealsRes, notesRes, tagsRes] = await Promise.all([
+    const [dealsRes, notesRes, tagsRes, allTagsRes] = await Promise.all([
       supabase
         .from("deals")
         .select("*, stage:pipeline_stages(*)")
@@ -88,10 +116,12 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
         .from("contact_tags")
         .select("id, tag_id, tags(*)")
         .eq("contact_id", contact.id),
+      supabase.from("tags").select("*").order("name"),
     ]);
 
     if (dealsRes.data) setDeals(dealsRes.data);
     if (notesRes.data) setNotes(notesRes.data);
+    if (allTagsRes.data) setAllTags(allTagsRes.data);
 
     // Stages are a second round trip because which pipeline to ask
     // about only becomes known once the deals come back.
@@ -110,13 +140,41 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
     if (tagsRes.data) {
       const mapped = tagsRes.data
         .filter((ct: Record<string, unknown>) => ct.tags)
-        .map((ct: Record<string, unknown>) => ({
-          ...(ct.tags as Tag),
-          contact_tag_id: ct.id as string,
-        }));
+        .map((ct: Record<string, unknown>) => ct.tags as Tag);
       setTags(mapped);
     }
   }, [contact]);
+
+  const handleToggleTag = useCallback(
+    async (tag: Tag) => {
+      if (!contact) return;
+      const contactId = contact.id;
+      const applied = tags.some((t) => t.id === tag.id);
+      setSavingTagId(tag.id);
+
+      // Through the server route, same as the Contacts page: only the
+      // server can fire the tag_added / tag_removed automations, and
+      // those are what start (and, by dropping the tag, cancel) the
+      // follow-up sequences.
+      const res = await fetch(`/api/contacts/${contactId}/tags`, {
+        method: applied ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tag_id: tag.id }),
+      }).catch(() => null);
+
+      setSavingTagId(null);
+      if (!res?.ok) {
+        toast.error(tSidebar(applied ? "toastTagRemoveFailed" : "toastTagAddFailed"));
+        return;
+      }
+      if (contactIdRef.current !== contactId) return;
+
+      const next = applied ? tags.filter((t) => t.id !== tag.id) : [...tags, tag];
+      setTags(next);
+      onTagsChange?.(contactId, next);
+    },
+    [contact, tags, onTagsChange, tSidebar],
+  );
 
   // Load on contact change. setContactData/setTags run inside async
   // Supabase callbacks, not synchronously in the effect body.
@@ -273,17 +331,66 @@ export function ContactSidebar({ contact, className }: ContactSidebarProps) {
 
           {/* Tags */}
           <div>
-            <div className="flex items-center gap-2 px-1 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              <TagIcon className="h-3 w-3" />
-              {tSidebar("tags")}
+            <div className="flex items-center justify-between gap-2 px-1">
+              <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                <TagIcon className="h-3 w-3" />
+                {tSidebar("tags")}
+              </div>
+              {canEditTags && (
+                <Popover open={tagPickerOpen} onOpenChange={setTagPickerOpen}>
+                  <PopoverTrigger
+                    className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    aria-label={tSidebar("editTags")}
+                    title={tSidebar("editTags")}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-64">
+                    <p className="text-xs text-muted-foreground">{tSidebar("tagPickerHint")}</p>
+                    {allTags.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        {tSidebar("noTagsAvailable")}
+                      </p>
+                    ) : (
+                      <div className="flex max-h-64 flex-wrap gap-1.5 overflow-y-auto">
+                        {allTags.map((tag) => (
+                          <ColorLabelToggle
+                            key={tag.id}
+                            name={tag.name}
+                            color={tag.color}
+                            selected={tags.some((t) => t.id === tag.id)}
+                            onClick={() => handleToggleTag(tag)}
+                            disabled={savingTagId !== null}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </PopoverContent>
+                </Popover>
+              )}
             </div>
             <div className="mt-2 flex flex-wrap gap-1">
               {tags.length === 0 ? (
                 <p className="px-1 text-xs text-muted-foreground">{tSidebar("noTags")}</p>
               ) : (
-                tags.map((tag) => (
-                  <ColorLabel key={tag.contact_tag_id} name={tag.name} color={tag.color} />
-                ))
+                tags.map((tag) =>
+                  canEditTags ? (
+                    <ColorLabel key={tag.id} name={tag.name} color={tag.color} size="md">
+                      <button
+                        type="button"
+                        onClick={() => handleToggleTag(tag)}
+                        disabled={savingTagId !== null}
+                        aria-label={tSidebar("removeTag", { name: tag.name })}
+                        title={tSidebar("removeTag", { name: tag.name })}
+                        className="-mr-1 flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </ColorLabel>
+                  ) : (
+                    <ColorLabel key={tag.id} name={tag.name} color={tag.color} />
+                  ),
+                )
               )}
             </div>
           </div>

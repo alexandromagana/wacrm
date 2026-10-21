@@ -384,7 +384,13 @@
       "noTags": "No tags",
       "noDeals": "No deals",
       "addNotePlaceholder": "Add a note...",
-      "addNote": "Add note"
+      "addNote": "Add note",
+      "editTags": "Add or remove tags",
+      "tagPickerHint": "Click a tag to add or remove it.",
+      "noTagsAvailable": "No tags yet. Create them in Settings.",
+      "removeTag": "Remove {name}",
+      "toastTagAddFailed": "Couldn't add the tag",
+      "toastTagRemoveFailed": "Couldn't remove the tag"
     },
     "aiBanner": {
       "pausedTitle": "AI assistant is paused here",
